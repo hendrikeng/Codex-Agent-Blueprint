@@ -37,4 +37,23 @@ Agents must replace all `{{...}}` placeholders before treating a repo as product
    - `conformance:verify`
    - `architecture:verify`
 5. Update `docs/generated/article-conformance.json` evidence paths for the new repository.
-6. Run `npm run docs:verify && npm run conformance:verify && npm run architecture:verify`.
+6. Run `./scripts/bootstrap-verify.sh` (or run each verify command manually).
+
+
+## Agent Quickstart (Plan Mode)
+
+Use this when initializing a new repo from the blueprint:
+
+1. Copy `template/` into the target repository.
+2. Replace all placeholders from `PLACEHOLDERS.md`.
+3. Run `./scripts/check-template-placeholders.sh` until clean.
+4. Run `./scripts/bootstrap-verify.sh`.
+
+Suggested prompt for an agent:
+
+```text
+Initialize this repository from the Codex Agent Blueprint template.
+Replace all placeholders using project-specific values.
+Then run ./scripts/check-template-placeholders.sh and ./scripts/bootstrap-verify.sh.
+Do not stop until both pass with zero errors.
+```

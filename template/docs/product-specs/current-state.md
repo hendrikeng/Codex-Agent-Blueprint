@@ -1,10 +1,10 @@
 # Current State
 
 Status: canonical
-Owner: Product + Engineering
-Last Updated: 2026-02-27
+Owner: {{DOC_OWNER}}
+Last Updated: {{LAST_UPDATED_ISO_DATE}}
 Source of Truth: this document.
-Current State Date: 2026-02-27
+Current State Date: {{CURRENT_STATE_DATE}}
 
 ## Scope Snapshot
 

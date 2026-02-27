@@ -1,8 +1,8 @@
 # Documentation Index
 
 Status: canonical
-Owner: Platform Engineering
-Last Updated: 2026-02-27
+Owner: {{DOC_OWNER}}
+Last Updated: {{LAST_UPDATED_ISO_DATE}}
 Source of Truth: This document.
 
 This is the canonical completeness index for first-class documentation in `docs/`.

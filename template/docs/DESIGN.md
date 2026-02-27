@@ -1,8 +1,8 @@
 # Design
 
 Status: canonical
-Owner: Design + Engineering
-Last Updated: 2026-02-27
+Owner: {{DOC_OWNER}}
+Last Updated: {{LAST_UPDATED_ISO_DATE}}
 Source of Truth: This document and `docs/design-docs/`.
 
 ## Design Intent
