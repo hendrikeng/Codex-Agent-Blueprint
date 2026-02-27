@@ -30,6 +30,12 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - `node ./scripts/automation/orchestrator.mjs resume`
 - `node ./scripts/automation/orchestrator.mjs audit --json true`
 
+## Executor Configuration
+
+- `executor.command` is empty by default.
+- Recommended: pass `--executor "<command>"` when starting `run`.
+- Optional: set `docs/ops/automation/orchestrator.config.json` for a repo default.
+
 ## Policy Controls
 
 - `guarded` mode blocks medium/high risk plans unless explicitly approved.
