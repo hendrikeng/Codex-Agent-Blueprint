@@ -1033,6 +1033,10 @@ async function runCommand(paths, options) {
 
   const state = createInitialState(runId, modeResolution.requestedMode, modeResolution.effectiveMode);
 
+  if (!asBoolean(options.allowDirty, false) && gitAvailable(paths.rootDir) && gitDirty(paths.rootDir)) {
+    throw new Error('Refusing to start with a dirty git worktree. Use --allow-dirty true to override.');
+  }
+
   await ensureDirectories(paths, options.dryRun);
   await saveState(paths, state, options.dryRun);
 
@@ -1045,10 +1049,6 @@ async function runCommand(paths, options) {
 
   if (modeResolution.downgraded) {
     console.log(`[orchestrator] full mode downgraded to guarded: ${modeResolution.reason}`);
-  }
-
-  if (!asBoolean(options.allowDirty, false) && gitAvailable(paths.rootDir) && gitDirty(paths.rootDir)) {
-    throw new Error('Refusing to start with a dirty git worktree. Use --allow-dirty true to override.');
   }
 
   let processed = await runLoop(paths, state, options, config, 'run');
