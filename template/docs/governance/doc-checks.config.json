@@ -1,0 +1,270 @@
+{
+  "docsIndexPath": "docs/index.md",
+  "scanFiles": [
+    "ARCHITECTURE.md",
+    "docs/generated/article-conformance.json"
+  ],
+  "canonicalDocs": [
+    "AGENTS.md",
+    "ARCHITECTURE.md",
+    "README.md",
+    "docs/DESIGN.md",
+    "docs/FRONTEND.md",
+    "docs/PLANS.md",
+    "docs/PRODUCT_SENSE.md",
+    "docs/QUALITY_SCORE.md",
+    "docs/README.md",
+    "docs/RELIABILITY.md",
+    "docs/SECURITY.md",
+    "docs/architecture/README.md",
+    "docs/architecture/dependency-rules.md",
+    "docs/architecture/layers.md",
+    "docs/design-docs/core-beliefs.md",
+    "docs/design-docs/engineering-invariants.md",
+    "docs/design-docs/git-safety.md",
+    "docs/design-docs/index.md",
+    "docs/design-docs/ui-standards.md",
+    "docs/env/README.md",
+    "docs/exec-plans/README.md",
+    "docs/exec-plans/active/README.md",
+    "docs/exec-plans/completed/README.md",
+    "docs/exec-plans/tech-debt-tracker.md",
+    "docs/future/README.md",
+    "docs/generated/article-conformance.json",
+    "docs/governance/README.md",
+    "docs/governance/golden-principles.md",
+    "docs/governance/rules.md",
+    "docs/index.md",
+    "docs/ops/README.md",
+    "docs/product-specs/current-state.md",
+    "docs/product-specs/index.md",
+    "docs/references/index.md",
+    "docs/ui/intents.md"
+  ],
+  "requiredDirs": [
+    "docs/architecture",
+    "docs/design-docs",
+    "docs/deploy",
+    "docs/env",
+    "docs/exec-plans",
+    "docs/exec-plans/active",
+    "docs/exec-plans/completed",
+    "docs/future",
+    "docs/generated",
+    "docs/governance",
+    "docs/ops",
+    "docs/product-specs",
+    "docs/references",
+    "docs/ui"
+  ],
+  "requiredIndexEntries": [
+    "docs/README.md",
+    "docs/PLANS.md",
+    "docs/QUALITY_SCORE.md",
+    "docs/RELIABILITY.md",
+    "docs/SECURITY.md",
+    "docs/PRODUCT_SENSE.md",
+    "docs/DESIGN.md",
+    "docs/FRONTEND.md",
+    "docs/architecture/",
+    "docs/design-docs/",
+    "docs/deploy/",
+    "docs/env/",
+    "docs/exec-plans/",
+    "docs/future/",
+    "docs/generated/",
+    "docs/governance/",
+    "docs/ops/",
+    "docs/product-specs/",
+    "docs/references/",
+    "docs/ui/"
+  ],
+  "requiredLinks": {
+    "AGENTS.md": [
+      "ARCHITECTURE.md",
+      "README.md",
+      "docs/PLANS.md",
+      "docs/README.md",
+      "docs/design-docs/engineering-invariants.md",
+      "docs/design-docs/git-safety.md",
+      "docs/design-docs/ui-standards.md",
+      "docs/exec-plans/README.md",
+      "docs/governance/golden-principles.md",
+      "docs/governance/rules.md",
+      "docs/index.md",
+      "docs/product-specs/current-state.md"
+    ],
+    "README.md": [
+      "AGENTS.md",
+      "ARCHITECTURE.md",
+      "docs/index.md",
+      "docs/PLANS.md",
+      "docs/product-specs/current-state.md"
+    ],
+    "docs/index.md": [
+      "docs/governance/",
+      "docs/architecture/",
+      "docs/design-docs/",
+      "docs/product-specs/",
+      "docs/exec-plans/"
+    ]
+  },
+  "requiredHeadings": {
+    "README.md": [
+      "Operating Model",
+      "Documentation Navigation",
+      "Enforcement and Quality Gates"
+    ],
+    "AGENTS.md": [
+      "Operating Model",
+      "Core Map",
+      "Non-Negotiables"
+    ],
+    "ARCHITECTURE.md": [
+      "Read Order",
+      "Core Invariants",
+      "Verification"
+    ],
+    "docs/PLANS.md": [
+      "Lifecycle"
+    ]
+  },
+  "metadataRules": [
+    {
+      "path": "AGENTS.md",
+      "requiredFields": [
+        "Status",
+        "Owner",
+        "Last Updated",
+        "Source of Truth"
+      ]
+    },
+    {
+      "path": "README.md",
+      "requiredFields": [
+        "Status",
+        "Owner",
+        "Last Updated",
+        "Source of Truth",
+        "Current State Date"
+      ]
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "requiredFields": [
+        "Status",
+        "Owner",
+        "Last Updated",
+        "Source of Truth"
+      ]
+    },
+    {
+      "path": "docs/index.md",
+      "requiredFields": [
+        "Status",
+        "Owner",
+        "Last Updated",
+        "Source of Truth"
+      ]
+    },
+    {
+      "path": "docs/PLANS.md",
+      "requiredFields": [
+        "Status",
+        "Owner",
+        "Last Updated",
+        "Source of Truth"
+      ]
+    },
+    {
+      "path": "docs/product-specs/current-state.md",
+      "requiredFields": [
+        "Status",
+        "Owner",
+        "Last Updated",
+        "Source of Truth",
+        "Current State Date"
+      ]
+    }
+  ],
+  "staleness": {
+    "maxAgeDays": 90,
+    "defaultStrategy": {
+      "type": "metadata_field",
+      "field": "Last Updated",
+      "format": "iso-date"
+    },
+    "targets": [
+      "AGENTS.md",
+      "ARCHITECTURE.md",
+      "README.md",
+      "docs/DESIGN.md",
+      "docs/FRONTEND.md",
+      "docs/PLANS.md",
+      "docs/PRODUCT_SENSE.md",
+      "docs/QUALITY_SCORE.md",
+      "docs/README.md",
+      "docs/RELIABILITY.md",
+      "docs/SECURITY.md",
+      "docs/architecture/README.md",
+      "docs/architecture/dependency-rules.md",
+      "docs/architecture/layers.md",
+      "docs/design-docs/core-beliefs.md",
+      "docs/design-docs/engineering-invariants.md",
+      "docs/design-docs/git-safety.md",
+      "docs/design-docs/index.md",
+      "docs/design-docs/ui-standards.md",
+      "docs/env/README.md",
+      "docs/exec-plans/README.md",
+      "docs/exec-plans/active/README.md",
+      "docs/exec-plans/completed/README.md",
+      "docs/exec-plans/tech-debt-tracker.md",
+      "docs/future/README.md",
+      "docs/governance/README.md",
+      "docs/governance/golden-principles.md",
+      "docs/governance/rules.md",
+      "docs/index.md",
+      "docs/ops/README.md",
+      "docs/product-specs/current-state.md",
+      "docs/product-specs/index.md",
+      "docs/references/index.md",
+      "docs/ui/intents.md"
+    ]
+  },
+  "activePlans": {
+    "directory": "docs/exec-plans/active",
+    "excludeFiles": [
+      "README.md",
+      ".gitkeep"
+    ],
+    "requireMetadataSection": false,
+    "requiredMetadataFields": []
+  },
+  "completedPlans": {
+    "directory": "docs/exec-plans/completed",
+    "excludeFiles": [
+      "README.md",
+      ".gitkeep"
+    ],
+    "requiredPatterns": []
+  },
+  "currentStateDateCoupling": {
+    "readmePath": "README.md",
+    "currentStatePath": "docs/product-specs/current-state.md",
+    "fieldName": "Current State Date"
+  },
+  "techDebtTracker": {
+    "path": "docs/exec-plans/tech-debt-tracker.md",
+    "activePlanRegex": "Active plan:\\s*`([^`]+)`"
+  },
+  "generatedArtifacts": [],
+  "graphSeeds": [
+    "AGENTS.md",
+    "README.md",
+    "docs/index.md"
+  ],
+  "unreachablePolicy": {
+    "scope": "canonical",
+    "level": "error"
+  }
+}

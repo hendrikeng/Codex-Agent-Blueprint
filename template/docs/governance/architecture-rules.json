@@ -1,0 +1,172 @@
+{
+  "checks": [
+    {
+      "type": "nx_dep_constraints",
+      "eslintConfigPath": ".eslintrc.base.json",
+      "requiredConstraints": [
+        {
+          "sourceTag": "type:app-frontend",
+          "allow": [
+            "type:frontend",
+            "type:frontend-shared",
+            "type:ui",
+            "type:contract"
+          ]
+        },
+        {
+          "sourceTag": "type:app-backend",
+          "allow": [
+            "type:backend",
+            "type:backend-shared",
+            "type:contract",
+            "type:data"
+          ]
+        },
+        {
+          "sourceTag": "type:frontend",
+          "allow": [
+            "type:frontend",
+            "type:frontend-shared",
+            "type:ui",
+            "type:contract"
+          ]
+        },
+        {
+          "sourceTag": "type:backend",
+          "allow": [
+            "type:backend",
+            "type:backend-shared",
+            "type:contract",
+            "type:data"
+          ]
+        },
+        {
+          "sourceTag": "type:data",
+          "allow": [
+            "type:data",
+            "type:contract"
+          ]
+        },
+        {
+          "sourceTag": "type:contract",
+          "allow": [
+            "type:contract"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "required_project_tags",
+      "projects": [
+        {
+          "path": "libs/artists/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/artists/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/auth/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/auth/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/cart/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/cart/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/enterprises/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/enterprises/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/events/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/events/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/genres/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/genres/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/organizations/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/organizations/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/tickets/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/tickets/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        },
+        {
+          "path": "libs/users/backend/project.json",
+          "requiredTags": [
+            "type:backend"
+          ]
+        },
+        {
+          "path": "libs/users/frontend/project.json",
+          "requiredTags": [
+            "type:frontend"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "generatedAtUtc": "2026-02-27T12:00:00.000Z",
+  "source": "Harness engineering: leveraging Codex in an agent-first world",
+  "repositoryProfile": "practical_docs_system_of_record",
+  "purpose": "Scope guardrail for practical documentation and process capabilities used in this repository.",
+  "outOfScope": [
+    "scheduled_doc_gardening_workflow",
+    "auto_remediation_pr_loop",
+    "mandatory_agent_execution_loops"
+  ],
+  "coreCapabilities": [
+    {
+      "id": "docs_system_of_record",
+      "status": "implemented",
+      "evidence": [
+        "AGENTS.md",
+        "README.md",
+        "ARCHITECTURE.md",
+        "docs/index.md"
+      ]
+    },
+    {
+      "id": "non_trivial_change_planning",
+      "status": "implemented",
+      "evidence": [
+        "docs/PLANS.md",
+        "docs/exec-plans/README.md",
+        "docs/exec-plans/active/README.md",
+        "docs/exec-plans/completed/README.md",
+        "docs/exec-plans/tech-debt-tracker.md"
+      ]
+    },
+    {
+      "id": "docs_verification",
+      "status": "implemented",
+      "evidence": [
+        "scripts/docs/check-governance.mjs",
+        "scripts/docs/lib/governance-core.mjs",
+        "docs/governance/doc-checks.config.json",
+        "package.json",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "id": "architecture_and_invariant_enforcement",
+      "status": "implemented",
+      "evidence": [
+        "scripts/architecture/check-dependencies.mjs",
+        "docs/governance/architecture-rules.json",
+        "docs/architecture/dependency-rules.md"
+      ]
+    },
+    {
+      "id": "conformance_scope_guardrail",
+      "status": "implemented",
+      "evidence": [
+        "docs/generated/article-conformance.json",
+        "scripts/check-article-conformance.mjs",
+        "package.json"
+      ]
+    }
+  ]
+}

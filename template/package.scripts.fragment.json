@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "docs:verify": "node ./scripts/docs/check-governance.mjs",
+    "conformance:verify": "node ./scripts/check-article-conformance.mjs",
+    "architecture:verify": "node ./scripts/architecture/check-dependencies.mjs"
+  }
+}
