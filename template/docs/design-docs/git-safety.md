@@ -9,6 +9,9 @@ Source of Truth: docs/design-docs/git-safety.md
 
 - Never revert/delete work you did not author unless explicitly requested in-thread.
 - Never run destructive git/file commands without explicit written instruction.
+- Never use `git stash` unless explicitly requested in-thread.
+- Never switch branches or create/remove/modify git worktrees unless explicitly requested in-thread.
+- Avoid repo-wide blind search/replace scripts; keep edits path-scoped and reviewable.
 - Never edit `.env` or environment variable files.
 - Keep commits atomic and path-explicit.
 - Never use `git add .` or `git commit -am`.
@@ -19,3 +22,4 @@ Source of Truth: docs/design-docs/git-safety.md
 - Quote git paths containing brackets/parentheses when staging or committing.
 - One logical change per commit; no mixed concerns.
 - Do not amend commits unless explicitly approved in this conversation.
+- For multi-line GitHub issue/PR comments via `gh`, use heredoc (`-F - <<'EOF'`) to preserve newlines and avoid shell escaping corruption.

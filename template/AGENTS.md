@@ -84,12 +84,15 @@ Docs are part of done.
 - Canonical policy location: `docs/design-docs/git-safety.md`.
 - Never edit `.env` or environment variable files.
 - Never run destructive git/file commands without explicit written instruction.
+- Do not use `git stash` unless explicitly requested in-thread.
+- Do not switch branches or modify git worktrees unless explicitly requested in-thread.
 
 ## Test and Validation Expectations
 
 - Add/adjust tests for behavior changes.
 - Every bug fix needs a regression test.
 - Critical flows require focused coverage.
+- If required dependencies/tools are missing, install via the repo-defined package manager and rerun the exact command once.
 
 ## If Unsure
 

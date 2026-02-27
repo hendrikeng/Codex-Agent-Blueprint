@@ -15,6 +15,7 @@ Source of Truth: This document.
 - Keep architecture boundaries enforceable.
 - Keep security and data-safety controls explicit.
 - Docs are part of done.
+- Canonical docs must remain environment-agnostic: no personal machine paths, hostnames, credentials, or private runbooks.
 
 ## Validation Gates
 

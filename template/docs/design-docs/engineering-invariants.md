@@ -11,6 +11,8 @@ Source of Truth: This document.
 - Authorization/isolation boundary enforcement.
 - Deterministic numeric and timestamp handling for critical domains.
 - Shared contracts define inter-module boundaries.
+- Prefer root-cause fixes over superficial patches.
+- Keep files concise and refactor when size hurts legibility or testability.
 
 ## Documentation Discipline
 
