@@ -1051,14 +1051,16 @@ async function runCommand(paths, options) {
     throw new Error('Refusing to start with a dirty git worktree. Use --allow-dirty true to override.');
   }
 
+  let processed = await runLoop(paths, state, options, config, 'run');
+
   if (!asBoolean(options.skipPromotion, false)) {
     const promoted = await promoteFuturePlans(paths, state, options);
     if (promoted > 0) {
       console.log(`[orchestrator] promoted ${promoted} future plan(s) into docs/exec-plans/active.`);
+      const processedAfterPromotion = await runLoop(paths, state, options, config, 'run');
+      processed += processedAfterPromotion;
     }
   }
-
-  const processed = await runLoop(paths, state, options, config, 'run');
 
   await logEvent(paths, state, 'run_finished', {
     processedPlans: processed,

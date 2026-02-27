@@ -10,6 +10,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 ## Goals
 
 - Promote ready future blueprints into executable plans.
+- Run order: continue existing active queue first, then promote ready future blueprints.
 - Execute one plan per isolated session with resumable handoffs.
 - Record structured run traces for auditability.
 - Move completed plans into `docs/exec-plans/completed/` with evidence.
