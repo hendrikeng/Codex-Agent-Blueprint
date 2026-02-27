@@ -74,7 +74,7 @@ Start with:
 - Start run: `npm run automation:run -- --mode guarded`
 - Resume run: `npm run automation:resume`
 - Audit runs: `npm run automation:audit -- --json true`
-- Executor is required: pass `--executor "<command>"` on `automation:run`, or set a repo default in `docs/ops/automation/orchestrator.config.json`.
+- Executor is configured per repository in `docs/ops/automation/orchestrator.config.json`; use `--executor "<command>"` only for one-off overrides.
 
 ## Change Discipline
 

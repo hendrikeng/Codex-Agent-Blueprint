@@ -1,6 +1,6 @@
 {
   "executor": {
-    "command": "",
+    "command": "codex exec --full-auto \"Continue plan {plan_id} in {plan_file}. Apply changes and run relevant checks.\"",
     "handoffExitCode": 75
   },
   "validationCommands": [],

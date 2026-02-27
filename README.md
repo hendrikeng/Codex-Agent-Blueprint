@@ -32,7 +32,7 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 - `automation:run` -> `node ./scripts/automation/orchestrator.mjs run`
 - `automation:resume` -> `node ./scripts/automation/orchestrator.mjs resume`
 - `automation:audit` -> `node ./scripts/automation/orchestrator.mjs audit`
-- Executor is required: pass `--executor "<command>"` on `automation:run`, or set a repo default in `docs/ops/automation/orchestrator.config.json`.
+- Executor is configured per repository in `docs/ops/automation/orchestrator.config.json`; use `--executor "<command>"` only for one-off overrides.
 
 ## When To Run Checks
 
