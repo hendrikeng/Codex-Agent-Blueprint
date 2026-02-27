@@ -34,7 +34,6 @@ Options:
   --context-threshold <n>            Trigger rollover when contextRemaining < n
   --handoff-token-budget <n>         Metadata field for handoff budget reporting
   --max-rollovers <n>                Maximum rollovers per plan (default: 5)
-  --executor "<command>"             Shell command used to execute each plan
   --validation "cmd1;;cmd2"          Validation commands separated by ';;'
   --commit true|false                Create atomic git commit per completed plan
   --skip-promotion true|false        Skip future->active promotion stage
@@ -210,7 +209,7 @@ async function loadConfig(paths) {
 }
 
 function configuredExecutorCommand(options, config) {
-  return String(options.executorCommand || config.executor.command || '').trim();
+  return String(config.executor.command || '').trim();
 }
 
 function assertExecutorConfigured(options, config) {
@@ -220,7 +219,7 @@ function assertExecutorConfigured(options, config) {
 
   if (!configuredExecutorCommand(options, config)) {
     throw new Error(
-      'No executor command configured. Set --executor or docs/ops/automation/orchestrator.config.json executor.command.'
+      'No executor command configured. Set docs/ops/automation/orchestrator.config.json executor.command.'
     );
   }
 }
@@ -480,7 +479,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   if (!configuredExecutor) {
     return {
       status: 'failed',
-      reason: 'No executor command configured (set --executor or docs/ops/automation/orchestrator.config.json executor.command).'
+      reason: 'No executor command configured (set docs/ops/automation/orchestrator.config.json executor.command).'
     };
   }
 
@@ -1221,6 +1220,12 @@ async function main() {
     process.exit(command ? 0 : 1);
   }
 
+  if (rawOptions.executor != null || rawOptions['executor-command'] != null) {
+    throw new Error(
+      'Executor CLI override is disabled. Set docs/ops/automation/orchestrator.config.json executor.command.'
+    );
+  }
+
   const options = {
     ...rawOptions,
     mode: rawOptions.mode ?? 'guarded',
@@ -1228,7 +1233,6 @@ async function main() {
     contextThreshold: asInteger(rawOptions['context-threshold'] ?? rawOptions.contextThreshold, DEFAULT_CONTEXT_THRESHOLD),
     handoffTokenBudget: asInteger(rawOptions['handoff-token-budget'] ?? rawOptions.handoffTokenBudget, DEFAULT_HANDOFF_TOKEN_BUDGET),
     maxRollovers: asInteger(rawOptions['max-rollovers'] ?? rawOptions.maxRollovers, DEFAULT_MAX_ROLLOVERS),
-    executorCommand: rawOptions.executor ?? rawOptions['executor-command'] ?? '',
     validationCommands: rawOptions.validation ?? rawOptions['validation-commands'] ?? '',
     commit: asBoolean(rawOptions.commit, true),
     skipPromotion: asBoolean(rawOptions['skip-promotion'] ?? rawOptions.skipPromotion, false),

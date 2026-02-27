@@ -32,9 +32,9 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 
 ## Executor Configuration
 
-- `executor.command` in `docs/ops/automation/orchestrator.config.json` is the default used by `run`/`resume`.
+- `executor.command` in `docs/ops/automation/orchestrator.config.json` is required for `run`/`resume`.
 - Set this once per repository (default here is Codex non-interactive).
-- Use `--executor "<command>"` only for one-off overrides.
+- If empty, `run`/`resume` fail immediately with a clear error.
 
 ## Policy Controls
 
