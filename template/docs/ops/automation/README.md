@@ -35,6 +35,9 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - `executor.command` in `docs/ops/automation/orchestrator.config.json` is required for `run`/`resume`.
 - Set this once per repository (default here is Codex non-interactive).
 - If empty, `run`/`resume` fail immediately with a clear error.
+- Example (`orchestrator.config.json`):
+  - `"command": "codex exec --full-auto \"Continue plan {plan_id} in {plan_file}. Apply changes and run relevant checks.\""`
+- Do not use plain `"codex"` (interactive mode will block orchestration).
 
 ## Policy Controls
 
