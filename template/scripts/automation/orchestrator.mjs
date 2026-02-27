@@ -611,6 +611,25 @@ function updateSimpleMetadataField(content, field, value) {
   return `${content.trimEnd()}\n${field}: ${value}\n`;
 }
 
+function documentStatusValue(content) {
+  const match = content.match(/^Status:\s*(.+)$/m);
+  return normalizeStatus(match?.[1] ?? '');
+}
+
+async function evaluateCompletionGate(planPath) {
+  const content = await fs.readFile(planPath, 'utf8');
+  const documentStatus = documentStatusValue(content);
+
+  if (documentStatus === 'completed') {
+    return { ready: true, reason: null };
+  }
+
+  return {
+    ready: false,
+    reason: 'Plan is not marked complete. Set top-level `Status: completed` in the plan document when ready.'
+  };
+}
+
 async function runValidation(paths, options, config) {
   const explicit = typeof options.validationCommands === 'string' && options.validationCommands.trim().length > 0
     ? options.validationCommands.split(';;').map((value) => value.trim()).filter(Boolean)
@@ -913,6 +932,15 @@ async function processPlan(plan, paths, state, options, config) {
       };
     }
 
+    const completionGate = await evaluateCompletionGate(plan.filePath);
+    if (!completionGate.ready) {
+      await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
+      return {
+        outcome: 'pending',
+        reason: completionGate.reason
+      };
+    }
+
     const completedPath = await finalizeCompletedPlan(
       plan,
       paths,
@@ -971,6 +999,7 @@ async function collectPlanCatalog(paths) {
 async function runLoop(paths, state, options, config, runMode) {
   let processed = 0;
   const maxPlans = asInteger(options.maxPlans, Number.MAX_SAFE_INTEGER);
+  const deferredPlanIds = new Set();
 
   while (processed < maxPlans) {
     const catalog = await collectPlanCatalog(paths);
@@ -979,7 +1008,11 @@ async function runLoop(paths, state, options, config, runMode) {
       ...catalog.completed.map((plan) => plan.planId)
     ]);
 
-    const failedOrBlockedIds = new Set([...state.failedPlanIds, ...state.blockedPlanIds]);
+    const failedOrBlockedIds = new Set([
+      ...state.failedPlanIds,
+      ...state.blockedPlanIds,
+      ...deferredPlanIds
+    ]);
     const executable = executablePlans(catalog.active, completedIds, failedOrBlockedIds);
     const blockedByDependency = blockedPlans(catalog.active, completedIds, failedOrBlockedIds);
 
@@ -1021,6 +1054,12 @@ async function runLoop(paths, state, options, config, runMode) {
         state.blockedPlanIds.push(nextPlan.planId);
       }
       await logEvent(paths, state, 'plan_blocked', {
+        planId: nextPlan.planId,
+        reason: outcome.reason
+      }, options.dryRun);
+    } else if (outcome.outcome === 'pending') {
+      deferredPlanIds.add(nextPlan.planId);
+      await logEvent(paths, state, 'plan_pending', {
         planId: nextPlan.planId,
         reason: outcome.reason
       }, options.dryRun);

@@ -69,6 +69,15 @@ async function scanPhase(phase, directoryPath) {
       if (!/^##\s+Validation Evidence\b/m.test(content)) {
         addFinding('MISSING_VALIDATION_SECTION', "Completed plan is missing '## Validation Evidence' section", rel);
       }
+
+      const canonicalStatus = normalizeStatus(content.match(/^Status:\s*(.+)$/m)?.[1] ?? '');
+      if (canonicalStatus && canonicalStatus !== 'completed') {
+        addFinding(
+          'CANONICAL_STATUS_MISMATCH',
+          `Completed plan top-level Status must be 'completed' (found '${canonicalStatus}')`,
+          rel
+        );
+      }
     }
 
     const planId = metadataValue(metadata, 'Plan-ID') ?? inferPlanId(content, filePath);

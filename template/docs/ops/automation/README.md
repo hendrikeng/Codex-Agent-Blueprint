@@ -54,6 +54,8 @@ Executor commands should use these outcomes:
 - Exit code `0`: success (or write result status `completed`).
 - Exit code `75`: request session rollover/handoff.
 - Non-zero other than `75`: fail execution.
+- A plan is auto-moved to `docs/exec-plans/completed/` only when its top-level `Status:` line is `completed`.
+- If the top-level `Status:` is not `completed`, orchestration keeps the plan in `docs/exec-plans/active/` for later `resume`.
 
 Optional result payload (path from `ORCH_RESULT_PATH`):
 
