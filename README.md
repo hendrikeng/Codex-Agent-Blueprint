@@ -1,4 +1,4 @@
-# Codex Agent Blueprint
+# Agent Blueprint
 
 Status: canonical
 Owner: Platform Engineering
@@ -53,7 +53,7 @@ Use this when initializing a new repo from the blueprint:
 Suggested prompt for an agent:
 
 ```text
-Initialize this repository from the Codex Agent Blueprint template.
+Initialize this repository from the Agent Blueprint template.
 Replace all placeholders using project-specific values.
 Then run ./scripts/check-template-placeholders.sh and ./scripts/bootstrap-verify.sh.
 Do not stop until both pass with zero errors.
