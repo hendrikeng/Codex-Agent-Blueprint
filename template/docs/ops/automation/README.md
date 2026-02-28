@@ -55,12 +55,15 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 ## Executor Configuration
 
 - `executor.command` in `docs/ops/automation/orchestrator.config.json` is required for `run`/`resume`.
-- Set this once per repository (default here is Codex non-interactive).
+- Set this once per repository; default is the portable `executor-wrapper` entrypoint.
 - If empty, `run`/`resume` fail immediately with a clear error.
 - Example (`orchestrator.config.json`):
-  - `"command": "codex exec --full-auto \"Continue plan {plan_id} in {plan_file}. Apply the next concrete step. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. If all acceptance criteria and required validations are complete, set top-level Status: completed; otherwise keep top-level Status: in-progress and list remaining work.\""`
+  - `"command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --result-path {result_path}"`
+  - `"provider": "codex"` (override per run with `ORCH_EXECUTOR_PROVIDER=...`)
+  - `"providers.codex.command": "codex exec --full-auto {prompt}"` (`{prompt}` is required)
   - `"contextThreshold": 10000`
   - `"requireResultPayload": true`
+  - `executor.promptTemplate` is provider-agnostic and reused across Codex/Claude/Gemini/Grok adapters.
 - Validation lanes:
   - `validation.always`: sandbox-safe checks that should run in every completion gate.
   - `validation.always` should include a unit/integration test command (framework-appropriate).
@@ -83,7 +86,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - Historical cleanup supports `--scope completed` to canonicalize completed-plan evidence metadata and indexes.
   - Evidence folders with markdown artifacts always have a canonical `README.md` generated/maintained by curation.
   - `docs/exec-plans/evidence-index/README.md` is generated/maintained as the index-directory guide.
-- Do not use plain `"codex"` (interactive mode will block orchestration).
+- Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
 
 ## Plan File Naming
 
