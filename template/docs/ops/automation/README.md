@@ -60,10 +60,13 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - Example (`orchestrator.config.json`):
   - `"command": "codex exec --full-auto \"Continue plan {plan_id} in {plan_file}. Apply the next concrete step. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and contextRemaining. If all acceptance criteria and required validations are complete, set top-level Status: completed; otherwise keep top-level Status: in-progress and list remaining work.\""`
 - Validation lanes:
-  - `validation.always`: sandbox-safe checks run before completion.
+  - `validation.always`: sandbox-safe checks that should run in every completion gate.
+  - `validation.always` should include a unit/integration test command (framework-appropriate).
   - `validation.hostRequired`: Docker/port/browser checks required before completion.
+  - `validation.hostRequired` should include infra/bootstrap commands plus host-dependent E2E/system tests.
   - `validation.hostRequired` must be set per repository for DB/search/browser-dependent plans; an empty list means host validation auto-passes.
-  - `validation.hostRequiredExamples` in `orchestrator.config.json` provides a starter baseline (`infra`, `db migrate`, host-dependent tests) that should be replaced with repo-specific commands.
+  - `alwaysExamples` and `hostRequiredExamples` in `orchestrator.config.json` provide a starter baseline (`unit`, `infra`, `db migrate`, `e2e`) that should be replaced with repo-specific commands.
+  - Framework mapping is repository-defined (`vitest`, `jest`, `playwright`, `pytest`, `go test`, etc.); lane intent is mandatory even when command names differ.
   - `validation.host.mode`: `ci`, `local`, or `hybrid` (default).
   - `validation.host.ci.command`: optional command that performs CI-dispatched host validation.
   - `validation.host.local.command`: optional local host-validation command override.

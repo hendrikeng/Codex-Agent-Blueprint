@@ -5,11 +5,14 @@
   },
   "validation": {
     "always": [],
+    "alwaysExamples": [
+      "npm run test:unit"
+    ],
     "hostRequired": [],
     "hostRequiredExamples": [
       "npm run infra:up",
       "npm run db:migrate",
-      "npm run test:e2e:api-critical"
+      "npm run test:e2e"
     ],
     "host": {
       "mode": "hybrid",
