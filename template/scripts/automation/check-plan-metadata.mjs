@@ -85,8 +85,6 @@ async function scanPhase(phase, directoryPath) {
       phase,
       rel,
       planId,
-      status,
-      promotedPlan: metadataValue(metadata, 'Promoted-Plan'),
       dependencies: parseListField(metadataValue(metadata, 'Dependencies'))
     });
   }
@@ -103,8 +101,6 @@ async function main() {
 
   const allPlans = [...futurePlans, ...activePlans, ...completedPlans];
   const seenPlanIds = new Map();
-  const allPlanPaths = new Set(allPlans.map((plan) => plan.rel));
-  const groupedByPlanId = new Map();
 
   for (const plan of allPlans) {
     if (!plan.planId) {
@@ -112,67 +108,16 @@ async function main() {
       continue;
     }
 
-    if (!groupedByPlanId.has(plan.planId)) {
-      groupedByPlanId.set(plan.planId, []);
-    }
-    groupedByPlanId.get(plan.planId).push(plan);
-  }
-
-  for (const [planId, group] of groupedByPlanId.entries()) {
-    seenPlanIds.set(planId, group[0].rel);
-
-    if (group.length === 1) {
-      continue;
-    }
-
-    const nonPromotedFuture = group.filter(
-      (plan) => !(plan.phase === 'future' && plan.status === 'promoted')
-    );
-
-    if (nonPromotedFuture.length === 1) {
-      const target = nonPromotedFuture[0];
-      const promotedFutureCopies = group.filter(
-        (plan) => plan.phase === 'future' && plan.status === 'promoted'
-      );
-
-      for (const futurePlan of promotedFutureCopies) {
-        if (!futurePlan.promotedPlan) {
-          addFinding(
-            'MISSING_PROMOTED_PLAN',
-            `Promoted future plan '${planId}' is missing metadata field 'Promoted-Plan'`,
-            futurePlan.rel
-          );
-          continue;
-        }
-
-        if (!allPlanPaths.has(futurePlan.promotedPlan)) {
-          addFinding(
-            'INVALID_PROMOTED_PLAN',
-            `Promoted-Plan '${futurePlan.promotedPlan}' does not exist`,
-            futurePlan.rel
-          );
-          continue;
-        }
-
-        if (futurePlan.promotedPlan !== target.rel) {
-          addFinding(
-            'PROMOTED_PLAN_MISMATCH',
-            `Promoted-Plan points to '${futurePlan.promotedPlan}' but active/completed copy is '${target.rel}'`,
-            futurePlan.rel
-          );
-        }
-      }
-
-      continue;
-    }
-
-    for (let index = 1; index < group.length; index += 1) {
+    if (seenPlanIds.has(plan.planId)) {
       addFinding(
         'DUPLICATE_PLAN_ID',
-        `Duplicate Plan-ID '${planId}' (also in ${group[0].rel})`,
-        group[index].rel
+        `Duplicate Plan-ID '${plan.planId}' (also in ${seenPlanIds.get(plan.planId)})`,
+        plan.rel
       );
+      continue;
     }
+
+    seenPlanIds.set(plan.planId, plan.rel);
   }
 
   for (const plan of allPlans) {

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export const FUTURE_STATUSES = new Set(['draft', 'ready-for-promotion', 'promoted']);
+export const FUTURE_STATUSES = new Set(['draft', 'ready-for-promotion']);
 export const ACTIVE_STATUSES = new Set(['queued', 'in-progress', 'blocked', 'validation', 'completed', 'failed']);
 export const COMPLETED_STATUSES = new Set(['completed']);
 

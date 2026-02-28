@@ -12,7 +12,7 @@ Track future-state blueprints that are intentionally not yet implemented.
 Each future blueprint must include a `## Metadata` section with:
 
 - `Plan-ID`
-- `Status` (`draft` | `ready-for-promotion` | `promoted`)
+- `Status` (`draft` | `ready-for-promotion`)
 - `Priority` (`p0` | `p1` | `p2` | `p3`)
 - `Owner`
 - `Acceptance-Criteria`
@@ -29,4 +29,4 @@ Optional metadata:
 
 1. `draft` stays in `docs/future/`.
 2. `ready-for-promotion` is eligible for automation promotion into `docs/exec-plans/active/`.
-3. Once promoted, source blueprint status becomes `promoted` and links to the generated active plan.
+3. Once promoted, the blueprint file is moved from `docs/future/` into `docs/exec-plans/active/`.

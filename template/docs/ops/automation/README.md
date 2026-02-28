@@ -10,7 +10,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 ## Goals
 
 - Promote ready future blueprints into executable plans.
-- Keep future blueprints as historical source docs by marking them `Status: promoted` with a `Promoted-Plan` link.
+- Promotion moves the blueprint file from `docs/future/` into `docs/exec-plans/active/`.
 - Run order: continue existing active queue first, then promote ready future blueprints.
 - Execute one plan per isolated session with resumable handoffs.
 - Record structured run traces for auditability.
