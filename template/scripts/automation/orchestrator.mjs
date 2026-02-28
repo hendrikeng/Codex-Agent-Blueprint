@@ -903,8 +903,10 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     reportedStatus === 'handoff_required' || reportedStatus === 'blocked' || reportedStatus === 'failed'
       ? reportedStatus
       : 'completed';
-  const contextRemaining = Number(resultPayload.contextRemaining);
-  const hasContextRemaining = Number.isFinite(contextRemaining);
+  const rawContextRemaining = resultPayload.contextRemaining;
+  const hasContextRemaining =
+    typeof rawContextRemaining === 'number' && Number.isFinite(rawContextRemaining);
+  const contextRemaining = hasContextRemaining ? rawContextRemaining : null;
 
   if (normalizedStatus === 'completed' && options.requireResultPayload && !hasContextRemaining) {
     return {
@@ -930,7 +932,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     status: normalizedStatus,
     reason: resultPayload.reason ?? null,
     summary: resultPayload.summary ?? null,
-    contextRemaining: hasContextRemaining ? contextRemaining : null,
+    contextRemaining,
     resultPayloadFound: true
   };
 }
@@ -1111,6 +1113,32 @@ async function evaluateCompletionGate(planPath) {
     reason: 'Plan is not marked complete. Set top-level `Status: completed` in the plan document when ready.'
   };
 }
+async function findPlanRecordById(paths, planId) {
+  const [activePlans, completedPlans] = await Promise.all([
+    loadPlanRecords(paths.rootDir, paths.activeDir, 'active'),
+    loadPlanRecords(paths.rootDir, paths.completedDir, 'completed')
+  ]);
+
+  return (
+    activePlans.find((candidate) => candidate.planId === planId) ??
+    completedPlans.find((candidate) => candidate.planId === planId) ??
+    null
+  );
+}
+
+function syncPlanRecord(plan, nextRecord) {
+  if (!nextRecord) {
+    return;
+  }
+
+  plan.filePath = nextRecord.filePath;
+  plan.rel = nextRecord.rel;
+  plan.phase = nextRecord.phase;
+  plan.status = nextRecord.status;
+  plan.metadata = nextRecord.metadata;
+  plan.content = nextRecord.content;
+}
+
 
 function resolveDefaultValidationCommands(rootDir, configuredCommands) {
   if (Array.isArray(configuredCommands) && configuredCommands.length > 0) {
@@ -2397,6 +2425,55 @@ async function processPlan(plan, paths, state, options, config) {
       return {
         outcome: 'failed',
         reason: sessionResult.reason ?? 'executor failed'
+      };
+    }
+
+    if (!(await exists(plan.filePath))) {
+      const relocatedPlan = await findPlanRecordById(paths, plan.planId);
+      if (relocatedPlan?.phase === 'completed') {
+        const completionGateForRelocatedPlan = await evaluateCompletionGate(relocatedPlan.filePath);
+        if (!completionGateForRelocatedPlan.ready) {
+          return {
+            outcome: 'failed',
+            reason: `Plan was moved to completed without completion status. ${completionGateForRelocatedPlan.reason}`
+          };
+        }
+
+        await canonicalizeCompletedPlanEvidence(relocatedPlan, paths, options, config);
+        await updateProductSpecs(plan, relocatedPlan.filePath, paths, state, options);
+
+        let commitResult = { ok: true, committed: false, commitHash: null };
+        if (asBoolean(options.commit, config.git.atomicCommits !== false)) {
+          commitResult = createAtomicCommit(paths.rootDir, plan.planId, options.dryRun);
+          if (!commitResult.ok) {
+            return {
+              outcome: 'failed',
+              reason: commitResult.reason ?? 'atomic commit failed'
+            };
+          }
+          if (commitResult.committed) {
+            state.stats.commits += 1;
+          }
+        }
+
+        return {
+          outcome: 'completed',
+          reason: 'completed',
+          completedPath: relocatedPlan.rel,
+          commitHash: commitResult.commitHash,
+          validationEvidence: []
+        };
+      }
+
+      if (relocatedPlan) {
+        syncPlanRecord(plan, relocatedPlan);
+      }
+    }
+
+    if (!(await exists(plan.filePath))) {
+      return {
+        outcome: 'failed',
+        reason: `Plan file is missing after executor session: ${plan.rel}`
       };
     }
 
