@@ -2578,6 +2578,23 @@ async function collectPlanCatalog(paths) {
   };
 }
 
+function reconcileOutcomeTracking(state, catalog) {
+  const completedIds = new Set([
+    ...state.completedPlanIds,
+    ...catalog.completed.map((plan) => plan.planId)
+  ]);
+  const blockedIds = new Set(
+    catalog.active.filter((plan) => plan.status === 'blocked').map((plan) => plan.planId)
+  );
+  const failedIds = new Set(
+    catalog.active.filter((plan) => plan.status === 'failed').map((plan) => plan.planId)
+  );
+
+  state.completedPlanIds = [...completedIds];
+  state.blockedPlanIds = [...blockedIds].filter((planId) => !completedIds.has(planId));
+  state.failedPlanIds = [...failedIds].filter((planId) => !completedIds.has(planId));
+}
+
 async function runLoop(paths, state, options, config, runMode) {
   let processed = 0;
   const maxPlans = asInteger(options.maxPlans, Number.MAX_SAFE_INTEGER);
@@ -2586,10 +2603,8 @@ async function runLoop(paths, state, options, config, runMode) {
 
   while (processed < maxPlans) {
     const catalog = await collectPlanCatalog(paths);
-    const completedIds = new Set([
-      ...state.completedPlanIds,
-      ...catalog.completed.map((plan) => plan.planId)
-    ]);
+    reconcileOutcomeTracking(state, catalog);
+    const completedIds = new Set(state.completedPlanIds);
 
     const failedOrBlockedIds = new Set([
       ...state.failedPlanIds,
