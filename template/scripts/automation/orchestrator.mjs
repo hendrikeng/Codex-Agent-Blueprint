@@ -81,6 +81,7 @@ Options:
   --allow-dirty true|false           Allow starting with dirty git worktree
   --run-id <id>                      Resume or audit a specific run id
   --plan-id <id>                     Filter curation scope to paths containing this value
+  --scope active|completed|all       Curation scope for curate-evidence (default: all)
   --dry-run true|false               Do not write changes or run git commits
   --json true|false                  JSON output for audit
 `);
@@ -898,22 +899,45 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   };
 }
 
-function upsertSection(content, sectionTitle, bodyLines) {
-  const sectionRegex = new RegExp(`^##\\s+${escapeRegex(sectionTitle)}\\s*$([\\s\\S]*?)(?=^##\\s+|\\s*$)`, 'm');
-  const body = Array.isArray(bodyLines) ? bodyLines.join('\n') : String(bodyLines ?? '');
-  const rendered = `## ${sectionTitle}\n\n${body.trim()}\n\n`;
-
-  if (sectionRegex.test(content)) {
-    return content.replace(sectionRegex, rendered);
+function sectionBounds(content, sectionTitle) {
+  const headingRegex = new RegExp(`^##\\s+${escapeRegex(sectionTitle)}\\s*$`, 'm');
+  const match = headingRegex.exec(content);
+  if (!match) {
+    return null;
   }
 
-  return `${content.trimEnd()}\n\n${rendered}`;
+  const start = match.index;
+  const headingEnd = content.indexOf('\n', start);
+  const bodyStart = headingEnd === -1 ? content.length : headingEnd + 1;
+  const remaining = content.slice(bodyStart);
+  const nextHeading = /^##\s+/m.exec(remaining);
+  const end = nextHeading ? bodyStart + nextHeading.index : content.length;
+  return { start, bodyStart, end };
+}
+
+function upsertSection(content, sectionTitle, bodyLines) {
+  const body = Array.isArray(bodyLines) ? bodyLines.join('\n') : String(bodyLines ?? '');
+  const rendered = `## ${sectionTitle}\n\n${body.trim()}\n`;
+  const bounds = sectionBounds(content, sectionTitle);
+
+  if (!bounds) {
+    return `${content.trimEnd()}\n\n${rendered}\n`;
+  }
+
+  const before = content.slice(0, bounds.start).trimEnd();
+  const after = content.slice(bounds.end).trimStart();
+  if (!after) {
+    return `${before}\n\n${rendered}\n`;
+  }
+  return `${before}\n\n${rendered}\n${after}`.replace(/\n{3,}/g, '\n\n');
 }
 
 function sectionBody(content, sectionTitle) {
-  const sectionRegex = new RegExp(`^##\\s+${escapeRegex(sectionTitle)}\\s*$([\\s\\S]*?)(?=^##\\s+|\\s*$)`, 'm');
-  const match = content.match(sectionRegex);
-  return match ? String(match[1] ?? '').trim() : '';
+  const bounds = sectionBounds(content, sectionTitle);
+  if (!bounds) {
+    return '';
+  }
+  return content.slice(bounds.bodyStart, bounds.end).trim();
 }
 
 function sectionlessPreamble(content) {
@@ -926,18 +950,103 @@ function sectionlessPreamble(content) {
 
 function appendToDeliveryLog(content, entryLine) {
   const sectionTitle = 'Automated Delivery Log';
-  const sectionRegex = new RegExp(`^##\\s+${escapeRegex(sectionTitle)}\\s*$([\\s\\S]*?)(?=^##\\s+|\\s*$)`, 'm');
+  const body = sectionBody(content, sectionTitle);
+  const lines = body ? body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
+  lines.push(`- ${entryLine}`);
+  return upsertSection(content, sectionTitle, lines);
+}
 
-  if (!sectionRegex.test(content)) {
-    return `${content.trimEnd()}\n\n## ${sectionTitle}\n\n- ${entryLine}\n`;
+function normalizeBulletSection(content, sectionTitle) {
+  const body = sectionBody(content, sectionTitle);
+  if (!body) {
+    return content;
   }
 
-  return content.replace(sectionRegex, (_match, body = '') => {
-    const trimmedBody = String(body ?? '').trim();
-    const lines = trimmedBody ? trimmedBody.split(/\r?\n/) : [];
-    lines.push(`- ${entryLine}`);
-    return `## ${sectionTitle}\n\n${lines.join('\n')}\n\n`;
-  });
+  const lines = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- '));
+  const unique = [];
+  const seen = new Set();
+  for (const line of lines) {
+    if (seen.has(line)) {
+      continue;
+    }
+    seen.add(line);
+    unique.push(line);
+  }
+
+  if (unique.length === 0) {
+    return content;
+  }
+  return upsertSection(content, sectionTitle, unique);
+}
+
+function removeDuplicateSections(content, sectionTitle) {
+  let updated = content;
+  while (true) {
+    const first = sectionBounds(updated, sectionTitle);
+    if (!first) {
+      return updated;
+    }
+    const rest = updated.slice(first.end);
+    const second = sectionBounds(rest, sectionTitle);
+    if (!second) {
+      return updated;
+    }
+
+    const secondStart = first.end + second.start;
+    const secondEnd = first.end + second.end;
+    const before = updated.slice(0, secondStart).trimEnd();
+    const after = updated.slice(secondEnd).trimStart();
+    updated = after ? `${before}\n\n${after}` : `${before}\n`;
+  }
+}
+
+function normalizeClosureSection(content) {
+  const body = sectionBody(content, 'Closure');
+  if (!body) {
+    return content;
+  }
+
+  const lines = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- '));
+
+  const seenKeys = new Set();
+  const seenLines = new Set();
+  const kept = [];
+  for (const line of lines) {
+    const keyMatch = line.match(/^- ([^:]+):/);
+    if (keyMatch) {
+      const key = keyMatch[1].trim().toLowerCase();
+      if (seenKeys.has(key)) {
+        continue;
+      }
+      seenKeys.add(key);
+      let normalizedLine = line;
+      if (key === 'completed at') {
+        const rawValue = line.replace(/^- Completed At:\s*/, '').trim();
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?$/.test(rawValue)) {
+          normalizedLine = `- Completed At: ${rawValue}Z`;
+        }
+      }
+      kept.push(normalizedLine);
+      continue;
+    }
+
+    if (seenLines.has(line)) {
+      continue;
+    }
+    seenLines.add(line);
+    kept.push(line);
+  }
+
+  if (kept.length === 0) {
+    return content;
+  }
+  return upsertSection(content, 'Closure', kept);
 }
 
 function updateSimpleMetadataField(content, field, value) {
@@ -1467,10 +1576,9 @@ async function curateEvidenceDirectory(paths, directoryRel, options, keepMaxPerB
               .map((entry) => `- [\`${entry.fileName}\`](./${entry.fileName})`)
           : ['- none'];
       const curationLines = [
-        `- Curated At: ${nowIso()}`,
         `- Dedup Mode: strict-upsert`,
-        `- Files Kept: ${keptFiles.length}`,
-        `- Files Pruned: ${prune.length}`
+        `- Files Currently Kept: ${keptFiles.length}`,
+        '- Canonicalized: true'
       ];
       const preamble = sectionlessPreamble(rawReadme);
       const resultSummary = sectionBody(rawReadme, 'Result Summary');
@@ -1486,7 +1594,10 @@ async function curateEvidenceDirectory(paths, directoryRel, options, keepMaxPerB
         rebuilt.push('## Result Summary', '', resultSummary, '');
       }
       rebuilt.push('## Curation', '', ...curationLines, '');
-      await fs.writeFile(readmeAbs, `${rebuilt.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`, 'utf8');
+      const nextReadme = `${rebuilt.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+      if (nextReadme !== rawReadme) {
+        await fs.writeFile(readmeAbs, nextReadme, 'utf8');
+      }
     }
   }
 
@@ -1566,12 +1677,20 @@ function evidenceDirectoriesFromContent(content, planRel) {
   const references = extractEvidenceReferencesFromContent(content, planRel);
   const directories = new Set();
   for (const ref of references) {
-    if (!ref.startsWith('docs/exec-plans/active/evidence/')) {
+    if (!ref.startsWith('docs/exec-plans/') || !ref.includes('/evidence/')) {
       continue;
     }
     directories.add(toPosix(path.posix.dirname(ref)));
   }
   return [...directories].sort();
+}
+
+function matchesPlanIdFilter(plan, planIdFilter) {
+  if (!planIdFilter) {
+    return true;
+  }
+  const needle = String(planIdFilter).trim().toLowerCase();
+  return plan.planId.toLowerCase().includes(needle) || plan.rel.toLowerCase().includes(needle);
 }
 
 async function curateEvidenceDirectories(paths, directories, options, config) {
@@ -1674,6 +1793,31 @@ async function collectAllActiveEvidenceDirectories(paths, planIdFilter = null) {
   return directories.sort();
 }
 
+async function collectAllCompletedEvidenceDirectories(paths, planIdFilter = null) {
+  const completedPlans = await loadPlanRecords(paths.rootDir, paths.completedDir, 'completed');
+  const directories = new Set();
+
+  for (const plan of completedPlans) {
+    if (!matchesPlanIdFilter(plan, planIdFilter)) {
+      continue;
+    }
+    const refs = evidenceDirectoriesFromContent(plan.content, plan.rel);
+    for (const dir of refs) {
+      directories.add(dir);
+    }
+  }
+
+  return [...directories].sort();
+}
+
+function normalizeCurationScope(scopeValue) {
+  const normalized = String(scopeValue ?? 'all').trim().toLowerCase();
+  if (normalized === 'active' || normalized === 'completed' || normalized === 'all') {
+    return normalized;
+  }
+  throw new Error(`Invalid scope '${scopeValue}'. Expected one of: active, completed, all.`);
+}
+
 async function writeEvidenceIndex(paths, plan, content, options, config) {
   const mode = String(config.evidence?.compaction?.mode ?? 'compact-index').trim().toLowerCase();
   if (mode !== 'compact-index') {
@@ -1689,7 +1833,7 @@ async function writeEvidenceIndex(paths, plan, content, options, config) {
     `# Evidence Index: ${plan.planId}`,
     '',
     `- Plan-ID: ${plan.planId}`,
-    `- Last Updated: ${nowIso()}`,
+    `- Last Updated: ${todayIsoDate()}`,
     `- Source Plan: \`${plan.rel}\``,
     `- Total Evidence References Found: ${totalFound}`,
     `- References Included: ${selected.length}`,
@@ -1712,8 +1856,17 @@ async function writeEvidenceIndex(paths, plan, content, options, config) {
   lines.push('');
 
   if (!options.dryRun) {
+    const rendered = `${lines.join('\n')}\n`;
     await fs.mkdir(path.dirname(indexAbs), { recursive: true });
-    await fs.writeFile(indexAbs, lines.join('\n'), 'utf8');
+    let existingText = null;
+    try {
+      existingText = await fs.readFile(indexAbs, 'utf8');
+    } catch {
+      existingText = null;
+    }
+    if (existingText !== rendered) {
+      await fs.writeFile(indexAbs, rendered, 'utf8');
+    }
   }
 
   return {
@@ -1753,6 +1906,70 @@ async function refreshEvidenceIndex(plan, paths, state, options, config) {
   }
 
   return indexResult;
+}
+
+async function canonicalizeCompletedPlanEvidence(plan, paths, options, config) {
+  if (!(await exists(plan.filePath))) {
+    return { updated: false, indexPath: null };
+  }
+
+  const raw = await fs.readFile(plan.filePath, 'utf8');
+  const indexResult = await writeEvidenceIndex(paths, plan, raw, options, config);
+  if (!indexResult) {
+    return { updated: false, indexPath: null };
+  }
+
+  let updated = setMetadataFields(raw, {
+    Status: 'completed',
+    'Done-Evidence': indexResult.indexPath
+  });
+  updated = upsertSection(updated, 'Evidence Index', [
+    `- Canonical Index: \`${indexResult.indexPath}\``,
+    `- Included References: ${indexResult.referenceCount}`,
+    `- Total References Found: ${indexResult.totalFound}`
+  ]);
+  updated = removeDuplicateSections(updated, 'Evidence Index');
+  updated = normalizeBulletSection(updated, 'Evidence Index');
+  updated = removeDuplicateSections(updated, 'Closure');
+  updated = normalizeClosureSection(updated);
+  updated = normalizeBulletSection(updated, 'Closure');
+
+  const changed = updated !== raw;
+  if (changed && !options.dryRun) {
+    await fs.writeFile(plan.filePath, updated, 'utf8');
+  }
+
+  return {
+    updated: changed,
+    indexPath: indexResult.indexPath
+  };
+}
+
+async function canonicalizeCompletedPlansEvidence(paths, options, config, planIdFilter = null) {
+  const completedPlans = await loadPlanRecords(paths.rootDir, paths.completedDir, 'completed');
+  let visited = 0;
+  let updated = 0;
+  let indexed = 0;
+
+  for (const plan of completedPlans) {
+    if (!matchesPlanIdFilter(plan, planIdFilter)) {
+      continue;
+    }
+    visited += 1;
+    const result = await canonicalizeCompletedPlanEvidence(plan, paths, options, config);
+    if (result.updated) {
+      updated += 1;
+    }
+    if (result.indexPath) {
+      indexed += 1;
+    }
+  }
+
+  return {
+    plansVisited: visited,
+    plansUpdated: updated,
+    plansIndexed: indexed
+  };
 }
 
 async function setHostValidationSection(planPath, status, provider, reason, dryRun) {
@@ -2576,16 +2793,32 @@ async function auditCommand(paths, options) {
 
 async function curateEvidenceCommand(paths, options) {
   const config = await loadConfig(paths);
-  const directories = await collectAllActiveEvidenceDirectories(paths, options.planId ?? null);
+  await ensureDirectories(paths, options.dryRun);
+
+  const scope = normalizeCurationScope(options.scope);
+  const directories = [];
+  if (scope === 'active' || scope === 'all') {
+    directories.push(...(await collectAllActiveEvidenceDirectories(paths, options.planId ?? null)));
+  }
+  if (scope === 'completed' || scope === 'all') {
+    directories.push(...(await collectAllCompletedEvidenceDirectories(paths, options.planId ?? null)));
+  }
+
   const summary = await curateEvidenceDirectories(paths, directories, options, config);
+  const completedSummary =
+    scope === 'completed' || scope === 'all'
+      ? await canonicalizeCompletedPlansEvidence(paths, options, config, options.planId ?? null)
+      : { plansVisited: 0, plansUpdated: 0, plansIndexed: 0 };
 
   if (asBoolean(options.json, false)) {
     console.log(
       JSON.stringify(
         {
           command: 'curate-evidence',
-          directories: directories.length,
-          ...summary
+          scope,
+          directories: [...new Set(directories)].length,
+          ...summary,
+          ...completedSummary
         },
         null,
         2
@@ -2595,11 +2828,15 @@ async function curateEvidenceCommand(paths, options) {
   }
 
   console.log('[orchestrator] evidence curation complete.');
-  console.log(`- directories: ${directories.length}`);
+  console.log(`- scope: ${scope}`);
+  console.log(`- directories: ${[...new Set(directories)].length}`);
   console.log(`- files pruned: ${summary.filesPruned}`);
   console.log(`- files kept: ${summary.filesKept}`);
   console.log(`- docs updated: ${summary.filesUpdated}`);
   console.log(`- path replacements: ${summary.replacementsApplied}`);
+  console.log(`- completed plans visited: ${completedSummary.plansVisited}`);
+  console.log(`- completed plans updated: ${completedSummary.plansUpdated}`);
+  console.log(`- completed plans indexed: ${completedSummary.plansIndexed}`);
 }
 
 async function main() {
@@ -2635,6 +2872,7 @@ async function main() {
     json: asBoolean(rawOptions.json, false),
     runId: rawOptions['run-id'] ?? rawOptions.runId,
     planId: rawOptions['plan-id'] ?? rawOptions.planId,
+    scope: rawOptions.scope ?? 'all',
     handoffExitCode: asInteger(rawOptions['handoff-exit-code'] ?? rawOptions.handoffExitCode, DEFAULT_HANDOFF_EXIT_CODE)
   };
 

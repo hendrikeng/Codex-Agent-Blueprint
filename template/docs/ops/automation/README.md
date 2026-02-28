@@ -32,7 +32,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - `node ./scripts/automation/orchestrator.mjs run --mode guarded`
 - `node ./scripts/automation/orchestrator.mjs resume`
 - `node ./scripts/automation/orchestrator.mjs audit --json true`
-- `node ./scripts/automation/orchestrator.mjs curate-evidence [--plan-id <value>]`
+- `node ./scripts/automation/orchestrator.mjs curate-evidence [--scope active|completed|all] [--plan-id <value>]`
 - Optional continuation controls:
   - `--max-sessions-per-plan <n>` (default `20`)
   - `--max-rollovers <n>` (default `5`)
@@ -58,6 +58,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `evidence.lifecycle.dedupMode: "strict-upsert"` deduplicates noisy rerun artifacts by blocker signature.
   - `evidence.lifecycle.pruneOnComplete: true` re-runs curation before completion.
   - `evidence.lifecycle.keepMaxPerBlocker` controls how many artifacts remain per dedup group (default `1`).
+  - Historical cleanup supports `--scope completed` to canonicalize completed-plan evidence metadata and indexes.
 - Do not use plain `"codex"` (interactive mode will block orchestration).
 
 ## Plan File Naming
