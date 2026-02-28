@@ -6,6 +6,11 @@
   "validation": {
     "always": [],
     "hostRequired": [],
+    "hostRequiredExamples": [
+      "npm run infra:up",
+      "npm run db:migrate",
+      "npm run test:e2e:api-critical"
+    ],
     "host": {
       "mode": "hybrid",
       "ci": {

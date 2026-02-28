@@ -62,6 +62,8 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - Validation lanes:
   - `validation.always`: sandbox-safe checks run before completion.
   - `validation.hostRequired`: Docker/port/browser checks required before completion.
+  - `validation.hostRequired` must be set per repository for DB/search/browser-dependent plans; an empty list means host validation auto-passes.
+  - `validation.hostRequiredExamples` in `orchestrator.config.json` provides a starter baseline (`infra`, `db migrate`, host-dependent tests) that should be replaced with repo-specific commands.
   - `validation.host.mode`: `ci`, `local`, or `hybrid` (default).
   - `validation.host.ci.command`: optional command that performs CI-dispatched host validation.
   - `validation.host.local.command`: optional local host-validation command override.
