@@ -27,6 +27,14 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - `docs/ops/automation/handoffs/`: per-plan rollover handoff notes.
 - `docs/ops/automation/runtime/`: per-run executor result payloads and the transient active-run lock file (`orchestrator.lock.json`).
 
+## Source Of Truth
+
+- `docs/future/`: proposed upcoming work not yet executing.
+- `docs/exec-plans/active/`: current execution state and in-progress work.
+- `docs/exec-plans/completed/`: completed execution plans and closure records.
+- `docs/exec-plans/evidence-index/`: canonical compact evidence references by plan ID.
+- `docs/product-specs/current-state.md`: product-facing delivery timeline via `Automated Delivery Log`.
+
 ## CLI
 
 - `node ./scripts/automation/orchestrator.mjs run --mode guarded`
@@ -59,6 +67,8 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `evidence.lifecycle.pruneOnComplete: true` re-runs curation before completion.
   - `evidence.lifecycle.keepMaxPerBlocker` controls how many artifacts remain per dedup group (default `1`).
   - Historical cleanup supports `--scope completed` to canonicalize completed-plan evidence metadata and indexes.
+  - Evidence folders with markdown artifacts always have a canonical `README.md` generated/maintained by curation.
+  - `docs/exec-plans/evidence-index/README.md` is generated/maintained as the index-directory guide.
 - Do not use plain `"codex"` (interactive mode will block orchestration).
 
 ## Plan File Naming

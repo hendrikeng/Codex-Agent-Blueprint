@@ -1500,6 +1500,103 @@ async function collectEvidenceMarkdownFiles(directoryAbs, directoryRel, rootDir)
   return markdownFiles.sort((a, b) => b.mtimeMs - a.mtimeMs || a.fileName.localeCompare(b.fileName));
 }
 
+function titleCaseFromSlug(value) {
+  return String(value)
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function defaultEvidenceReadmePreamble(directoryRel) {
+  const folderName = path.posix.basename(directoryRel);
+  const title = titleCaseFromSlug(folderName || 'evidence');
+  return [
+    `# ${title} Evidence`,
+    '',
+    `Path: \`${directoryRel}\``,
+    'Purpose: Canonical evidence artifacts for this execution area.'
+  ].join('\n');
+}
+
+function renderEvidenceDirectoryReadme(rawReadme, directoryRel, keptFiles) {
+  const artifactLines =
+    keptFiles.length > 0
+      ? keptFiles
+          .sort((a, b) => a.fileName.localeCompare(b.fileName))
+          .map((entry) => `- [\`${entry.fileName}\`](./${entry.fileName})`)
+      : ['- none'];
+  const curationLines = [
+    '- Dedup Mode: strict-upsert',
+    `- Files Currently Kept: ${keptFiles.length}`,
+    '- Canonicalized: true'
+  ];
+
+  const preamble = sectionlessPreamble(rawReadme) || defaultEvidenceReadmePreamble(directoryRel);
+  const resultSummary = sectionBody(rawReadme, 'Result Summary');
+  const rebuilt = [
+    preamble,
+    '',
+    '## Evidence Artifacts',
+    '',
+    ...artifactLines,
+    ''
+  ];
+  if (resultSummary) {
+    rebuilt.push('## Result Summary', '', resultSummary, '');
+  }
+  rebuilt.push('## Curation', '', ...curationLines, '');
+  return `${rebuilt.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
+
+async function writeEvidenceIndexReadme(paths, options) {
+  if (options.dryRun) {
+    return;
+  }
+
+  await fs.mkdir(paths.evidenceIndexDir, { recursive: true });
+  const indexFiles = await listMarkdownFiles(paths.evidenceIndexDir, ['README.md', '.gitkeep']);
+  const readmeAbs = path.join(paths.evidenceIndexDir, 'README.md');
+  const lines = [
+    '# Evidence Index',
+    '',
+    'Purpose: Canonical, plan-scoped evidence references after curation/completion.',
+    '',
+    '## Usage',
+    '',
+    '- Each completed plan should point `Done-Evidence` to `docs/exec-plans/evidence-index/<plan-id>.md`.',
+    '- Each index file is the compact source for retained evidence links.',
+    '',
+    '## Indexed Plans',
+    ''
+  ];
+
+  if (indexFiles.length === 0) {
+    lines.push('- none');
+  } else {
+    for (const indexFile of indexFiles) {
+      const rel = toPosix(path.relative(paths.evidenceIndexDir, indexFile));
+      lines.push(`- [\`${rel}\`](./${rel})`);
+    }
+  }
+
+  lines.push('', '## Policy', '');
+  lines.push('- Evidence is curated to keep useful, non-redundant information.');
+  lines.push('- Repeated unchanged blocker reruns are collapsed by strict-upsert policy.');
+  lines.push('');
+
+  const rendered = `${lines.join('\n')}\n`;
+  let existing = null;
+  try {
+    existing = await fs.readFile(readmeAbs, 'utf8');
+  } catch {
+    existing = null;
+  }
+  if (existing !== rendered) {
+    await fs.writeFile(readmeAbs, rendered, 'utf8');
+  }
+}
+
 async function curateEvidenceDirectory(paths, directoryRel, options, keepMaxPerBlocker) {
   const directoryAbs = path.join(paths.rootDir, directoryRel);
   const files = await collectEvidenceMarkdownFiles(directoryAbs, directoryRel, paths.rootDir);
@@ -1559,7 +1656,7 @@ async function curateEvidenceDirectory(paths, directoryRel, options, keepMaxPerB
 
   const finalizedReplacements = replacements.map((entry) => ({
     fromRel: entry.fromRel,
-    toRel: readmeExists ? readmeRel : entry.fallbackToRel
+    toRel: readmeRel || entry.fallbackToRel
   }));
 
   if (!options.dryRun) {
@@ -1567,37 +1664,13 @@ async function curateEvidenceDirectory(paths, directoryRel, options, keepMaxPerB
       await fs.unlink(removed.absPath);
     }
 
+    let rawReadme = '';
     if (readmeExists) {
-      const rawReadme = await fs.readFile(readmeAbs, 'utf8');
-      const artifactLines =
-        keptFiles.length > 0
-          ? keptFiles
-              .sort((a, b) => a.fileName.localeCompare(b.fileName))
-              .map((entry) => `- [\`${entry.fileName}\`](./${entry.fileName})`)
-          : ['- none'];
-      const curationLines = [
-        `- Dedup Mode: strict-upsert`,
-        `- Files Currently Kept: ${keptFiles.length}`,
-        '- Canonicalized: true'
-      ];
-      const preamble = sectionlessPreamble(rawReadme);
-      const resultSummary = sectionBody(rawReadme, 'Result Summary');
-      const rebuilt = [
-        preamble,
-        '',
-        '## Evidence Artifacts',
-        '',
-        ...artifactLines,
-        ''
-      ];
-      if (resultSummary) {
-        rebuilt.push('## Result Summary', '', resultSummary, '');
-      }
-      rebuilt.push('## Curation', '', ...curationLines, '');
-      const nextReadme = `${rebuilt.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
-      if (nextReadme !== rawReadme) {
-        await fs.writeFile(readmeAbs, nextReadme, 'utf8');
-      }
+      rawReadme = await fs.readFile(readmeAbs, 'utf8');
+    }
+    const nextReadme = renderEvidenceDirectoryReadme(rawReadme, directoryRel, keptFiles);
+    if (nextReadme !== rawReadme) {
+      await fs.writeFile(readmeAbs, nextReadme, 'utf8');
     }
   }
 
@@ -1867,6 +1940,7 @@ async function writeEvidenceIndex(paths, plan, content, options, config) {
     if (existingText !== rendered) {
       await fs.writeFile(indexAbs, rendered, 'utf8');
     }
+    await writeEvidenceIndexReadme(paths, options);
   }
 
   return {
@@ -2809,6 +2883,7 @@ async function curateEvidenceCommand(paths, options) {
     scope === 'completed' || scope === 'all'
       ? await canonicalizeCompletedPlansEvidence(paths, options, config, options.planId ?? null)
       : { plansVisited: 0, plansUpdated: 0, plansIndexed: 0 };
+  await writeEvidenceIndexReadme(paths, options);
 
   if (asBoolean(options.json, false)) {
     console.log(
