@@ -79,6 +79,7 @@ Executor commands should use these outcomes:
 - Non-zero other than `75`: fail execution.
 - A plan is auto-moved to `docs/exec-plans/completed/` only when its top-level `Status:` line is `completed`.
 - If the top-level `Status:` is not `completed`, orchestration starts another executor session for the same plan in the same run (up to `--max-sessions-per-plan`), then leaves it in `active/` for later `resume` if still incomplete.
+- To prevent evidence/file spam loops, executor sessions that do not emit a structured result payload (`ORCH_RESULT_PATH`) are deferred after one pass.
 - If host-required validations cannot run in the current environment, orchestration keeps the plan `in-progress`, records a host-validation pending reason, and continues with other executable plans.
 - When a plan completes, `Done-Evidence` points to its canonical evidence index file.
 

@@ -785,7 +785,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   if (options.dryRun) {
     return {
       status: 'completed',
-      summary: 'Dry-run: executor skipped.'
+      summary: 'Dry-run: executor skipped.',
+      resultPayloadFound: true
     };
   }
 
@@ -829,7 +830,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   if (!resultPayload) {
     return {
       status: 'completed',
-      summary: 'Executor completed without result payload.'
+      summary: 'Executor completed without result payload.',
+      resultPayloadFound: false
     };
   }
 
@@ -855,7 +857,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     status: normalizedStatus,
     reason: resultPayload.reason ?? null,
     summary: resultPayload.summary ?? null,
-    contextRemaining: resultPayload.contextRemaining ?? null
+    contextRemaining: resultPayload.contextRemaining ?? null,
+    resultPayloadFound: true
   };
 }
 
@@ -1659,6 +1662,13 @@ async function processPlan(plan, paths, state, options, config) {
         provider: null,
         reason: completionGate.reason
       });
+
+      if (sessionResult.resultPayloadFound === false) {
+        return {
+          outcome: 'pending',
+          reason: 'Executor produced no structured result payload. Deferring to next run to prevent repeated no-signal loops.'
+        };
+      }
 
       if (session >= maxSessionsPerPlan) {
         return {

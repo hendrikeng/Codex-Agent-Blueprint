@@ -1,6 +1,6 @@
 {
   "executor": {
-    "command": "codex exec --full-auto \"Continue plan {plan_id} in {plan_file}. Apply the next concrete step. Update the plan document with progress and evidence. If all acceptance criteria and required validations are complete, set top-level Status: completed; otherwise keep top-level Status: in-progress and list remaining work.\"",
+    "command": "codex exec --full-auto \"Continue plan {plan_id} in {plan_file}. Apply the next concrete step. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and contextRemaining. If all acceptance criteria and required validations are complete, set top-level Status: completed; otherwise keep top-level Status: in-progress and list remaining work.\"",
     "handoffExitCode": 75
   },
   "validation": {
