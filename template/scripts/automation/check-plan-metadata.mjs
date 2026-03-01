@@ -61,6 +61,15 @@ async function scanPhase(phase, directoryPath) {
       }
     }
 
+    const topLevelStatus = normalizeStatus(content.match(/^Status:\s*(.+)$/m)?.[1] ?? '');
+    if (phase === 'active' && topLevelStatus === 'completed' && (status === 'blocked' || status === 'failed')) {
+      addFinding(
+        'CONTRADICTORY_STATUS',
+        `Top-level Status is 'completed' while metadata Status is '${status}'. Resolve status mismatch before orchestration.`,
+        rel
+      );
+    }
+
     if (!content.includes('## Metadata')) {
       addFinding('MISSING_METADATA_SECTION', "Missing '## Metadata' section", rel);
     }

@@ -2365,6 +2365,26 @@ function upsertSection(content, sectionTitle, bodyLines) {
   return `${before}\n\n${rendered}\n${after}`.replace(/\n{3,}/g, '\n\n');
 }
 
+function removeSection(content, sectionTitle) {
+  const bounds = sectionBounds(content, sectionTitle);
+  if (!bounds) {
+    return content;
+  }
+
+  const before = content.slice(0, bounds.start).trimEnd();
+  const after = content.slice(bounds.end).trimStart();
+  if (!before && !after) {
+    return '';
+  }
+  if (!before) {
+    return `${after}\n`;
+  }
+  if (!after) {
+    return `${before}\n`;
+  }
+  return `${before}\n\n${after}`.replace(/\n{3,}/g, '\n\n');
+}
+
 function sectionBody(content, sectionTitle) {
   const bounds = sectionBounds(content, sectionTitle);
   if (!bounds) {
@@ -3678,7 +3698,10 @@ async function setHostValidationSection(planPath, status, provider, reason, dryR
     `- Provider: ${provider || 'n/a'}`,
     `- Reason: ${reason || 'none'}`
   ];
-  const updated = upsertSection(content, 'Host Validation', lines);
+  let updated = upsertSection(content, 'Host Validation', lines);
+  if (normalizeStatus(status) === 'passed') {
+    updated = removeSection(updated, 'Remaining Validation Work (Host Required)');
+  }
   await fs.writeFile(planPath, updated, 'utf8');
 }
 
@@ -3821,11 +3844,8 @@ function gitDirty(rootDir, options = {}) {
   return dirtyPaths.some((pathValue) => !isTransientAutomationPath(pathValue));
 }
 
-function createAtomicCommit(rootDir, planId, dryRun, allowDirty, commitPolicy = {}) {
-  if (dryRun) {
-    return { ok: true, committed: false, commitHash: null, reason: 'dry-run' };
-  }
-
+function evaluateAtomicCommitReadiness(rootDir, planId, allowDirty, commitPolicy = {}, options = {}) {
+  const requireDirty = asBoolean(options.requireDirty, true);
   if (allowDirty) {
     return {
       ok: false,
@@ -3839,7 +3859,8 @@ function createAtomicCommit(rootDir, planId, dryRun, allowDirty, commitPolicy = 
     return { ok: true, committed: false, commitHash: null, reason: 'git-unavailable' };
   }
 
-  if (!gitDirty(rootDir, { ignoreTransientAutomationArtifacts: true })) {
+  const hasDirtyChanges = gitDirty(rootDir, { ignoreTransientAutomationArtifacts: true });
+  if (requireDirty && !hasDirtyChanges) {
     return { ok: true, committed: false, commitHash: null, reason: 'no-changes' };
   }
 
@@ -3882,6 +3903,20 @@ function createAtomicCommit(rootDir, planId, dryRun, allowDirty, commitPolicy = 
     }
   }
 
+  return { ok: true, committed: false, commitHash: null, reason: null };
+}
+
+function createAtomicCommit(rootDir, planId, dryRun, allowDirty, commitPolicy = {}) {
+  if (dryRun) {
+    return { ok: true, committed: false, commitHash: null, reason: 'dry-run' };
+  }
+
+  const preflight = evaluateAtomicCommitReadiness(rootDir, planId, allowDirty, commitPolicy, { requireDirty: true });
+  if (!preflight.ok || preflight.reason === 'git-unavailable' || preflight.reason === 'no-changes') {
+    return preflight;
+  }
+
+  const allowedRoots = normalizeRelativePrefixList(commitPolicy.allowedRoots);
   const addTargets = allowedRoots.length > 0 ? allowedRoots.map((entry) => shellQuote(entry)).join(' ') : '.';
   const add = runShellCapture(`git add --all -- ${addTargets}`, rootDir);
   if (add.status !== 0) {
@@ -3899,16 +3934,23 @@ function createAtomicCommit(rootDir, planId, dryRun, allowDirty, commitPolicy = 
   return { ok: true, committed: true, commitHash, reason: null };
 }
 
-async function finalizeCompletedPlan(plan, paths, state, validationEvidence, options, config, completionInfo = {}) {
-  const now = nowIso();
-  const completedDate = isoDate(now);
-  const currentBase = path.parse(path.basename(plan.filePath));
+async function resolveCompletedPlanTargetPath(planFilePath, completedDir) {
+  const completedDate = isoDate(nowIso());
+  const currentBase = path.parse(path.basename(planFilePath));
   const completedName = datedPlanFileName(completedDate, currentBase.name, currentBase.ext || '.md');
-  let targetPath = path.join(paths.completedDir, completedName);
+  let targetPath = path.join(completedDir, completedName);
   if (await exists(targetPath)) {
     const parsed = path.parse(completedName);
-    targetPath = path.join(paths.completedDir, `${parsed.name}-${Date.now()}${parsed.ext || '.md'}`);
+    targetPath = path.join(completedDir, `${parsed.name}-${Date.now()}${parsed.ext || '.md'}`);
   }
+  return targetPath;
+}
+
+async function finalizeCompletedPlan(plan, paths, state, validationEvidence, options, config, completionInfo = {}) {
+  const now = nowIso();
+  const targetPath = completionInfo.targetPath
+    ? path.resolve(completionInfo.targetPath)
+    : await resolveCompletedPlanTargetPath(plan.filePath, paths.completedDir);
   const completedRel = toPosix(path.relative(paths.rootDir, targetPath));
   const raw = await fs.readFile(plan.filePath, 'utf8');
   const indexResult = await writeEvidenceIndex(paths, plan, raw, options, config, { sourcePlanRel: completedRel });
@@ -4554,6 +4596,34 @@ async function processPlan(plan, paths, state, options, config) {
       ...alwaysValidation.evidence,
       ...(Array.isArray(hostValidation.evidence) ? hostValidation.evidence : [])
     ];
+    const shouldCreateAtomicCommit = asBoolean(options.commit, config.git.atomicCommits !== false);
+    const completedTargetPath = await resolveCompletedPlanTargetPath(plan.filePath, paths.completedDir);
+    const completedTargetRel = toPosix(path.relative(paths.rootDir, completedTargetPath));
+    const commitPolicy = {
+      enforceRoots: asBoolean(config.git?.atomicCommitRoots?.enforce, true),
+      allowedRoots: resolveAtomicCommitRoots(
+        plan,
+        config,
+        paths,
+        { completedRel: completedTargetRel }
+      )
+    };
+
+    if (shouldCreateAtomicCommit && !options.dryRun) {
+      const preflight = evaluateAtomicCommitReadiness(
+        paths.rootDir,
+        plan.planId,
+        options.allowDirty,
+        commitPolicy,
+        { requireDirty: false }
+      );
+      if (!preflight.ok) {
+        return {
+          outcome: 'failed',
+          reason: preflight.reason ?? 'atomic commit preflight failed'
+        };
+      }
+    }
 
     const lifecycle = resolveEvidenceLifecycleConfig(config);
     if (lifecycle.pruneOnComplete) {
@@ -4573,6 +4643,22 @@ async function processPlan(plan, paths, state, options, config) {
       }
     }
 
+    if (shouldCreateAtomicCommit && !options.dryRun) {
+      const preflight = evaluateAtomicCommitReadiness(
+        paths.rootDir,
+        plan.planId,
+        options.allowDirty,
+        commitPolicy,
+        { requireDirty: false }
+      );
+      if (!preflight.ok) {
+        return {
+          outcome: 'failed',
+          reason: preflight.reason ?? 'atomic commit preflight failed'
+        };
+      }
+    }
+
     const completedPath = await finalizeCompletedPlan(
       plan,
       paths,
@@ -4587,28 +4673,21 @@ async function processPlan(plan, paths, state, options, config) {
         hostValidationProvider: hostValidation.provider ?? 'none',
         effectiveRiskTier: lastAssessment.effectiveRiskTier,
         declaredRiskTier: lastAssessment.declaredRiskTier,
-        rolePipeline: roleState.stages.join(' -> ')
+        rolePipeline: roleState.stages.join(' -> '),
+        targetPath: completedTargetPath
       }
     );
 
     await updateProductSpecs(plan, completedPath, paths, state, options);
 
     let commitResult = { ok: true, committed: false, commitHash: null };
-    if (asBoolean(options.commit, config.git.atomicCommits !== false)) {
+    if (shouldCreateAtomicCommit) {
       commitResult = createAtomicCommit(
         paths.rootDir,
         plan.planId,
         options.dryRun,
         options.allowDirty,
-        {
-          enforceRoots: asBoolean(config.git?.atomicCommitRoots?.enforce, true),
-          allowedRoots: resolveAtomicCommitRoots(
-            plan,
-            config,
-            paths,
-            { completedRel: toPosix(path.relative(paths.rootDir, completedPath)) }
-          )
-        }
+        commitPolicy
       );
       if (!commitResult.ok) {
         return {
