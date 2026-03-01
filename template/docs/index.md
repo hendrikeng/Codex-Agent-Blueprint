@@ -35,8 +35,10 @@ This is the canonical completeness index for first-class documentation in `docs/
 - `docs/governance/policy-manifest.schema.json`
 - `docs/ops/`
 - `docs/ops/automation/`
+- `docs/ops/automation/LITE_QUICKSTART.md`
 - `docs/ops/automation/OUTCOMES.md`
 - `docs/ops/automation/INTEROP_GITHUB.md`
+- `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 - `docs/product-specs/`
 - `docs/references/`
 - `docs/ui/`
@@ -79,8 +81,10 @@ This is the canonical completeness index for first-class documentation in `docs/
 - `docs/ops/README.md`
 - `docs/ops/automation/README.md`
 - `docs/ops/automation/ROLE_ORCHESTRATION.md`
+- `docs/ops/automation/LITE_QUICKSTART.md`
 - `docs/ops/automation/OUTCOMES.md`
 - `docs/ops/automation/INTEROP_GITHUB.md`
+- `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 - `docs/product-specs/index.md`
 - `docs/product-specs/current-state.md`
 - `docs/references/index.md`

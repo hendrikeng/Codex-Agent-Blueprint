@@ -39,8 +39,10 @@ Start here, then follow linked source-of-truth docs:
 - Execution plans: `docs/exec-plans/README.md`
 - Ops automation conveyor: `docs/ops/automation/README.md`
 - Role orchestration contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`
+- Lite lane onboarding: `docs/ops/automation/LITE_QUICKSTART.md`
 - Automation outcomes scorecard: `docs/ops/automation/OUTCOMES.md`
 - GitHub interop mapping: `docs/ops/automation/INTEROP_GITHUB.md`
+- Provider compatibility contract: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 - Generated runtime context snapshot: `docs/generated/agent-runtime-context.md`
 
 ## Non-Negotiables

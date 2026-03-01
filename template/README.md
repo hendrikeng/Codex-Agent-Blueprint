@@ -23,6 +23,18 @@ Use the least ceremony required for the risk profile:
 2. `Guarded`: sequential orchestration with risk routing and approval gates.
 3. `Conveyor`: parallel/worktree orchestration with optional branch/PR automation.
 
+## Lite Quickstart
+
+Start with the lowest-overhead path first:
+
+1. Track work in `docs/exec-plans/active/`.
+2. Implement one focused slice.
+3. Run `npm run verify:fast` while iterating.
+4. Run `npm run verify:full` before completion/merge.
+5. Move plan to `docs/exec-plans/completed/` with canonical `Done-Evidence`.
+
+Reference: `docs/ops/automation/LITE_QUICKSTART.md`.
+
 ## Execution Paths
 
 - Default path for non-trivial changes: use orchestration (`automation:run` / `automation:resume`) to drive plan promotion and execution.
@@ -91,6 +103,7 @@ Start with:
 - Audit runs: `npm run automation:audit -- --json true`
 - Outcomes summary (optional): `npm run outcomes:report`
 - GitHub interop export scaffold (optional): `npm run interop:github:export`
+- GitHub interop export write mode (optional): `npm run interop:github:export:write`
 - Lean output defaults to interactive pretty lifecycle lines; use `--output ticker` for ultra-compact logs, `--output minimal` for expanded high-signal lines, or `--output verbose` for full streamed command output.
 - `pretty` output keeps one live in-place heartbeat line (phase/plan/role/activity/elapsed/idle) so you can tell running vs stuck without log spam.
 - `guarded` is gate-based (non-interactive): medium/high plans require `ORCH_APPROVED_MEDIUM=1` / `ORCH_APPROVED_HIGH=1`.
@@ -103,7 +116,7 @@ Start with:
   - `high`: `planner -> explorer -> worker -> reviewer`
 - Each role stage runs in a fresh executor process; configure role commands with `{role_model}` to enforce model switching per stage.
 - Security approval gates are enforced for high-risk plans and sensitive medium-risk plans via `Security-Approval`.
-- Details: `docs/ops/automation/README.md`, `docs/ops/automation/ROLE_ORCHESTRATION.md`, `docs/ops/automation/OUTCOMES.md`, and `docs/ops/automation/INTEROP_GITHUB.md`.
+- Details: `docs/ops/automation/README.md`, `docs/ops/automation/ROLE_ORCHESTRATION.md`, `docs/ops/automation/LITE_QUICKSTART.md`, `docs/ops/automation/OUTCOMES.md`, `docs/ops/automation/INTEROP_GITHUB.md`, and `docs/ops/automation/PROVIDER_COMPATIBILITY.md`.
 
 ## Change Discipline
 

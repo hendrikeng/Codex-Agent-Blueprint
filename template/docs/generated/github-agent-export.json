@@ -11,16 +11,45 @@
     "orchestratorConfig": "docs/ops/automation/orchestrator.config.json"
   },
   "mapping": {
-    "safetyPolicy": "policy-manifest.mandatorySafetyRules -> base-policy.json",
-    "roleProfiles": "roleOrchestration.roleProfiles -> role-profiles.json",
-    "riskRouting": "roleOrchestration.pipelines -> risk-pipelines.json",
+    "agentProfileFormat": ".agent.md with YAML frontmatter",
+    "safetyPolicy": "policy-manifest.mandatorySafetyRules -> base-policy.json + role .agent.md hard rules section",
+    "roleProfiles": "roleOrchestration.roleProfiles -> role-profiles.json + blueprint-<role>.agent.md",
+    "riskRouting": "roleOrchestration.pipelines -> risk-pipelines.json + .agent.md lane sections",
     "validationLanes": "validation -> risk-pipelines.json",
     "canonicalEntrypoints": {
       "fromPolicyManifest": [],
       "discoveredFromAgentsMd": []
+    },
+    "platformNotes": {
+      "githubCom": "Some profile properties may be ignored; treat these as scaffolds.",
+      "ideIntegrations": "Richer profile properties may be supported depending on IDE and extension versions."
     }
   },
   "files": [
+    {
+      "path": ".github/agents/blueprint-default.agent.md",
+      "status": "preview-only"
+    },
+    {
+      "path": ".github/agents/blueprint-planner.agent.md",
+      "status": "preview-only"
+    },
+    {
+      "path": ".github/agents/blueprint-explorer.agent.md",
+      "status": "preview-only"
+    },
+    {
+      "path": ".github/agents/blueprint-worker.agent.md",
+      "status": "preview-only"
+    },
+    {
+      "path": ".github/agents/blueprint-reviewer.agent.md",
+      "status": "preview-only"
+    },
+    {
+      "path": ".github/agents/README.md",
+      "status": "preview-only"
+    },
     {
       "path": ".github/agents/base-policy.json",
       "status": "preview-only"

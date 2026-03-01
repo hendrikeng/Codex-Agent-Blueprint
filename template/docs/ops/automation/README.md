@@ -26,6 +26,8 @@ Pick the smallest lane that still protects correctness and rollback:
 2. `Guarded`: sequential orchestration with risk routing + approval gates.
 3. `Conveyor`: parallel/worktree orchestration and optional branch/PR automation.
 
+Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
+
 ## Runtime Files
 
 - `docs/ops/automation/orchestrator.config.json`: executor and validation command configuration.
@@ -175,12 +177,15 @@ Use the manual path when any of these are true:
   - Generates `docs/generated/run-outcomes.json` from `run-events.jsonl`.
 - GitHub interop export scaffold (optional):
   - `npm run interop:github:export`
-  - Generates `docs/generated/github-agent-export.json` and can emit scaffold files under `.github/agents/`.
+  - Generates `docs/generated/github-agent-export.json` and can emit `.agent.md` plus JSON scaffolds under `.github/agents/`.
+  - `npm run interop:github:export:write` writes scaffold files under `.github/agents/`.
 
 ## Related Documents
 
+- Lite lane onboarding: `docs/ops/automation/LITE_QUICKSTART.md`
 - Outcome scorecard and interpretation: `docs/ops/automation/OUTCOMES.md`
 - GitHub-native mapping and export contract: `docs/ops/automation/INTEROP_GITHUB.md`
+- Provider command/version contract: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 
 ## Plan File Naming
 

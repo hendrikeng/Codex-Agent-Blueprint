@@ -16,8 +16,10 @@ Source of Truth: This document.
 - Plan workflow: `docs/PLANS.md`
 - Ops automation: `docs/ops/automation/README.md`
 - Role orchestration: `docs/ops/automation/ROLE_ORCHESTRATION.md`
+- Lite quickstart: `docs/ops/automation/LITE_QUICKSTART.md`
 - Outcomes scorecard: `docs/ops/automation/OUTCOMES.md`
 - GitHub interop mapping: `docs/ops/automation/INTEROP_GITHUB.md`
+- Provider compatibility: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 - Runtime context snapshot: `docs/generated/agent-runtime-context.md`
 
 ## Layering Model

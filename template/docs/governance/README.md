@@ -21,3 +21,9 @@ Source of Truth: This document.
 - Performance evidence: `npm run perf:baseline` and `npm run perf:after`
 - Run outcomes summary (optional): `npm run outcomes:report`
 - GitHub interop export scaffold (optional): `npm run interop:github:export`
+- GitHub interop export write mode (optional): `npm run interop:github:export:write`
+
+## Operational References
+
+- Lite onboarding: `docs/ops/automation/LITE_QUICKSTART.md`
+- Provider compatibility: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`

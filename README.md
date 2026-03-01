@@ -36,6 +36,15 @@ Use the least process that still protects correctness.
 2. `Guarded`: orchestrator sequential execution with risk/approval gates.
 3. `Conveyor`: parallel/worktree execution with branch/PR automation.
 
+## Lite-First Onboarding
+
+Start with `Lite` by default, then scale up only when risk or workload demands it.
+
+1. Keep work in `docs/exec-plans/active/`.
+2. Run `verify:fast` during implementation.
+3. Run `verify:full` before completion.
+4. Use `Guarded`/`Conveyor` only for higher-risk or dependency-heavy slices.
+
 ## Session Safety and Context Continuity
 
 - Sessions are proactively rolled over before context gets too low (`contextRemaining <= threshold`).
@@ -75,12 +84,14 @@ Use the least process that still protects correctness.
 - `context:compile`, `verify:fast`, `verify:full`
 - `automation:run`, `automation:run:parallel`, `automation:resume`, `automation:resume:parallel`, `automation:audit`
 - `perf:baseline`, `perf:after`
-- `outcomes:report`, `interop:github:export`
+- `outcomes:report`, `interop:github:export`, `interop:github:export:write`
 
 Canonical command contracts and policies:
 - `template/docs/ops/automation/README.md`
+- `template/docs/ops/automation/LITE_QUICKSTART.md`
 - `template/docs/ops/automation/OUTCOMES.md`
 - `template/docs/ops/automation/INTEROP_GITHUB.md`
+- `template/docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 - `template/docs/governance/rules.md`
 - `template/docs/governance/policy-manifest.json`
 - `template/docs/PLANS.md`

@@ -255,8 +255,10 @@ function ensureConfigPolicy(config, configPath) {
 
 async function ensurePragmaticScaffold() {
   const readmePath = path.join(rootDir, 'README.md');
+  const liteQuickstartDocPath = path.join(rootDir, 'docs', 'ops', 'automation', 'LITE_QUICKSTART.md');
   const outcomesDocPath = path.join(rootDir, 'docs', 'ops', 'automation', 'OUTCOMES.md');
   const interopDocPath = path.join(rootDir, 'docs', 'ops', 'automation', 'INTEROP_GITHUB.md');
+  const providerCompatDocPath = path.join(rootDir, 'docs', 'ops', 'automation', 'PROVIDER_COMPATIBILITY.md');
   const packageJsonPath = path.join(rootDir, 'package.json');
   const scriptsFragmentPath = path.join(rootDir, 'package.scripts.fragment.json');
 
@@ -280,6 +282,21 @@ async function ensurePragmaticScaffold() {
         );
       }
     }
+    if (!readmeRaw.includes('Lite Quickstart') && !readmeRaw.includes('Lite-First Onboarding')) {
+      addAdvisory(
+        'MISSING_LITE_QUICKSTART_SECTION',
+        "README.md should include a short Lite-first onboarding section for low-overhead adoption.",
+        'README.md'
+      );
+    }
+  }
+
+  if (!(await fileExists(liteQuickstartDocPath))) {
+    addAdvisory(
+      'MISSING_LITE_QUICKSTART_DOC',
+      'Expected optional Lite onboarding doc at docs/ops/automation/LITE_QUICKSTART.md.',
+      rel(liteQuickstartDocPath)
+    );
   }
 
   if (!(await fileExists(outcomesDocPath))) {
@@ -294,6 +311,13 @@ async function ensurePragmaticScaffold() {
       'MISSING_INTEROP_DOC',
       'Expected optional GitHub interop mapping doc at docs/ops/automation/INTEROP_GITHUB.md.',
       rel(interopDocPath)
+    );
+  }
+  if (!(await fileExists(providerCompatDocPath))) {
+    addAdvisory(
+      'MISSING_PROVIDER_COMPAT_DOC',
+      'Expected provider compatibility doc at docs/ops/automation/PROVIDER_COMPATIBILITY.md.',
+      rel(providerCompatDocPath)
     );
   }
 
