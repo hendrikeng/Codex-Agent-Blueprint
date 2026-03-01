@@ -38,6 +38,27 @@ Reusable blueprint for initializing agent-first repositories with standardized d
   - Non-trivial work leaves clear metadata, validation traces, and done-evidence references.
   - Team members can inspect progress, decisions, and status directly in-repo.
 
+## Daily Workflow
+
+1. Bootstrap correctly:
+   - Start with the Agent Quickstart prompt in plan mode.
+   - Initialize docs/scripts from the blueprint only after planning decisions are approved.
+   - Treat the repository docs as the operating manual from day one.
+2. Lock intent and stack:
+   - Decide product scope, first slices, stack/runtime/tooling, and core invariants.
+   - Record those decisions before execution so implementation stays aligned.
+3. Route work by size/risk:
+   - Quick/manual change: create/update a plan in `docs/exec-plans/active/`.
+   - Strategic/multi-slice work: define futures in `docs/future/` and mark ready plans for promotion.
+4. Execute with the right engine:
+   - Manual loop: implement focused slices + run `verify:fast` continuously.
+   - Orchestrated loop: `automation:run` for sequential flow, `automation:run:parallel` for dependency-aware parallel execution.
+   - Continue unfinished runs with `automation:resume` or `automation:resume:parallel`.
+5. Close with evidence and governance:
+   - Run `verify:full` before merge/completion.
+   - Move finished plans to `docs/exec-plans/completed/` with canonical `Done-Evidence`.
+   - Keep docs/metadata current in the same change so team visibility stays intact.
+
 ## Why This Model Works
 
 - It keeps inference-speed execution while staying structured.
@@ -79,11 +100,15 @@ Underlying check primitives (used by `verify:fast` / `verify:full`, also availab
 ## Automation Commands
 
 - `automation:run` -> `node ./scripts/automation/orchestrator.mjs run`
+  - Continues active queue first, then promotes ready futures, executing sequentially.
 - `automation:run:parallel` -> `node ./scripts/automation/orchestrator.mjs run-parallel`
-- `automation:resume:parallel` -> `node ./scripts/automation/orchestrator.mjs run-parallel`
+  - Executes dependency-ready plans in isolated worktrees/branches in parallel.
 - `automation:resume` -> `node ./scripts/automation/orchestrator.mjs resume`
+  - Resumes the persisted sequential run-state and continues pending work.
+- `automation:resume:parallel` -> `node ./scripts/automation/orchestrator.mjs run-parallel`
+  - Convenience alias to resume parallel processing by re-invoking `run-parallel`.
 - `automation:audit` -> `node ./scripts/automation/orchestrator.mjs audit`
-- Note: parallel resume is an alias to `run-parallel`; parallel progress is derived from plan state and dependencies.
+  - Summarizes historical run events and outcomes for operational review.
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
 - Role routing is risk-adaptive (`low: worker`, `medium: planner->worker->reviewer`, `high: planner->explorer->worker->reviewer`) with Security-Approval gates for high/sensitive plans.
 - Safe stage-reuse can skip repeated planner/explorer stages when plan shape and scope are unchanged.
@@ -140,22 +165,32 @@ Use this when initializing a new repo from the blueprint:
 7. Run `./scripts/check-template-placeholders.sh` until clean.
 8. Run `./scripts/bootstrap-verify.sh`.
 
-Suggested prompt for an agent:
+Use two prompts in sequence.
+
+Prompt 1 (planning kickoff, before any file copy):
 
 ```text
 We are starting a new app from this Agent Blueprint repository template.
-In plan mode, first collaborate with me to decide:
-- what the app does,
-- which features we implement first,
-- which stack/runtime/tooling we use,
-- and which core invariants we enforce.
-Do not edit files yet.
-After I confirm those decisions, execute bootstrap:
+Stay in plan mode and do not edit files yet.
+Help me decide and lock:
+1) what the app does and who it serves,
+2) which stack/runtime/tooling we will use,
+3) core invariants and non-negotiables,
+4) first implementation slices and acceptance criteria,
+5) initial futures backlog with dependencies/risk tiers.
+Output a decision-complete implementation plan I can approve.
+```
+
+Prompt 2 (bootstrap + execution handoff, after planning approval):
+
+```text
+Approved. Execute bootstrap now:
 1) copy template files into repository root,
 2) replace placeholders from PLACEHOLDERS.md,
 3) wire required package scripts,
-4) seed initial strategic plans in docs/future,
-5) use direct docs/exec-plans/active plans for quick/manual fixes,
-6) run ./scripts/check-template-placeholders.sh and ./scripts/bootstrap-verify.sh.
-Do not stop until the checks pass with zero errors.
+4) seed strategic plans in docs/future and quick fixes in docs/exec-plans/active as appropriate,
+5) run ./scripts/check-template-placeholders.sh,
+6) run ./scripts/bootstrap-verify.sh.
+Then start execution using automation:run (or automation:run:parallel when dependencies allow).
+Keep docs, metadata, and Done-Evidence updated as work progresses.
 ```
