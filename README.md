@@ -27,6 +27,7 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 - `architecture:verify` -> `node ./scripts/architecture/check-dependencies.mjs`
 - `agent:verify` -> `node ./scripts/agent-hardening/check-agent-hardening.mjs`
 - `eval:verify` -> `node ./scripts/agent-hardening/check-evals.mjs`
+- `blueprint:verify` -> `node ./scripts/automation/check-blueprint-alignment.mjs`
 - `plans:verify` -> `node ./scripts/automation/check-plan-metadata.mjs`
 
 ## Automation Commands
@@ -41,7 +42,7 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 
 ## When To Run Checks
 
-- Run all checks before merge: `docs:verify`, `conformance:verify`, `architecture:verify`, `agent:verify`, `eval:verify`, `plans:verify`.
+- Run all checks before merge: `docs:verify`, `conformance:verify`, `architecture:verify`, `agent:verify`, `eval:verify`, `blueprint:verify`, `plans:verify`.
 - Run `agent:verify` when changing eval policy, agent observability, tool-safety, or memory/context rules.
 - Run `architecture:verify` when changing dependency boundaries.
 
@@ -73,6 +74,7 @@ Orchestration is the default execution driver. Manual execution is valid only wh
    - `architecture:verify`
    - `agent:verify`
    - `eval:verify`
+   - `blueprint:verify`
    - `plans:verify`
 5. Update `docs/generated/article-conformance.json` evidence paths for the new repository.
 6. Run `./scripts/bootstrap-verify.sh` (or run each verify command manually).

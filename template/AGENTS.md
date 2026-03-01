@@ -93,7 +93,7 @@ Docs are part of done.
 
 ## Test and Validation Expectations
 
-- Run `npm run docs:verify`, `npm run conformance:verify`, `npm run architecture:verify`, `npm run agent:verify`, `npm run eval:verify`, and `npm run plans:verify` before merge.
+- Run `npm run docs:verify`, `npm run conformance:verify`, `npm run architecture:verify`, `npm run agent:verify`, `npm run eval:verify`, `npm run blueprint:verify`, and `npm run plans:verify` before merge.
 - Add/adjust tests for behavior changes.
 - Every bug fix needs a regression test.
 - Critical flows require focused coverage.

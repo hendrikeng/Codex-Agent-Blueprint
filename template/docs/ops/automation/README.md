@@ -122,6 +122,8 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `ticker` output prints compact single-line lifecycle events and a single-line run summary.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
+- Drift guardrail:
+  - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, ticker logging default).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
 
 ## Plan File Naming

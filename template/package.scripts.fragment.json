@@ -5,6 +5,7 @@
     "architecture:verify": "node ./scripts/architecture/check-dependencies.mjs",
     "agent:verify": "node ./scripts/agent-hardening/check-agent-hardening.mjs",
     "eval:verify": "node ./scripts/agent-hardening/check-evals.mjs",
+    "blueprint:verify": "node ./scripts/automation/check-blueprint-alignment.mjs",
     "plans:verify": "node ./scripts/automation/check-plan-metadata.mjs",
     "automation:run": "node ./scripts/automation/orchestrator.mjs run",
     "automation:resume": "node ./scripts/automation/orchestrator.mjs resume",

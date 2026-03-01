@@ -68,13 +68,15 @@ Start with:
 - Architecture boundary checks: `npm run architecture:verify`
 - Agent hardening checks: `npm run agent:verify`
 - Eval regression gate: `npm run eval:verify`
+- Blueprint alignment gate: `npm run blueprint:verify`
 - Plan metadata checks: `npm run plans:verify`
 
 ## When To Run Checks
 
-- Before merge: `npm run docs:verify`, `npm run conformance:verify`, `npm run architecture:verify`, `npm run agent:verify`, `npm run eval:verify`, `npm run plans:verify`.
+- Before merge: `npm run docs:verify`, `npm run conformance:verify`, `npm run architecture:verify`, `npm run agent:verify`, `npm run eval:verify`, `npm run blueprint:verify`, `npm run plans:verify`.
 - After changing architecture boundaries: `npm run architecture:verify`.
 - After changing eval/observability/tool/memory policy docs or eval artifacts/config: `npm run agent:verify`, `npm run eval:verify`.
+- After changing automation orchestrator/wrapper/config policy: `npm run blueprint:verify`.
 
 ## Automation Conveyor Commands
 
