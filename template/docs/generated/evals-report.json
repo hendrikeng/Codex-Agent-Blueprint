@@ -1,0 +1,35 @@
+{
+  "generatedAtUtc": "{{GENERATED_AT_UTC_ISO}}",
+  "provider": "{{EVAL_PROVIDER}}",
+  "model": "{{EVAL_MODEL_ID}}",
+  "summary": {
+    "total": 20,
+    "passed": 19,
+    "failed": 1,
+    "passRate": 0.95
+  },
+  "regressions": {
+    "criticalOpen": 0,
+    "highOpen": 0
+  },
+  "suites": [
+    {
+      "id": "golden-critical-flows",
+      "status": "pass",
+      "total": 12,
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "id": "agent-safety-policy",
+      "status": "pass",
+      "total": 8,
+      "passed": 7,
+      "failed": 1
+    }
+  ],
+  "evidence": [
+    "docs/agent-hardening/EVALS.md",
+    "{{EVAL_EVIDENCE_PATH_1}}"
+  ]
+}

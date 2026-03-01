@@ -12,6 +12,7 @@ import {
   metadataValue,
   parseListField,
   parseMetadata,
+  parsePlanId,
   normalizeStatus,
   inferPlanId
 } from './lib/plan-metadata.mjs';
@@ -122,12 +123,36 @@ async function scanPhase(phase, directoryPath) {
       }
     }
 
-    const planId = metadataValue(metadata, 'Plan-ID') ?? inferPlanId(content, filePath);
+    const rawPlanId = metadataValue(metadata, 'Plan-ID');
+    const parsedPlanId = rawPlanId ? parsePlanId(rawPlanId, null) : null;
+    if (rawPlanId && !parsedPlanId) {
+      addFinding(
+        'INVALID_PLAN_ID',
+        `Invalid Plan-ID '${rawPlanId}' (expected lowercase kebab-case, e.g. 'fix-auth-timeout')`,
+        rel
+      );
+    }
+
+    const planId = parsedPlanId ?? inferPlanId(content, filePath);
+    const parsedDependencies = [];
+    for (const dependency of parseListField(metadataValue(metadata, 'Dependencies'))) {
+      const normalizedDependency = parsePlanId(dependency, null);
+      if (!normalizedDependency) {
+        addFinding(
+          'INVALID_DEPENDENCY_PLAN_ID',
+          `Invalid dependency '${dependency}' (expected lowercase kebab-case Plan-ID)`,
+          rel
+        );
+        continue;
+      }
+      parsedDependencies.push(normalizedDependency);
+    }
+
     plans.push({
       phase,
       rel,
       planId,
-      dependencies: parseListField(metadataValue(metadata, 'Dependencies'))
+      dependencies: parsedDependencies
     });
   }
 

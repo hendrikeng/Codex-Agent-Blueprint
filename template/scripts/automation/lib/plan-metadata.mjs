@@ -6,6 +6,7 @@ export const ACTIVE_STATUSES = new Set(['queued', 'in-progress', 'blocked', 'val
 export const COMPLETED_STATUSES = new Set(['completed']);
 export const RISK_TIERS = new Set(['low', 'medium', 'high']);
 export const SECURITY_APPROVAL_VALUES = new Set(['not-required', 'pending', 'approved']);
+export const PLAN_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const REQUIRED_METADATA_FIELDS = {
   future: [
@@ -42,6 +43,23 @@ export const REQUIRED_METADATA_FIELDS = {
 
 function normalizeKey(key) {
   return key.trim().toLowerCase();
+}
+
+export function normalizePlanId(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+export function isValidPlanId(value) {
+  const normalized = normalizePlanId(value);
+  return normalized.length > 0 && PLAN_ID_REGEX.test(normalized);
+}
+
+export function parsePlanId(value, fallback = null) {
+  const normalized = normalizePlanId(value);
+  if (!isValidPlanId(normalized)) {
+    return fallback;
+  }
+  return normalized;
 }
 
 function metadataSectionRange(content) {
@@ -199,16 +217,16 @@ export function inferPlanId(content, filePath) {
   const metadata = parseMetadata(content);
   const explicit = metadataValue(metadata, 'Plan-ID');
   if (explicit) {
-    return explicit;
+    return parsePlanId(explicit, null);
   }
 
   const heading = firstHeading(content);
   if (heading) {
-    return slugify(heading);
+    return parsePlanId(slugify(heading), null);
   }
 
   const baseName = path.basename(filePath, path.extname(filePath));
-  return slugify(baseName);
+  return parsePlanId(slugify(baseName), null);
 }
 
 export function ensureMetadataSection(content, metadataFields) {
@@ -219,6 +237,7 @@ export function ensureMetadataSection(content, metadataFields) {
     sectionLines.push(`- ${key}: ${value}`);
   }
   sectionLines.push('');
+  const section = `${sectionLines.join('\n')}\n`;
 
   const range = metadataSectionRange(content);
   if (range) {

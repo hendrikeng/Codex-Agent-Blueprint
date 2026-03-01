@@ -61,6 +61,9 @@ Replace all `{{...}}` tokens in this template before first merge.
 - `{{CONFORMANCE_PURPOSE}}`
 - `{{OUT_OF_SCOPE_ITEM_1..3}}`
 - `{{CI_WORKFLOW_PATH}}`
+- `{{EVAL_PROVIDER}}`
+- `{{EVAL_MODEL_ID}}`
+- `{{EVAL_EVIDENCE_PATH_1}}`
 
 ## Recommended Defaults
 

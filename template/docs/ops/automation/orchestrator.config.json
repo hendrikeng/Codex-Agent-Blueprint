@@ -10,23 +10,29 @@
     },
     "handoffExitCode": 75,
     "contextThreshold": 10000,
-    "requireResultPayload": true
+    "requireResultPayload": true,
+    "timeoutSeconds": 1800
   },
   "validation": {
     "always": [],
+    "requireAlwaysCommands": true,
     "alwaysExamples": [
       "npm run test:unit"
     ],
     "hostRequired": [],
+    "requireHostRequiredCommands": true,
     "hostRequiredExamples": [
       "npm run infra:up",
       "npm run db:migrate",
       "npm run test:e2e"
     ],
+    "timeoutSeconds": 1800,
     "host": {
       "mode": "hybrid",
+      "timeoutSeconds": 1800,
       "ci": {
-        "command": ""
+        "command": "",
+        "timeoutSeconds": 1800
       },
       "local": {
         "command": ""

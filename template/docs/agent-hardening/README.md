@@ -14,14 +14,17 @@ Source of Truth: This document and linked docs in this folder.
 ## Canonical Documents
 
 - `docs/agent-hardening/EVALS.md`
+- `docs/agent-hardening/evals.config.json`
 - `docs/agent-hardening/OBSERVABILITY.md`
 - `docs/agent-hardening/TOOL_POLICY.md`
 - `docs/agent-hardening/MEMORY_CONTEXT.md`
+- `docs/generated/evals-report.json`
 
 ## Enforcement
 
 - `npm run agent:verify`
+- `npm run eval:verify`
 - `npm run docs:verify`
 - `npm run conformance:verify`
 
-`agent:verify` is required and must pass before merge.
+`agent:verify` and `eval:verify` are required and must pass before merge.

@@ -68,7 +68,10 @@
         "docs/agent-hardening/OBSERVABILITY.md",
         "docs/agent-hardening/TOOL_POLICY.md",
         "docs/agent-hardening/MEMORY_CONTEXT.md",
+        "docs/agent-hardening/evals.config.json",
+        "docs/generated/evals-report.json",
         "scripts/agent-hardening/check-agent-hardening.mjs",
+        "scripts/agent-hardening/check-evals.mjs",
         "package.json"
       ]
     },

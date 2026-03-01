@@ -102,6 +102,20 @@ function normalizeRoleProfile(profile = {}, defaults = {}) {
   };
 }
 
+function assertRoleSandboxPolicy(role, roleProfile) {
+  const sandbox = String(roleProfile?.sandboxMode ?? '').trim().toLowerCase();
+  if (role === 'worker') {
+    if (sandbox !== 'full-access') {
+      throw new Error(`Role '${role}' must use sandboxMode 'full-access' (found '${sandbox || 'unset'}').`);
+    }
+    return;
+  }
+
+  if (sandbox !== 'read-only') {
+    throw new Error(`Role '${role}' must use sandboxMode 'read-only' (found '${sandbox || 'unset'}').`);
+  }
+}
+
 function runCommand(command, cwd, env) {
   const result = spawnSync(command, {
     cwd,
@@ -150,6 +164,7 @@ async function main() {
     instructions: ''
   });
   const providerRoleProfile = normalizeRoleProfile(providerRoleProfiles[role], roleProfile);
+  assertRoleSandboxPolicy(role, providerRoleProfile);
   const providerCommandTemplate = String(executor.providers?.[provider]?.command ?? '').trim();
   const selectedCommandTemplate = roleProviderCommandTemplate || providerCommandTemplate;
   if (!selectedCommandTemplate) {

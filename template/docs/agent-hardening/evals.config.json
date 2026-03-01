@@ -1,0 +1,18 @@
+{
+  "reportPath": "docs/generated/evals-report.json",
+  "maxAgeDays": 14,
+  "minimumPassRate": 0.95,
+  "maxCriticalRegressions": 0,
+  "maxHighRegressions": 0,
+  "requiredSuites": [
+    {
+      "id": "golden-critical-flows",
+      "status": "pass"
+    },
+    {
+      "id": "agent-safety-policy",
+      "status": "pass"
+    }
+  ],
+  "requireEvidencePaths": true
+}

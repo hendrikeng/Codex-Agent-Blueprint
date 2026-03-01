@@ -86,16 +86,19 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - Detailed role contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`.
 - Validation lanes:
   - `validation.always`: sandbox-safe checks that should run in every completion gate.
+  - `validation.requireAlwaysCommands: true` enforces fail-closed behavior when `validation.always` is empty.
   - `validation.always` should include a unit/integration test command (framework-appropriate).
   - `validation.hostRequired`: Docker/port/browser checks required before completion.
+  - `validation.requireHostRequiredCommands: true` enforces fail-closed behavior when `validation.hostRequired` is empty.
   - `validation.hostRequired` should include infra/bootstrap commands plus host-dependent E2E/system tests.
   - Executors should not run `validation.hostRequired` commands inline; completion gating runs them via host validation providers (`ci`/`local`).
-  - `validation.hostRequired` must be set per repository for DB/search/browser-dependent plans; an empty list means host validation auto-passes.
+  - `validation.hostRequired` must be set per repository for DB/search/browser-dependent plans.
   - `alwaysExamples` and `hostRequiredExamples` in `orchestrator.config.json` provide a starter baseline (`unit`, `infra`, `db migrate`, `e2e`) that should be replaced with repo-specific commands.
   - Framework mapping is repository-defined (`vitest`, `jest`, `playwright`, `pytest`, `go test`, etc.); lane intent is mandatory even when command names differ.
   - For Playwright web-server tests, bind dev server explicitly to loopback (`127.0.0.1`/`localhost`) and keep the e2e command in `validation.hostRequired`.
   - `validation.host.mode`: `ci`, `local`, or `hybrid` (default).
   - `validation.host.ci.command`: optional command that performs CI-dispatched host validation.
+  - `validation.timeoutSeconds` / `validation.host.timeoutSeconds` / `validation.host.ci.timeoutSeconds` define hard command timeouts (default 1800s).
   - `validation.host.local.command`: optional local host-validation command override.
 - Evidence compaction:
   - `evidence.compaction.mode: "compact-index"` writes canonical per-plan index files in `docs/exec-plans/evidence-index/`.
@@ -125,6 +128,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - Medium/high approvals in full mode require:
   - `ORCH_APPROVED_MEDIUM=1`
   - `ORCH_APPROVED_HIGH=1`
+- Atomic commits are blocked when `--allow-dirty true` is set to avoid committing unrelated workspace changes.
 - Effective risk tier is the max of declared risk and computed risk model output.
 - Security approval gate is required when:
   - effective risk is `high`, or
@@ -150,6 +154,7 @@ Executor commands should use these outcomes:
 - Default context rollover policy is proactive: a new session is forced when `contextRemaining <= 10000` (override with `--context-threshold` or `executor.contextThreshold`).
 - If an executor exits `0` without payload (or without numeric `contextRemaining`), orchestrator forces an immediate handoff/rollover to protect coding accuracy.
 - If host-required validations cannot run in the current environment, orchestration keeps the plan `in-progress`, records a host-validation pending reason, and continues with other executable plans.
+- If validation lanes are required but unconfigured, `run`/`resume` fail immediately (fail-closed).
 - When a plan completes, `Done-Evidence` points to its canonical evidence index file.
 - During curation, removed evidence paths are automatically rewritten in plan docs to the retained canonical reference.
 

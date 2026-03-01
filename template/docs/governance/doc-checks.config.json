@@ -2,7 +2,9 @@
   "docsIndexPath": "docs/index.md",
   "scanFiles": [
     "ARCHITECTURE.md",
-    "docs/generated/article-conformance.json"
+    "docs/generated/article-conformance.json",
+    "docs/generated/evals-report.json",
+    "docs/agent-hardening/evals.config.json"
   ],
   "canonicalDocs": [
     "AGENTS.md",
@@ -37,6 +39,8 @@
     "docs/exec-plans/tech-debt-tracker.md",
     "docs/future/README.md",
     "docs/generated/article-conformance.json",
+    "docs/generated/evals-report.json",
+    "docs/agent-hardening/evals.config.json",
     "docs/governance/README.md",
     "docs/governance/golden-principles.md",
     "docs/governance/rules.md",

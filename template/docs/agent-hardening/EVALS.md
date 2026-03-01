@@ -23,3 +23,20 @@ Source of Truth: This document.
 - No known high-severity regressions in golden tasks.
 - New high-severity failure classes block release until mitigated or explicitly accepted in writing.
 - Changes to critical flows require updated eval coverage in the same change.
+
+## Generated Artifact Contract
+
+- Config source of truth: `docs/agent-hardening/evals.config.json`.
+- Generated report artifact: `docs/generated/evals-report.json`.
+- Verifier command: `npm run eval:verify`.
+- Required report fields:
+  - `generatedAtUtc`
+  - `summary.total`, `summary.passed`, `summary.failed`, `summary.passRate`
+  - `regressions.criticalOpen`, `regressions.highOpen`
+  - `suites[]` with `id`, `status`, `total`, `passed`, `failed`
+  - `evidence[]` repository-local references
+- Gate policy:
+  - Report freshness must satisfy `maxAgeDays`.
+  - Pass-rate must satisfy `minimumPassRate`.
+  - Open critical/high regressions must be at or below configured maximums.
+  - Required suite IDs/statuses must be present and valid.

@@ -7,9 +7,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   ACTIVE_STATUSES,
+  isValidPlanId,
   listMarkdownFiles,
   metadataValue,
   normalizeStatus,
+  parsePlanId,
   parseRiskTier,
   parseSecurityApproval,
   parseListField,
@@ -27,6 +29,7 @@ const DEFAULT_MAX_ROLLOVERS = 20;
 const DEFAULT_MAX_SESSIONS_PER_PLAN = 20;
 const DEFAULT_HANDOFF_EXIT_CODE = 75;
 const DEFAULT_REQUIRE_RESULT_PAYLOAD = true;
+const DEFAULT_COMMAND_TIMEOUT_SECONDS = 1800;
 const DEFAULT_HOST_VALIDATION_MODE = 'hybrid';
 const DEFAULT_HOST_VALIDATION_TIMEOUT_SECONDS = 1800;
 const DEFAULT_HOST_VALIDATION_POLL_SECONDS = 15;
@@ -86,6 +89,9 @@ const TRANSIENT_AUTOMATION_DIR_PREFIXES = [
   'docs/ops/automation/runtime/',
   'docs/ops/automation/handoffs/'
 ];
+const SAFE_PLAN_RELATIVE_PATH_REGEX = /^[A-Za-z0-9._/-]+$/;
+const REDACTED_VALUE = '[REDACTED]';
+const SENSITIVE_KEY_REGEX = /(token|secret|password|passphrase|api[-_]?key|authorization|cookie|session)/i;
 
 function usage() {
   console.log(`Usage:
@@ -210,6 +216,29 @@ function datedPlanFileName(datePrefix, stem, ext = '.md') {
   return `${datePrefix}-${baseStem}${ext}`;
 }
 
+function assertSafeRelativePlanPath(relPath) {
+  const normalized = toPosix(String(relPath ?? '').trim());
+  if (!normalized) {
+    throw new Error('Plan file path is empty.');
+  }
+  if (path.posix.isAbsolute(normalized) || normalized.includes('..')) {
+    throw new Error(`Unsafe plan file path '${normalized}'.`);
+  }
+  if (!SAFE_PLAN_RELATIVE_PATH_REGEX.test(normalized)) {
+    throw new Error(`Plan file path contains unsafe characters: '${normalized}'.`);
+  }
+  return normalized;
+}
+
+function assertValidPlanId(planId, relPath) {
+  if (!isValidPlanId(planId)) {
+    throw new Error(
+      `Invalid Plan-ID '${planId}' in ${relPath}. Use lowercase kebab-case (e.g. 'fix-auth-timeout').`
+    );
+  }
+  return String(planId);
+}
+
 function buildPaths(rootDir) {
   const docsDir = path.join(rootDir, 'docs');
   const opsAutomationDir = path.join(docsDir, 'ops', 'automation');
@@ -260,6 +289,16 @@ async function readJsonIfExists(filePath, fallback) {
   }
 }
 
+async function readJsonStrict(filePath) {
+  const raw = await fs.readFile(filePath, 'utf8');
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid JSON in ${toPosix(path.relative(process.cwd(), filePath))}: ${message}`);
+  }
+}
+
 async function writeJson(filePath, payload, dryRun) {
   if (dryRun) {
     return;
@@ -274,23 +313,36 @@ async function appendJsonLine(filePath, payload, dryRun) {
   await fs.appendFile(filePath, `${JSON.stringify(payload)}\n`, 'utf8');
 }
 
-function runShell(command, cwd, env = process.env) {
+function timeoutMsFromSeconds(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return undefined;
+  }
+  return Math.floor(seconds * 1000);
+}
+
+function runShell(command, cwd, env = process.env, timeoutMs = undefined) {
   return spawnSync(command, {
     shell: true,
     cwd,
     env,
+    timeout: timeoutMs,
     stdio: 'inherit'
   });
 }
 
-function runShellCapture(command, cwd, env = process.env) {
+function runShellCapture(command, cwd, env = process.env, timeoutMs = undefined) {
   return spawnSync(command, {
     shell: true,
     cwd,
     env,
+    timeout: timeoutMs,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   });
+}
+
+function didTimeout(result) {
+  return result?.error?.code === 'ETIMEDOUT';
 }
 
 function pidIsAlive(pid) {
@@ -310,12 +362,16 @@ async function loadConfig(paths) {
   const defaultConfig = {
     executor: {
       command: '',
-      handoffExitCode: DEFAULT_HANDOFF_EXIT_CODE
+      handoffExitCode: DEFAULT_HANDOFF_EXIT_CODE,
+      timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS
     },
     validationCommands: [],
     validation: {
       always: [],
+      requireAlwaysCommands: true,
       hostRequired: [],
+      requireHostRequiredCommands: true,
+      timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
       host: {
         mode: DEFAULT_HOST_VALIDATION_MODE,
         ci: {
@@ -487,14 +543,6 @@ async function acquireRunLock(paths, state, options) {
     return;
   }
 
-  const existing = await readJsonIfExists(paths.runLockPath, null);
-  const existingPid = Number.isInteger(existing?.pid) ? existing.pid : null;
-  if (existingPid && existingPid !== process.pid && pidIsAlive(existingPid)) {
-    throw new Error(
-      `Another orchestrator run appears active (pid ${existingPid}, runId ${existing?.runId ?? 'unknown'}).`
-    );
-  }
-
   const payload = {
     pid: process.pid,
     runId: state.runId,
@@ -502,7 +550,39 @@ async function acquireRunLock(paths, state, options) {
     acquiredAt: nowIso(),
     cwd: paths.rootDir
   };
-  await writeJson(paths.runLockPath, payload, options.dryRun);
+
+  async function tryCreateLock() {
+    const handle = await fs.open(paths.runLockPath, 'wx');
+    try {
+      await handle.writeFile(`${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    } finally {
+      await handle.close();
+    }
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await tryCreateLock();
+      return;
+    } catch (error) {
+      const code = error?.code;
+      if (code !== 'EEXIST') {
+        throw error;
+      }
+
+      const existing = await readJsonStrict(paths.runLockPath);
+      const existingPid = Number.isInteger(existing?.pid) ? existing.pid : null;
+      if (existingPid && existingPid !== process.pid && pidIsAlive(existingPid)) {
+        throw new Error(
+          `Another orchestrator run appears active (pid ${existingPid}, runId ${existing?.runId ?? 'unknown'}).`
+        );
+      }
+
+      await fs.unlink(paths.runLockPath);
+    }
+  }
+
+  throw new Error('Unable to acquire orchestrator run lock after stale-lock cleanup.');
 }
 
 async function releaseRunLock(paths, options) {
@@ -538,6 +618,26 @@ function assertExecutorConfigured(options, config) {
   }
 }
 
+function assertValidationConfigured(options, config, paths) {
+  if (options.dryRun) {
+    return;
+  }
+
+  const alwaysValidation = resolveAlwaysValidationCommands(paths.rootDir, options, config);
+  if (options.requireAlwaysValidationCommands && alwaysValidation.length === 0) {
+    throw new Error(
+      'No validation.always commands configured. Set docs/ops/automation/orchestrator.config.json validation.always.'
+    );
+  }
+
+  const hostValidation = resolveHostRequiredValidationCommands(config);
+  if (options.requireHostValidationCommands && hostValidation.length === 0) {
+    throw new Error(
+      'No validation.hostRequired commands configured. Set docs/ops/automation/orchestrator.config.json validation.hostRequired.'
+    );
+  }
+}
+
 function resolveRuntimeExecutorOptions(options, config) {
   const configContextThreshold = asInteger(config.executor?.contextThreshold, DEFAULT_CONTEXT_THRESHOLD);
   const contextThreshold = asInteger(options.contextThreshold, configContextThreshold);
@@ -546,11 +646,36 @@ function resolveRuntimeExecutorOptions(options, config) {
     DEFAULT_REQUIRE_RESULT_PAYLOAD
   );
   const requireResultPayload = asBoolean(options.requireResultPayload, configRequireResultPayload);
+  const executorTimeoutSeconds = asInteger(
+    config.executor?.timeoutSeconds,
+    DEFAULT_COMMAND_TIMEOUT_SECONDS
+  );
+  const validationTimeoutSeconds = asInteger(
+    config.validation?.timeoutSeconds,
+    DEFAULT_COMMAND_TIMEOUT_SECONDS
+  );
+  const hostValidationTimeoutSeconds = asInteger(
+    config.validation?.host?.ci?.timeoutSeconds ?? config.validation?.host?.timeoutSeconds,
+    DEFAULT_HOST_VALIDATION_TIMEOUT_SECONDS
+  );
+  const requireAlwaysValidationCommands = asBoolean(
+    config.validation?.requireAlwaysCommands,
+    true
+  );
+  const requireHostValidationCommands = asBoolean(
+    config.validation?.requireHostRequiredCommands,
+    true
+  );
 
   return {
     ...options,
     contextThreshold,
-    requireResultPayload
+    requireResultPayload,
+    executorTimeoutMs: timeoutMsFromSeconds(executorTimeoutSeconds),
+    validationTimeoutMs: timeoutMsFromSeconds(validationTimeoutSeconds),
+    hostValidationTimeoutMs: timeoutMsFromSeconds(hostValidationTimeoutSeconds),
+    requireAlwaysValidationCommands,
+    requireHostValidationCommands
   };
 }
 
@@ -954,15 +1079,50 @@ async function saveState(paths, state, dryRun) {
   await writeJson(paths.runStatePath, state, dryRun);
 }
 
+function redactString(value) {
+  let redacted = String(value);
+  redacted = redacted.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]');
+  redacted = redacted.replace(/(token|secret|password|passphrase|api[-_]?key)\s*[:=]\s*['"]?[^'"\s]+['"]?/gi, '$1=[REDACTED]');
+  return redacted;
+}
+
+function sanitizeEventDetails(value, parentKey = '') {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeEventDetails(entry, parentKey));
+  }
+
+  if (value && typeof value === 'object') {
+    const next = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (SENSITIVE_KEY_REGEX.test(key)) {
+        next[key] = REDACTED_VALUE;
+        continue;
+      }
+      next[key] = sanitizeEventDetails(entry, key);
+    }
+    return next;
+  }
+
+  if (typeof value === 'string') {
+    if (SENSITIVE_KEY_REGEX.test(parentKey)) {
+      return REDACTED_VALUE;
+    }
+    return redactString(value);
+  }
+
+  return value;
+}
+
 async function logEvent(paths, state, type, details, dryRun) {
+  const sanitizedDetails = sanitizeEventDetails(details ?? {});
   const event = {
     timestamp: nowIso(),
     runId: state.runId,
-    taskId: details.planId ?? null,
+    taskId: sanitizedDetails.planId ?? null,
     type,
-    model: details.model ?? process.env.ORCH_MODEL_ID ?? 'n/a',
+    model: sanitizedDetails.model ?? process.env.ORCH_MODEL_ID ?? 'n/a',
     mode: state.effectiveMode,
-    details
+    details: sanitizedDetails
   };
   await appendJsonLine(paths.runEventsPath, event, dryRun);
 }
@@ -1019,12 +1179,33 @@ function evaluatePolicyGate(plan, effectiveMode) {
 async function readPlanRecord(rootDir, filePath, phase) {
   const content = await fs.readFile(filePath, 'utf8');
   const metadata = parseMetadata(content);
+  const rel = assertSafeRelativePlanPath(toPosix(path.relative(rootDir, filePath)));
+  const explicitPlanId = metadataValue(metadata, 'Plan-ID');
+  const parsedExplicitPlanId = explicitPlanId ? parsePlanId(explicitPlanId, null) : null;
+  if (explicitPlanId && !parsedExplicitPlanId) {
+    throw new Error(
+      `Invalid Plan-ID '${explicitPlanId}' in ${rel}. Use lowercase kebab-case (e.g. 'fix-auth-timeout').`
+    );
+  }
+  const inferredPlanId = inferPlanId(content, filePath);
+  const planId = parsedExplicitPlanId ?? inferredPlanId;
+  if (!planId) {
+    throw new Error(`Could not parse or infer Plan-ID for ${rel}.`);
+  }
+  assertValidPlanId(planId, rel);
 
-  const planId = metadataValue(metadata, 'Plan-ID') ?? inferPlanId(content, filePath);
   const status = normalizeStatus(metadataValue(metadata, 'Status'));
   const priority = parsePriority(metadataValue(metadata, 'Priority'));
   const owner = metadataValue(metadata, 'Owner') ?? 'unassigned';
-  const dependencies = parseListField(metadataValue(metadata, 'Dependencies'));
+  const dependencies = parseListField(metadataValue(metadata, 'Dependencies')).map((dependency) => {
+    const parsedDependency = parsePlanId(dependency, null);
+    if (!parsedDependency) {
+      throw new Error(
+        `Invalid dependency '${dependency}' in ${rel}. Dependencies must be lowercase kebab-case Plan-ID values.`
+      );
+    }
+    return parsedDependency;
+  });
   const tags = parseListField(metadataValue(metadata, 'Tags'));
   const specTargets = parseListField(metadataValue(metadata, 'Spec-Targets'));
   const doneEvidence = parseListField(metadataValue(metadata, 'Done-Evidence'));
@@ -1033,7 +1214,7 @@ async function readPlanRecord(rootDir, filePath, phase) {
     planId,
     phase,
     filePath,
-    rel: toPosix(path.relative(rootDir, filePath)),
+    rel,
     title: (content.match(/^#\s+(.+)$/m)?.[1] ?? planId).trim(),
     content,
     metadata,
@@ -1193,6 +1374,8 @@ function replaceExecutorTokens(command, plan, sessionContext) {
 }
 
 async function executePlanSession(plan, paths, state, options, config, sessionNumber, sessionContext = {}) {
+  assertValidPlanId(plan.planId, plan.rel);
+  assertSafeRelativePlanPath(plan.rel);
   const role = normalizeRoleName(sessionContext.role, ROLE_WORKER);
   const effectiveRiskTier = parseRiskTier(sessionContext.effectiveRiskTier, 'low');
   const declaredRiskTier = parseRiskTier(sessionContext.declaredRiskTier, 'low');
@@ -1238,7 +1421,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     declaredRiskTier,
     stageIndex,
     stageTotal,
-    command: renderedCommand
+    executorCommandConfigured: true
   }, options.dryRun);
 
   if (options.dryRun) {
@@ -1267,8 +1450,16 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     ORCH_HANDOFF_TOKEN_BUDGET: String(options.handoffTokenBudget)
   };
 
-  const execution = runShell(renderedCommand, paths.rootDir, env);
+  const execution = runShell(renderedCommand, paths.rootDir, env, options.executorTimeoutMs);
   const handoffExitCode = asInteger(options.handoffExitCode, asInteger(config.executor.handoffExitCode, DEFAULT_HANDOFF_EXIT_CODE));
+
+  if (didTimeout(execution)) {
+    return {
+      status: 'failed',
+      reason: `Executor command timed out after ${Math.floor((options.executorTimeoutMs ?? 0) / 1000)}s`,
+      role
+    };
+  }
 
   if (execution.signal) {
     return {
@@ -1625,8 +1816,10 @@ function resolveHostValidationMode(config) {
 async function runValidationCommands(paths, commands, options, label) {
   if (commands.length === 0) {
     return {
-      ok: true,
-      evidence: [`No ${label} commands configured.`]
+      ok: false,
+      failedCommand: '(none configured)',
+      reason: `No ${label} commands configured.`,
+      evidence: []
     };
   }
 
@@ -1637,11 +1830,20 @@ async function runValidationCommands(paths, commands, options, label) {
       continue;
     }
 
-    const result = runShell(command, paths.rootDir);
+    const result = runShell(command, paths.rootDir, process.env, options.validationTimeoutMs);
+    if (didTimeout(result)) {
+      return {
+        ok: false,
+        failedCommand: command,
+        reason: `${label} command timed out after ${Math.floor((options.validationTimeoutMs ?? 0) / 1000)}s`,
+        evidence
+      };
+    }
     if (result.status !== 0) {
       return {
         ok: false,
         failedCommand: command,
+        reason: `${label} failed: ${command}`,
         evidence
       };
     }
@@ -1656,6 +1858,12 @@ async function runValidationCommands(paths, commands, options, label) {
 
 async function runAlwaysValidation(paths, options, config) {
   const commands = resolveAlwaysValidationCommands(paths.rootDir, options, config);
+  if (commands.length === 0 && !options.requireAlwaysValidationCommands) {
+    return {
+      ok: true,
+      evidence: ['Validation lane skipped: no validation.always commands configured.']
+    };
+  }
   return runValidationCommands(paths, commands, options, 'Validation');
 }
 
@@ -1692,7 +1900,7 @@ async function executeHostProviderCommand(provider, command, commands, paths, st
     ORCH_HOST_VALIDATION_RESULT_PATH: resultPaths.rel
   };
 
-  const execution = runShell(command, paths.rootDir, env);
+  const execution = runShell(command, paths.rootDir, env, options.hostValidationTimeoutMs);
   const payload = await readJsonIfExists(resultPaths.abs, null);
   if (payload && typeof payload === 'object') {
     const reported = String(payload.status ?? '').trim().toLowerCase();
@@ -1706,6 +1914,14 @@ async function executeHostProviderCommand(provider, command, commands, paths, st
           : [`Host validation (${provider}) result payload loaded from ${resultPaths.rel}`]
       };
     }
+  }
+
+  if (didTimeout(execution)) {
+    return {
+      status: 'unavailable',
+      provider,
+      reason: `Host validation provider '${provider}' timed out after ${Math.floor((options.hostValidationTimeoutMs ?? 0) / 1000)}s`
+    };
   }
 
   if (execution.signal) {
@@ -1734,6 +1950,15 @@ async function executeHostProviderCommand(provider, command, commands, paths, st
 async function runHostValidation(paths, state, plan, options, config) {
   const commands = resolveHostRequiredValidationCommands(config);
   if (commands.length === 0) {
+    if (options.requireHostValidationCommands) {
+      return {
+        status: 'failed',
+        provider: 'none',
+        reason:
+          'Host validation lane is required but validation.hostRequired is empty. Configure host-required validation commands.',
+        evidence: []
+      };
+    }
     return {
       status: 'passed',
       provider: 'none',
@@ -1786,7 +2011,15 @@ async function runHostValidation(paths, state, plan, options, config) {
       };
     }
 
-    const result = await runValidationCommands(paths, commands, options, 'Host validation');
+    const result = await runValidationCommands(
+      paths,
+      commands,
+      {
+        ...options,
+        validationTimeoutMs: options.hostValidationTimeoutMs ?? options.validationTimeoutMs
+      },
+      'Host validation'
+    );
     if (!result.ok) {
       return {
         status: 'failed',
@@ -2589,9 +2822,18 @@ function gitDirty(rootDir, options = {}) {
   return dirtyPaths.some((pathValue) => !isTransientAutomationPath(pathValue));
 }
 
-function createAtomicCommit(rootDir, planId, dryRun) {
+function createAtomicCommit(rootDir, planId, dryRun, allowDirty) {
   if (dryRun) {
     return { ok: true, committed: false, commitHash: null, reason: 'dry-run' };
+  }
+
+  if (allowDirty) {
+    return {
+      ok: false,
+      committed: false,
+      commitHash: null,
+      reason: 'Refusing atomic commit with --allow-dirty true. Re-run with --allow-dirty false or --commit false.'
+    };
   }
 
   if (!gitAvailable(rootDir)) {
@@ -2602,7 +2844,7 @@ function createAtomicCommit(rootDir, planId, dryRun) {
     return { ok: true, committed: false, commitHash: null, reason: 'no-changes' };
   }
 
-  const add = runShellCapture('git add -A', rootDir);
+  const add = runShellCapture('git add --all -- .', rootDir);
   if (add.status !== 0) {
     return { ok: false, committed: false, commitHash: null, reason: 'git add failed' };
   }
@@ -2928,7 +3170,7 @@ async function processPlan(plan, paths, state, options, config) {
 
         let commitResult = { ok: true, committed: false, commitHash: null };
         if (asBoolean(options.commit, config.git.atomicCommits !== false)) {
-          commitResult = createAtomicCommit(paths.rootDir, plan.planId, options.dryRun);
+          commitResult = createAtomicCommit(paths.rootDir, plan.planId, options.dryRun, options.allowDirty);
           if (!commitResult.ok) {
             return {
               outcome: 'failed',
@@ -3067,17 +3309,18 @@ async function processPlan(plan, paths, state, options, config) {
       state.stats.validationFailures += 1;
       updatePlanValidationState(state, plan.planId, {
         always: 'failed',
-        reason: `Validation failed: ${alwaysValidation.failedCommand}`
+        reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`
       });
       await setPlanStatus(plan.filePath, 'failed', options.dryRun);
       await logEvent(paths, state, 'validation_failed', {
         planId: plan.planId,
-        command: alwaysValidation.failedCommand
+        command: alwaysValidation.failedCommand,
+        reason: alwaysValidation.reason ?? null
       }, options.dryRun);
 
       return {
         outcome: 'failed',
-        reason: `Validation failed: ${alwaysValidation.failedCommand}`,
+        reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`,
         riskTier: lastAssessment.effectiveRiskTier
       };
     }
@@ -3204,7 +3447,7 @@ async function processPlan(plan, paths, state, options, config) {
 
     let commitResult = { ok: true, committed: false, commitHash: null };
     if (asBoolean(options.commit, config.git.atomicCommits !== false)) {
-      commitResult = createAtomicCommit(paths.rootDir, plan.planId, options.dryRun);
+      commitResult = createAtomicCommit(paths.rootDir, plan.planId, options.dryRun, options.allowDirty);
       if (!commitResult.ok) {
         return {
           outcome: 'failed',
@@ -3376,6 +3619,9 @@ async function runLoop(paths, state, options, config, runMode) {
 async function runCommand(paths, options) {
   const config = await loadConfig(paths);
   Object.assign(options, resolveRuntimeExecutorOptions(options, config));
+  if (asBoolean(options.allowDirty, false) && asBoolean(options.commit, config.git.atomicCommits !== false)) {
+    throw new Error('Refusing --allow-dirty true with --commit true. Disable commits or start from a clean worktree.');
+  }
   const modeResolution = resolveEffectiveMode(options.mode);
   const runId = options.runId || randomRunId();
 
@@ -3391,6 +3637,7 @@ async function runCommand(paths, options) {
   }
 
   assertExecutorConfigured(options, config);
+  assertValidationConfigured(options, config, paths);
 
   await ensureDirectories(paths, options.dryRun);
   await acquireRunLock(paths, state, options);
@@ -3460,6 +3707,9 @@ async function runCommand(paths, options) {
 async function resumeCommand(paths, options) {
   const config = await loadConfig(paths);
   Object.assign(options, resolveRuntimeExecutorOptions(options, config));
+  if (asBoolean(options.allowDirty, false) && asBoolean(options.commit, config.git.atomicCommits !== false)) {
+    throw new Error('Refusing --allow-dirty true with --commit true. Disable commits or start from a clean worktree.');
+  }
   const persisted = await readJsonIfExists(paths.runStatePath, null);
 
   if (!persisted || !persisted.runId) {
@@ -3473,6 +3723,7 @@ async function resumeCommand(paths, options) {
   const state = normalizePersistedState(persisted);
   state.capabilities = await detectCapabilities();
   assertExecutorConfigured(options, config);
+  assertValidationConfigured(options, config, paths);
   await ensureDirectories(paths, options.dryRun);
   await acquireRunLock(paths, state, options);
 
