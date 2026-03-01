@@ -65,6 +65,20 @@ function ensureScriptSignatures(orchestratorRaw, wrapperRaw) {
       'scripts/automation/orchestrator.mjs'
     );
   }
+  if (!orchestratorRaw.includes('function runShellMonitored(')) {
+    addFinding(
+      'MISSING_LIVE_EXECUTION_MONITOR',
+      'scripts/automation/orchestrator.mjs must include monitored command execution for live heartbeat status.',
+      'scripts/automation/orchestrator.mjs'
+    );
+  }
+  if (!orchestratorRaw.includes('function renderLiveStatusLine(')) {
+    addFinding(
+      'MISSING_LIVE_STATUS_RENDERER',
+      'scripts/automation/orchestrator.mjs must include a single-line live status renderer.',
+      'scripts/automation/orchestrator.mjs'
+    );
+  }
   if (!wrapperRaw.includes('enforceRoleModelSelection')) {
     addFinding(
       'MISSING_ROLE_MODEL_ENFORCEMENT',
@@ -115,6 +129,29 @@ function ensureConfigPolicy(config, configPath) {
     addFinding(
       'INVALID_FAILURE_TAIL_LINES',
       'logging.failureTailLines must be a positive integer.',
+      rel(configPath)
+    );
+  }
+  const heartbeatSeconds = Number.parseInt(String(config?.logging?.heartbeatSeconds ?? ''), 10);
+  if (!Number.isFinite(heartbeatSeconds) || heartbeatSeconds <= 0) {
+    addFinding(
+      'INVALID_HEARTBEAT_SECONDS',
+      'logging.heartbeatSeconds must be a positive integer.',
+      rel(configPath)
+    );
+  }
+  const stallWarnSeconds = Number.parseInt(String(config?.logging?.stallWarnSeconds ?? ''), 10);
+  if (!Number.isFinite(stallWarnSeconds) || stallWarnSeconds <= 0) {
+    addFinding(
+      'INVALID_STALL_WARN_SECONDS',
+      'logging.stallWarnSeconds must be a positive integer.',
+      rel(configPath)
+    );
+  }
+  if (Number.isFinite(heartbeatSeconds) && Number.isFinite(stallWarnSeconds) && stallWarnSeconds < heartbeatSeconds) {
+    addFinding(
+      'STALL_WARN_TOO_LOW',
+      'logging.stallWarnSeconds must be greater than or equal to logging.heartbeatSeconds.',
       rel(configPath)
     );
   }

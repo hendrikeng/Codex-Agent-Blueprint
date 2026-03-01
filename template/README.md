@@ -84,6 +84,8 @@ Start with:
 - Resume run: `npm run automation:resume`
 - Audit runs: `npm run automation:audit -- --json true`
 - Lean output defaults to interactive pretty lifecycle lines; use `--output ticker` for ultra-compact logs, `--output minimal` for expanded high-signal lines, or `--output verbose` for full streamed command output.
+- `pretty` output keeps one live in-place heartbeat line (phase/plan/role/activity/elapsed/idle) so you can tell running vs stuck without log spam.
+- `guarded` is gate-based (non-interactive): medium/high plans require `ORCH_APPROVED_MEDIUM=1` / `ORCH_APPROVED_HIGH=1`.
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
 - Provider selection is adapter-based (`executor.provider` or `ORCH_EXECUTOR_PROVIDER`) so Codex/Claude/Gemini/Grok can share the same orchestration contract.
 - Default session safety policy is proactive rollover at `contextRemaining <= 10000` with required structured `ORCH_RESULT_PATH` payloads.

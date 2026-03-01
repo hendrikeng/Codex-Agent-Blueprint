@@ -54,6 +54,8 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - Output controls:
   - `--output minimal|ticker|pretty|verbose` (default `pretty`)
   - `--failure-tail-lines <n>` (default `60`)
+  - `--heartbeat-seconds <n>` (default `12`)
+  - `--stall-warn-seconds <n>` (default `120`)
 
 ## Executor Configuration
 
@@ -67,7 +69,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `"enforceRoleModelSelection": true` requires each role command to include `{role_model}`.
   - `"contextThreshold": 10000`
   - `"requireResultPayload": true`
-  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`) and `"logging.failureTailLines": 60` tune operator-facing output noise.
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, and `"logging.stallWarnSeconds": 120` tune operator-facing output noise and liveness signaling.
   - `executor.promptTemplate` is provider-agnostic and reused across Codex/Claude/Gemini/Grok adapters.
 - Role orchestration:
   - `roleOrchestration.enabled: true` enables risk-adaptive role routing.
@@ -118,11 +120,12 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - Evidence folders with markdown artifacts always have a canonical `README.md` generated/maintained by curation.
   - `docs/exec-plans/evidence-index/README.md` is generated/maintained as the index-directory guide.
 - Logging and observability:
-  - `pretty` output adds interactive-style, color-capable lifecycle logs (TTY-safe and CI-safe fallback).
+  - `pretty` output adds interactive-style, color-capable lifecycle logs plus a single live heartbeat line for in-flight session/validation activity.
   - `minimal` output prints high-signal lifecycle lines only (plan/session start-end, role transitions, validation state, blockers).
   - `ticker` output prints compact single-line lifecycle events and a single-line run summary.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
+  - `logging.heartbeatSeconds` and `logging.stallWarnSeconds` tune heartbeat cadence and stall-warning threshold (override via CLI flags).
 - Drift guardrail:
   - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
@@ -137,9 +140,9 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 
 ## Policy Controls
 
-- `guarded` mode blocks medium/high risk plans unless explicitly approved.
+- `guarded` mode is non-interactive (no terminal approval prompt) and blocks medium/high risk plans unless explicitly approved.
 - `full` mode is allowed only when `ORCH_ALLOW_FULL_AUTONOMY=1`.
-- Medium/high approvals in full mode require:
+- Medium/high approvals are env-gated in both `guarded` and `full` modes:
   - `ORCH_APPROVED_MEDIUM=1`
   - `ORCH_APPROVED_HIGH=1`
 - Atomic commits are blocked when `--allow-dirty true` is set to avoid committing unrelated workspace changes.
@@ -148,12 +151,35 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - effective risk is `high`, or
   - effective risk is `medium` with sensitive tag/path hits.
 
-Common run invocations:
+Quick run guide:
 
-- Default guarded run: `npm run automation:run -- --mode guarded`
-- Medium-risk approved run: `ORCH_APPROVED_MEDIUM=1 npm run automation:run -- --mode guarded`
-- High-risk approved run: `ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode guarded`
+- Default (low-only): `npm run automation:run -- --mode guarded`
+- Allow medium-risk plans: `ORCH_APPROVED_MEDIUM=1 npm run automation:run -- --mode guarded`
+- Allow high-risk plans: `ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode guarded`
+- Allow medium+high plans: `ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode guarded`
+- Enable full mode (still requires medium/high approvals): `ORCH_ALLOW_FULL_AUTONOMY=1 npm run automation:run -- --mode full`
+- Full mode with medium+high approvals: `ORCH_ALLOW_FULL_AUTONOMY=1 ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode full`
 - Provider override: `ORCH_EXECUTOR_PROVIDER=claude npm run automation:run -- --mode guarded`
+
+Start examples:
+
+- Run with default pretty output: `npm run automation:run -- --mode guarded`
+- Process up to 5 plans in one run: `npm run automation:run -- --mode guarded --max-plans 5`
+- Faster liveness signal in pretty mode: `npm run automation:run -- --mode guarded --heartbeat-seconds 5 --stall-warn-seconds 45`
+- Compact ticker output: `npm run automation:run -- --mode guarded --output ticker`
+
+Pretty output example:
+
+```text
+16:04:07 | RUN   run started runId=run-20260301160407-k4l9wd mode=guarded output=pretty failureTailLines=60
+16:04:07 / RUN   plan start attendee-search-suggestion-qa-hardening declared=low effective=low score=0
+16:04:07 \ RUN   session 1 start attendee-search-suggestion-qa-hardening role=worker stage=1/1 provider=codex model=gpt-5.3-codex risk=low
+16:04:19 ... RUN  phase=session plan=attendee-search-suggestion-qa-hardening role=worker activity=implementing elapsed=12s idle=12s
+```
+
+Parallelism note:
+
+- `--max-plans 5` is a per-run processing cap, not parallel execution; one orchestrator run processes one executable plan at a time.
 
 ## Exit Conventions
 

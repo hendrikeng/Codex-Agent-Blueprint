@@ -39,6 +39,8 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 - Role routing is risk-adaptive (`low: worker`, `medium: planner->worker->reviewer`, `high: planner->explorer->worker->reviewer`) with Security-Approval gates for high/sensitive plans.
 - Role stages are isolated executor sessions; role commands should include `{role_model}` to enforce model switching.
 - Orchestrator defaults to interactive pretty console output with raw session logs written under `docs/ops/automation/runtime/<run-id>/` (`--output ticker` for ultra-compact mode).
+- Pretty mode includes a single in-place heartbeat/status line for active phases (session/validation/host validation) with elapsed/idle timing.
+- `guarded` mode is non-interactive and env-gated (`ORCH_APPROVED_MEDIUM=1`, `ORCH_APPROVED_HIGH=1`); quick command matrix is in `template/docs/ops/automation/README.md`.
 
 ## When To Run Checks
 

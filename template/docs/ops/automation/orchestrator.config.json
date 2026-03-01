@@ -170,7 +170,9 @@
   "validationCommands": [],
   "logging": {
     "output": "pretty",
-    "failureTailLines": 60
+    "failureTailLines": 60,
+    "heartbeatSeconds": 12,
+    "stallWarnSeconds": 120
   },
   "git": {
     "atomicCommits": true

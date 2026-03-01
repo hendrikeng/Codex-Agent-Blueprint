@@ -4,7 +4,7 @@ import fsSync from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   ACTIVE_STATUSES,
   isValidPlanId,
@@ -36,7 +36,12 @@ const DEFAULT_HOST_VALIDATION_POLL_SECONDS = 15;
 const DEFAULT_OUTPUT_MODE = 'pretty';
 const DEFAULT_FAILURE_TAIL_LINES = 60;
 const PRETTY_SPINNER_FRAMES = ['|', '/', '-', '\\'];
+const PRETTY_LIVE_DOT_FRAMES = ['...', '.. ', '.  ', ' ..'];
+const DEFAULT_HEARTBEAT_SECONDS = 12;
+const DEFAULT_STALL_WARN_SECONDS = 120;
 let prettySpinnerIndex = 0;
+let prettyLiveDotIndex = 0;
+let liveStatusLineLength = 0;
 const DEFAULT_EVIDENCE_MAX_REFERENCES = 25;
 const DEFAULT_EVIDENCE_TRACK_MODE = 'curated';
 const DEFAULT_EVIDENCE_DEDUP_MODE = 'strict-upsert';
@@ -123,6 +128,8 @@ Options:
   --json true|false                  JSON output for audit
   --output minimal|ticker|pretty|verbose Console output mode (default: pretty)
   --failure-tail-lines <n>           Lines of command output to print on failures (default: 60)
+  --heartbeat-seconds <n>            Live status heartbeat cadence in seconds (default: 12)
+  --stall-warn-seconds <n>           Warn when no command output for this many seconds (default: 120)
 `);
 }
 
@@ -223,6 +230,40 @@ function nextPrettySpinner(options) {
   return colorize(options, '36', frame);
 }
 
+function nextPrettyLiveDots(options) {
+  if (!process.stdout.isTTY) {
+    return '...';
+  }
+  const frame = PRETTY_LIVE_DOT_FRAMES[prettyLiveDotIndex % PRETTY_LIVE_DOT_FRAMES.length];
+  prettyLiveDotIndex += 1;
+  return colorize(options, '36', frame);
+}
+
+function supportsLiveStatusLine(options) {
+  return isPrettyOutput(options) && process.stdout.isTTY;
+}
+
+function clearLiveStatusLine() {
+  if (!process.stdout.isTTY || liveStatusLineLength <= 0) {
+    return;
+  }
+  process.stdout.write(`\r${' '.repeat(liveStatusLineLength)}\r`);
+  liveStatusLineLength = 0;
+}
+
+function renderLiveStatusLine(options, message) {
+  if (!supportsLiveStatusLine(options)) {
+    return;
+  }
+  const normalized = String(message ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return;
+  }
+  const padded = normalized.padEnd(liveStatusLineLength, ' ');
+  process.stdout.write(`\r${padded}`);
+  liveStatusLineLength = normalized.length;
+}
+
 function classifyPrettyLevel(message) {
   const value = String(message ?? '').toLowerCase();
   if (value.includes('failed') || value.includes('error')) return 'error';
@@ -243,6 +284,7 @@ function prettyLevelTag(options, level) {
 }
 
 function progressLog(options, message) {
+  clearLiveStatusLine();
   if (isTickerOutput(options)) {
     console.log(`[ticker] ${nowIso()} ${message}`);
     return;
@@ -551,6 +593,165 @@ function didTimeout(result) {
   return result?.error?.code === 'ETIMEDOUT';
 }
 
+function roleActivity(role) {
+  const normalized = normalizeRoleName(role, ROLE_WORKER);
+  if (normalized === ROLE_PLANNER) return 'planning';
+  if (normalized === ROLE_EXPLORER) return 'exploring';
+  if (normalized === ROLE_REVIEWER) return 'reviewing';
+  return 'implementing';
+}
+
+function safeDisplayToken(value, fallback = 'n/a') {
+  const rendered = String(value ?? '').trim();
+  return rendered.length > 0 ? rendered : fallback;
+}
+
+function formatCommandHeartbeatLine(options, context, elapsedSeconds, idleSeconds) {
+  const stamp = colorize(options, '90', nowIso().slice(11, 19));
+  const dots = nextPrettyLiveDots(options);
+  const tag = prettyLevelTag(options, idleSeconds >= options.stallWarnSeconds ? 'warn' : 'run');
+  const phase = safeDisplayToken(context.phase, 'session');
+  const planId = safeDisplayToken(context.planId, 'run');
+  const role = safeDisplayToken(context.role, 'n/a');
+  const activity = safeDisplayToken(context.activity, phase);
+  return (
+    `${stamp} ${dots} ${tag} phase=${phase} plan=${planId} role=${role} activity=${activity} ` +
+    `elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)}`
+  );
+}
+
+async function runShellMonitored(
+  command,
+  cwd,
+  env = process.env,
+  timeoutMs = undefined,
+  stdioMode = 'inherit',
+  options = {},
+  context = {}
+) {
+  const capture = stdioMode === 'pipe';
+  const startedAtMs = Date.now();
+  let lastOutputAtMs = startedAtMs;
+  let stdout = '';
+  let stderr = '';
+  let timedOut = false;
+  let processError = null;
+  let settled = false;
+  let warnEmitted = false;
+
+  const child = spawn(command, {
+    shell: true,
+    cwd,
+    env,
+    stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit'
+  });
+
+  if (capture) {
+    child.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString();
+      lastOutputAtMs = Date.now();
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+      lastOutputAtMs = Date.now();
+    });
+  }
+
+  const heartbeatMs = Math.max(3000, asInteger(options.heartbeatSeconds, DEFAULT_HEARTBEAT_SECONDS) * 1000);
+  const stallWarnMs = Math.max(
+    heartbeatMs,
+    asInteger(options.stallWarnSeconds, DEFAULT_STALL_WARN_SECONDS) * 1000
+  );
+  const heartbeatEnabled = isPrettyOutput(options) || isTickerOutput(options);
+  let heartbeatTimer = null;
+  const emitHeartbeat = () => {
+    const nowMs = Date.now();
+    const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
+    const idleSeconds = Math.floor((nowMs - lastOutputAtMs) / 1000);
+
+    if (supportsLiveStatusLine(options)) {
+      renderLiveStatusLine(options, formatCommandHeartbeatLine(options, context, elapsedSeconds, idleSeconds));
+    } else {
+      progressLog(
+        options,
+        `heartbeat phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} activity=${safeDisplayToken(context.activity, safeDisplayToken(context.phase, 'session'))} elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)}`
+      );
+    }
+
+    if (idleSeconds * 1000 >= stallWarnMs && !warnEmitted) {
+      warnEmitted = true;
+      progressLog(
+        options,
+        `stall warning phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)}`
+      );
+    }
+  };
+
+  if (heartbeatEnabled) {
+    emitHeartbeat();
+    heartbeatTimer = setInterval(emitHeartbeat, heartbeatMs);
+    heartbeatTimer.unref?.();
+  }
+
+  let timeoutTimer = null;
+  let forceKillTimer = null;
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => {
+        if (pidIsAlive(child.pid)) {
+          child.kill('SIGKILL');
+        }
+      }, 5000);
+      forceKillTimer.unref?.();
+    }, timeoutMs);
+    timeoutTimer.unref?.();
+  }
+
+  function cleanupTimers() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = null;
+    }
+    if (forceKillTimer) {
+      clearTimeout(forceKillTimer);
+      forceKillTimer = null;
+    }
+    clearLiveStatusLine();
+  }
+
+  return new Promise((resolve) => {
+    const finish = (status, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupTimers();
+      resolve({
+        status,
+        signal,
+        error: timedOut ? { code: 'ETIMEDOUT' } : processError,
+        stdout,
+        stderr
+      });
+    };
+
+    child.on('error', (error) => {
+      processError = error;
+      finish(null, null);
+    });
+
+    child.on('close', (status, signal) => {
+      finish(status, signal);
+    });
+  });
+}
+
 function pidIsAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -666,7 +867,9 @@ async function loadConfig(paths) {
     },
     logging: {
       output: DEFAULT_OUTPUT_MODE,
-      failureTailLines: DEFAULT_FAILURE_TAIL_LINES
+      failureTailLines: DEFAULT_FAILURE_TAIL_LINES,
+      heartbeatSeconds: DEFAULT_HEARTBEAT_SECONDS,
+      stallWarnSeconds: DEFAULT_STALL_WARN_SECONDS
     },
     git: {
       atomicCommits: true
@@ -888,6 +1091,14 @@ function resolveRuntimeExecutorOptions(options, config) {
     options.failureTailLines ?? config.logging?.failureTailLines,
     DEFAULT_FAILURE_TAIL_LINES
   );
+  const heartbeatSeconds = Math.max(
+    3,
+    asInteger(options.heartbeatSeconds ?? config.logging?.heartbeatSeconds, DEFAULT_HEARTBEAT_SECONDS)
+  );
+  const stallWarnSeconds = Math.max(
+    heartbeatSeconds,
+    asInteger(options.stallWarnSeconds ?? config.logging?.stallWarnSeconds, DEFAULT_STALL_WARN_SECONDS)
+  );
 
   return {
     ...options,
@@ -899,7 +1110,9 @@ function resolveRuntimeExecutorOptions(options, config) {
     requireAlwaysValidationCommands,
     requireHostValidationCommands,
     outputMode,
-    failureTailLines
+    failureTailLines,
+    heartbeatSeconds,
+    stallWarnSeconds
   };
 }
 
@@ -1698,12 +1911,19 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     ORCH_HANDOFF_TOKEN_BUDGET: String(options.handoffTokenBudget)
   };
 
-  const execution = runShell(
+  const execution = await runShellMonitored(
     renderedCommand,
     paths.rootDir,
     env,
     options.executorTimeoutMs,
-    captureOutput ? 'pipe' : 'inherit'
+    captureOutput ? 'pipe' : 'inherit',
+    options,
+    {
+      phase: 'session',
+      planId: plan.planId,
+      role,
+      activity: roleActivity(role)
+    }
   );
   const commandOutput = captureOutput ? executionOutput(execution) : '';
   if (captureOutput) {
@@ -2145,12 +2365,19 @@ async function runValidationCommands(paths, commands, options, label, state = nu
     }
 
     const captureOutput = shouldCaptureCommandOutput(options);
-    const result = runShell(
+    const result = await runShellMonitored(
       command,
       paths.rootDir,
       process.env,
       options.validationTimeoutMs,
-      captureOutput ? 'pipe' : 'inherit'
+      captureOutput ? 'pipe' : 'inherit',
+      options,
+      {
+        phase: 'validation',
+        planId: plan?.planId ?? 'run',
+        role: 'validator',
+        activity: label.toLowerCase() === 'validation' ? 'validation-always' : label.toLowerCase()
+      }
     );
     const output = captureOutput ? executionOutput(result) : '';
     let logPathRel = null;
@@ -2258,12 +2485,19 @@ async function executeHostProviderCommand(provider, command, commands, paths, st
 
   const captureOutput = shouldCaptureCommandOutput(options);
   const outputLogPath = captureOutput ? logPathRel : null;
-  const executionResult = runShell(
+  const executionResult = await runShellMonitored(
     command,
     paths.rootDir,
     env,
     options.hostValidationTimeoutMs,
-    captureOutput ? 'pipe' : 'inherit'
+    captureOutput ? 'pipe' : 'inherit',
+    options,
+    {
+      phase: 'host-validation',
+      planId: plan.planId,
+      role: provider,
+      activity: 'validation-host'
+    }
   );
   const output = captureOutput ? executionOutput(executionResult) : '';
   if (captureOutput) {
@@ -4425,7 +4659,9 @@ async function main() {
     scope: rawOptions.scope ?? 'all',
     handoffExitCode: asInteger(rawOptions['handoff-exit-code'] ?? rawOptions.handoffExitCode, DEFAULT_HANDOFF_EXIT_CODE),
     outputMode: rawOptions.output ?? rawOptions['output-mode'],
-    failureTailLines: rawOptions['failure-tail-lines'] ?? rawOptions.failureTailLines
+    failureTailLines: rawOptions['failure-tail-lines'] ?? rawOptions.failureTailLines,
+    heartbeatSeconds: rawOptions['heartbeat-seconds'] ?? rawOptions.heartbeatSeconds,
+    stallWarnSeconds: rawOptions['stall-warn-seconds'] ?? rawOptions.stallWarnSeconds
   };
 
   const rootDir = process.cwd();
