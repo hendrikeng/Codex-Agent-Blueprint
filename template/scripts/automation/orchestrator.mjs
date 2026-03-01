@@ -638,16 +638,18 @@ function evaluatePolicyGate(plan, effectiveMode) {
     return { allowed: false, reason: 'Plan requires full mode but run is guarded.' };
   }
 
-  if (effectiveMode === 'guarded' && (riskTier === 'medium' || riskTier === 'high')) {
-    return { allowed: false, reason: `Risk tier '${riskTier}' requires explicit approvals in guarded mode.` };
+  if (riskTier === 'medium' && process.env.ORCH_APPROVED_MEDIUM !== '1') {
+    return {
+      allowed: false,
+      reason: `Missing ORCH_APPROVED_MEDIUM=1 for medium risk execution in ${effectiveMode} mode.`
+    };
   }
 
-  if (effectiveMode === 'full' && riskTier === 'medium' && process.env.ORCH_APPROVED_MEDIUM !== '1') {
-    return { allowed: false, reason: 'Missing ORCH_APPROVED_MEDIUM=1 for medium risk execution.' };
-  }
-
-  if (effectiveMode === 'full' && riskTier === 'high' && process.env.ORCH_APPROVED_HIGH !== '1') {
-    return { allowed: false, reason: 'Missing ORCH_APPROVED_HIGH=1 for high risk execution.' };
+  if (riskTier === 'high' && process.env.ORCH_APPROVED_HIGH !== '1') {
+    return {
+      allowed: false,
+      reason: `Missing ORCH_APPROVED_HIGH=1 for high risk execution in ${effectiveMode} mode.`
+    };
   }
 
   return { allowed: true, reason: null };
@@ -2330,10 +2332,6 @@ async function processPlan(plan, paths, state, options, config) {
   const gate = evaluatePolicyGate(plan, state.effectiveMode);
   if (!gate.allowed) {
     await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
-    await logEvent(paths, state, 'plan_blocked', {
-      planId: plan.planId,
-      reason: gate.reason
-    }, options.dryRun);
 
     return {
       outcome: 'blocked',
@@ -2745,6 +2743,11 @@ async function runLoop(paths, state, options, config, runMode) {
     }
 
     if (executable.length === 0) {
+      if (state.blockedPlanIds.length > 0) {
+        console.log(
+          `[orchestrator] no executable plans; ${state.blockedPlanIds.length} plan(s) are blocked in this run. Run audit for details.`
+        );
+      }
       break;
     }
 
@@ -2771,6 +2774,7 @@ async function runLoop(paths, state, options, config, runMode) {
       if (!state.blockedPlanIds.includes(nextPlan.planId)) {
         state.blockedPlanIds.push(nextPlan.planId);
       }
+      console.log(`[orchestrator] blocked ${nextPlan.planId}: ${outcome.reason}`);
       await logEvent(paths, state, 'plan_blocked', {
         planId: nextPlan.planId,
         reason: outcome.reason
@@ -2866,10 +2870,11 @@ async function runCommand(paths, options) {
 
     console.log(`[orchestrator] run complete (${processed} processed).`);
     console.log(`- runId: ${state.runId}`);
-    console.log(`- completed: ${state.completedPlanIds.length}`);
-    console.log(`- blocked: ${state.blockedPlanIds.length}`);
-    console.log(`- failed: ${state.failedPlanIds.length}`);
+    console.log(`- completed (cumulative for runId): ${state.completedPlanIds.length}`);
+    console.log(`- blocked (cumulative for runId): ${state.blockedPlanIds.length}`);
+    console.log(`- failed (cumulative for runId): ${state.failedPlanIds.length}`);
     console.log(`- duration: ${formatDuration(runDurationSeconds)} (${runDurationSeconds ?? 'unknown'}s)`);
+    console.log('- note: processed count is for this invocation; completed/blocked/failed are cumulative for the runId.');
   } finally {
     await releaseRunLock(paths, options);
   }
@@ -2924,10 +2929,11 @@ async function resumeCommand(paths, options) {
 
     console.log(`[orchestrator] resume complete (${processed} processed).`);
     console.log(`- runId: ${state.runId}`);
-    console.log(`- completed: ${state.completedPlanIds.length}`);
-    console.log(`- blocked: ${state.blockedPlanIds.length}`);
-    console.log(`- failed: ${state.failedPlanIds.length}`);
+    console.log(`- completed (cumulative for runId): ${state.completedPlanIds.length}`);
+    console.log(`- blocked (cumulative for runId): ${state.blockedPlanIds.length}`);
+    console.log(`- failed (cumulative for runId): ${state.failedPlanIds.length}`);
     console.log(`- duration: ${formatDuration(runDurationSeconds)} (${runDurationSeconds ?? 'unknown'}s)`);
+    console.log('- note: processed count is for this invocation; completed/blocked/failed are cumulative for the runId.');
   } finally {
     await releaseRunLock(paths, options);
   }
