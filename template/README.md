@@ -83,6 +83,12 @@ Start with:
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
 - Provider selection is adapter-based (`executor.provider` or `ORCH_EXECUTOR_PROVIDER`) so Codex/Claude/Gemini/Grok can share the same orchestration contract.
 - Default session safety policy is proactive rollover at `contextRemaining <= 10000` with required structured `ORCH_RESULT_PATH` payloads.
+- Risk-adaptive role orchestration routes plans by effective risk:
+  - `low`: `worker`
+  - `medium`: `planner -> worker -> reviewer`
+  - `high`: `planner -> explorer -> worker -> reviewer`
+- Security approval gates are enforced for high-risk plans and sensitive medium-risk plans via `Security-Approval`.
+- Details: `docs/ops/automation/README.md` and `docs/ops/automation/ROLE_ORCHESTRATION.md`.
 
 ## Change Discipline
 

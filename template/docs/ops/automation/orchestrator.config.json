@@ -1,8 +1,8 @@
 {
   "executor": {
-    "command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --result-path {result_path}",
+    "command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --role {role} --effective-risk-tier {effective_risk_tier} --declared-risk-tier {declared_risk_tier} --stage-index {stage_index} --stage-total {stage_total} --result-path {result_path}",
     "provider": "codex",
-    "promptTemplate": "Continue plan {plan_id} in {plan_file}. Apply the next concrete step. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. If all acceptance criteria and required validations are complete, set top-level Status: completed; otherwise keep top-level Status: in-progress and list remaining work.",
+    "promptTemplate": "Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Role instructions: {role_instructions}. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. If all acceptance criteria and required validations are complete, set top-level Status: completed; otherwise keep top-level Status: in-progress and list remaining work.",
     "providers": {
       "codex": {
         "command": "codex exec --full-auto {prompt}"
@@ -43,6 +43,121 @@
       "dedupMode": "strict-upsert",
       "pruneOnComplete": true,
       "keepMaxPerBlocker": 1
+    }
+  },
+  "roleOrchestration": {
+    "enabled": true,
+    "mode": "risk-adaptive",
+    "roleProfiles": {
+      "explorer": {
+        "model": "gpt-5.3-codex-spark",
+        "reasoningEffort": "medium",
+        "sandboxMode": "read-only",
+        "instructions": "You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. Never modify files."
+      },
+      "reviewer": {
+        "model": "gpt-5.3-codex",
+        "reasoningEffort": "high",
+        "sandboxMode": "read-only",
+        "instructions": "Focus on high-priority issues: security vulnerabilities, correctness bugs, race conditions, test flakiness, and performance problems."
+      },
+      "worker": {
+        "model": "gpt-5.3-codex",
+        "reasoningEffort": "high",
+        "sandboxMode": "full-access",
+        "instructions": "You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns."
+      },
+      "planner": {
+        "model": "gpt-5.3-codex",
+        "reasoningEffort": "high",
+        "sandboxMode": "read-only",
+        "instructions": "You are an architect agent. Break down tasks into implementation steps, identify dependencies/risks, and output a structured execution plan."
+      }
+    },
+    "pipelines": {
+      "low": [
+        "worker"
+      ],
+      "medium": [
+        "planner",
+        "worker",
+        "reviewer"
+      ],
+      "high": [
+        "planner",
+        "explorer",
+        "worker",
+        "reviewer"
+      ]
+    },
+    "riskModel": {
+      "thresholds": {
+        "medium": 3,
+        "high": 6
+      },
+      "weights": {
+        "declaredMedium": 2,
+        "declaredHigh": 4,
+        "dependency": 1,
+        "sensitiveTag": 2,
+        "sensitivePath": 2,
+        "autonomyFull": 1,
+        "validationFailure": 2
+      },
+      "sensitiveTags": [
+        "security",
+        "auth",
+        "authentication",
+        "payments",
+        "pii",
+        "migration",
+        "infra"
+      ],
+      "sensitivePaths": [
+        "payments",
+        "billing",
+        "auth",
+        "security",
+        "migrations",
+        "db",
+        "compliance"
+      ]
+    },
+    "approvalGates": {
+      "requireSecurityOpsForHigh": true,
+      "requireSecurityOpsForMediumIfSensitive": true,
+      "securityApprovalMetadataField": "Security-Approval"
+    },
+    "providers": {
+      "codex": {
+        "roleProfiles": {},
+        "roles": {
+          "planner": {
+            "command": "codex exec --full-auto {prompt}"
+          },
+          "explorer": {
+            "command": "codex exec --full-auto {prompt}"
+          },
+          "worker": {
+            "command": "codex exec --full-auto {prompt}"
+          },
+          "reviewer": {
+            "command": "codex exec --full-auto {prompt}"
+          }
+        }
+      },
+      "claude": {
+        "roleProfiles": {},
+        "roles": {}
+      },
+      "gemini": {
+        "roleProfiles": {},
+        "roles": {}
+      },
+      "grok": {
+        "roleProfiles": {},
+        "roles": {}
+      }
     }
   },
   "validationCommands": [],

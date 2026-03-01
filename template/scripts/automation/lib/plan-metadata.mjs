@@ -4,6 +4,8 @@ import path from 'node:path';
 export const FUTURE_STATUSES = new Set(['draft', 'ready-for-promotion']);
 export const ACTIVE_STATUSES = new Set(['queued', 'in-progress', 'blocked', 'validation', 'completed', 'failed']);
 export const COMPLETED_STATUSES = new Set(['completed']);
+export const RISK_TIERS = new Set(['low', 'medium', 'high']);
+export const SECURITY_APPROVAL_VALUES = new Set(['not-required', 'pending', 'approved']);
 
 export const REQUIRED_METADATA_FIELDS = {
   future: [
@@ -89,6 +91,7 @@ function compareMetadataKeys(a, b) {
     'Dependencies',
     'Autonomy-Allowed',
     'Risk-Tier',
+    'Security-Approval',
     'Spec-Targets',
     'Done-Evidence'
   ];
@@ -268,6 +271,22 @@ export function parsePriority(value) {
   if (raw === 'low') return 'p3';
   if (raw === 'p0' || raw === 'p1' || raw === 'p2' || raw === 'p3') return raw;
   return 'p2';
+}
+
+export function parseRiskTier(value, fallback = 'low') {
+  const raw = (value ?? '').trim().toLowerCase();
+  if (RISK_TIERS.has(raw)) {
+    return raw;
+  }
+  return fallback;
+}
+
+export function parseSecurityApproval(value, fallback = 'not-required') {
+  const raw = (value ?? '').trim().toLowerCase();
+  if (SECURITY_APPROVAL_VALUES.has(raw)) {
+    return raw;
+  }
+  return fallback;
 }
 
 export function priorityOrder(value) {

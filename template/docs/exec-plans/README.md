@@ -29,6 +29,8 @@ Optional fields:
 
 - `Autonomy-Allowed` (`guarded` | `full` | `both`)
 - `Risk-Tier` (`low` | `medium` | `high`)
+- `Tags` (comma-separated routing hints such as `payments`, `security`, `migration`)
+- `Security-Approval` (`not-required` | `pending` | `approved`)
 
 ## Status Conventions
 

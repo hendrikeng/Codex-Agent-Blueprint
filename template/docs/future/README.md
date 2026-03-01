@@ -25,6 +25,8 @@ Optional metadata:
 
 - `Autonomy-Allowed` (`guarded` | `full` | `both`)
 - `Risk-Tier` (`low` | `medium` | `high`)
+- `Tags` (comma-separated risk hints such as `payments`, `security`, `migration`)
+- `Security-Approval` (`not-required` | `pending` | `approved`)
 
 ## Promotion Rules
 

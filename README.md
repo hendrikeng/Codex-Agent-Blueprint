@@ -16,6 +16,7 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 - Governance/conformance/architecture checker scripts under `template/scripts/`
 - Agent hardening checker script under `template/scripts/agent-hardening/`
 - Plan metadata validator and execution orchestrator under `template/scripts/automation/`
+- Risk-adaptive role orchestration contract and provider adapters under `template/docs/ops/automation/`
 - Governance config and architecture rule schema in `template/docs/governance/`
 - Placeholder contract: `template/PLACEHOLDERS.md`
 
@@ -33,6 +34,7 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 - `automation:resume` -> `node ./scripts/automation/orchestrator.mjs resume`
 - `automation:audit` -> `node ./scripts/automation/orchestrator.mjs audit`
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
+- Role routing is risk-adaptive (`low: worker`, `medium: planner->worker->reviewer`, `high: planner->explorer->worker->reviewer`) with Security-Approval gates for high/sensitive plans.
 
 ## When To Run Checks
 

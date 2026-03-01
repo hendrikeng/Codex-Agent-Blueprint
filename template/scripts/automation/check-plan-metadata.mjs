@@ -6,6 +6,8 @@ import {
   COMPLETED_STATUSES,
   FUTURE_STATUSES,
   REQUIRED_METADATA_FIELDS,
+  RISK_TIERS,
+  SECURITY_APPROVAL_VALUES,
   listMarkdownFiles,
   metadataValue,
   parseListField,
@@ -62,6 +64,24 @@ async function scanPhase(phase, directoryPath) {
       addFinding('MISSING_METADATA_SECTION', "Missing '## Metadata' section", rel);
     }
 
+    const riskTierRaw = metadataValue(metadata, 'Risk-Tier');
+    if (riskTierRaw && !RISK_TIERS.has(riskTierRaw.trim().toLowerCase())) {
+      addFinding(
+        'INVALID_RISK_TIER',
+        `Invalid Risk-Tier '${riskTierRaw}' (expected: low|medium|high)`,
+        rel
+      );
+    }
+
+    const securityApprovalRaw = metadataValue(metadata, 'Security-Approval');
+    if (securityApprovalRaw && !SECURITY_APPROVAL_VALUES.has(securityApprovalRaw.trim().toLowerCase())) {
+      addFinding(
+        'INVALID_SECURITY_APPROVAL',
+        `Invalid Security-Approval '${securityApprovalRaw}' (expected: not-required|pending|approved)`,
+        rel
+      );
+    }
+
     if (phase === 'completed') {
       if (!/^##\s+Closure\b/m.test(content)) {
         addFinding('MISSING_CLOSURE_SECTION', "Completed plan is missing '## Closure' section", rel);
@@ -75,6 +95,28 @@ async function scanPhase(phase, directoryPath) {
         addFinding(
           'CANONICAL_STATUS_MISMATCH',
           `Completed plan top-level Status must be 'completed' (found '${canonicalStatus}')`,
+          rel
+        );
+      }
+
+      const completedRiskTier = (riskTierRaw ?? '').trim().toLowerCase();
+      const completedSecurityApproval = (securityApprovalRaw ?? '').trim().toLowerCase();
+      if (completedRiskTier === 'high' && completedSecurityApproval !== 'approved') {
+        addFinding(
+          'SECURITY_APPROVAL_REQUIRED',
+          "Completed high-risk plan must set Security-Approval to 'approved'",
+          rel
+        );
+      }
+      if (
+        completedRiskTier === 'medium' &&
+        completedSecurityApproval &&
+        completedSecurityApproval !== 'approved' &&
+        completedSecurityApproval !== 'not-required'
+      ) {
+        addFinding(
+          'SECURITY_APPROVAL_INCOMPLETE',
+          `Completed plan has Risk-Tier '${completedRiskTier}' but Security-Approval is '${completedSecurityApproval}'`,
           rel
         );
       }

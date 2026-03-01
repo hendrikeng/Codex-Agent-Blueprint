@@ -58,12 +58,32 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - Set this once per repository; default is the portable `executor-wrapper` entrypoint.
 - If empty, `run`/`resume` fail immediately with a clear error.
 - Example (`orchestrator.config.json`):
-  - `"command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --result-path {result_path}"`
+  - `"command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --role {role} --effective-risk-tier {effective_risk_tier} --declared-risk-tier {declared_risk_tier} --stage-index {stage_index} --stage-total {stage_total} --result-path {result_path}"`
   - `"provider": "codex"` (override per run with `ORCH_EXECUTOR_PROVIDER=...`)
   - `"providers.codex.command": "codex exec --full-auto {prompt}"` (`{prompt}` is required)
   - `"contextThreshold": 10000`
   - `"requireResultPayload": true`
   - `executor.promptTemplate` is provider-agnostic and reused across Codex/Claude/Gemini/Grok adapters.
+- Role orchestration:
+  - `roleOrchestration.enabled: true` enables risk-adaptive role routing.
+  - `roleOrchestration.roleProfiles` defines per-role execution profiles (`model`, `reasoningEffort`, `sandboxMode`, `instructions`).
+  - Default profile policy:
+    - `explorer`: fast model (`gpt-5.3-codex-spark`), `medium`, `read-only`
+    - `reviewer`: high reasoning, `read-only`
+    - `planner`: high reasoning, `read-only`
+    - `worker`: high reasoning, `full-access`
+  - `roleOrchestration.pipelines.low` defaults to `worker`.
+  - `roleOrchestration.pipelines.medium` defaults to `planner -> worker -> reviewer`.
+  - `roleOrchestration.pipelines.high` defaults to `planner -> explorer -> worker -> reviewer`.
+  - `roleOrchestration.riskModel` computes an effective risk tier from declared risk, dependencies, tags, scope paths, and prior validation failures.
+  - `roleOrchestration.approvalGates` enforces Security Ops approval for high-risk completions and sensitive medium-risk completions.
+  - `roleOrchestration.providers.<provider>.roles.<role>.command` can override provider command templates by role.
+  - Role command templates can use profile placeholders:
+    - `{role_model}`
+    - `{role_reasoning_effort}`
+    - `{role_sandbox_mode}`
+    - `{role_instructions}`
+  - Detailed role contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`.
 - Validation lanes:
   - `validation.always`: sandbox-safe checks that should run in every completion gate.
   - `validation.always` should include a unit/integration test command (framework-appropriate).
@@ -103,6 +123,17 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
 - Medium/high approvals in full mode require:
   - `ORCH_APPROVED_MEDIUM=1`
   - `ORCH_APPROVED_HIGH=1`
+- Effective risk tier is the max of declared risk and computed risk model output.
+- Security approval gate is required when:
+  - effective risk is `high`, or
+  - effective risk is `medium` with sensitive tag/path hits.
+
+Common run invocations:
+
+- Default guarded run: `npm run automation:run -- --mode guarded`
+- Medium-risk approved run: `ORCH_APPROVED_MEDIUM=1 npm run automation:run -- --mode guarded`
+- High-risk approved run: `ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode guarded`
+- Provider override: `ORCH_EXECUTOR_PROVIDER=claude npm run automation:run -- --mode guarded`
 
 ## Exit Conventions
 
@@ -119,6 +150,35 @@ Executor commands should use these outcomes:
 - If host-required validations cannot run in the current environment, orchestration keeps the plan `in-progress`, records a host-validation pending reason, and continues with other executable plans.
 - When a plan completes, `Done-Evidence` points to its canonical evidence index file.
 - During curation, removed evidence paths are automatically rewritten in plan docs to the retained canonical reference.
+
+## Risk-Adaptive Role Flow
+
+- `low`: `worker`
+- `medium`: `planner -> worker -> reviewer`
+- `high`: `planner -> explorer -> worker -> reviewer`
+- If final completion criteria are not yet met after reviewer/worker, orchestrator resets stage progression to `worker` and continues until completion gates pass.
+- The active role is passed to executors via `ORCH_ROLE` and `--role {role}`.
+
+## Security Approval Field
+
+- Metadata field: `Security-Approval` (`not-required` | `pending` | `approved`).
+- For required approval gates, completion is blocked until `Security-Approval: approved`.
+- If approval is required and the field is missing/`not-required`, orchestration updates it to `pending` and blocks with an explicit reason.
+
+## Real-World Examples
+
+- Low-risk UI copy plan:
+  - `Risk-Tier: low`
+  - stages: `worker`
+- Medium-risk refactor with auth tags:
+  - `Risk-Tier: medium`
+  - `Tags: auth`
+  - stages: `planner -> worker -> reviewer`
+- High-risk payment callback change:
+  - `Risk-Tier: high`
+  - `Tags: payments, security`
+  - stages: `planner -> explorer -> worker -> reviewer`
+  - completion blocked until `Security-Approval: approved`
 
 Required result payload (path from `ORCH_RESULT_PATH`):
 

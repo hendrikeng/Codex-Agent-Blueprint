@@ -1,0 +1,11 @@
+# Replace placeholder owners with valid users/teams in your organization.
+# Security-sensitive paths should require Security Ops review.
+
+* {{CODEOWNERS_DEFAULT_TEAM}}
+docs/exec-plans/** {{CODEOWNERS_DEFAULT_TEAM}}
+docs/ops/automation/** {{CODEOWNERS_DEFAULT_TEAM}} {{CODEOWNERS_SECURITY_TEAM}}
+**/payments/** {{CODEOWNERS_DEFAULT_TEAM}} {{CODEOWNERS_SECURITY_TEAM}}
+**/billing/** {{CODEOWNERS_DEFAULT_TEAM}} {{CODEOWNERS_SECURITY_TEAM}}
+**/auth/** {{CODEOWNERS_DEFAULT_TEAM}} {{CODEOWNERS_SECURITY_TEAM}}
+**/security/** {{CODEOWNERS_DEFAULT_TEAM}} {{CODEOWNERS_SECURITY_TEAM}}
+**/migrations/** {{CODEOWNERS_DEFAULT_TEAM}} {{CODEOWNERS_SECURITY_TEAM}}

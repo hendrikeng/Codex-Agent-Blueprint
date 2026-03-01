@@ -48,6 +48,11 @@ Replace all `{{...}}` tokens in this template before first merge.
 - `{{PROJECT_JSON_PATH_1}}`, `{{PROJECT_JSON_PATH_2}}`
 - `{{PROJECT_REQUIRED_TAG_1}}`, `{{PROJECT_REQUIRED_TAG_2}}`
 
+## Ownership/Approval Placeholders
+
+- `{{CODEOWNERS_DEFAULT_TEAM}}` (default owner for repository paths, e.g. `@org/platform-engineering`)
+- `{{CODEOWNERS_SECURITY_TEAM}}` (security approver for sensitive paths, e.g. `@org/security-ops`)
+
 ## Conformance Artifact Placeholders
 
 - `{{GENERATED_AT_UTC_ISO}}`
@@ -69,6 +74,9 @@ Use these defaults unless the product domain clearly does not apply:
 - `{{DOMAIN_INVARIANT_AREA_3}}`: `Financial/accounting behavior (if applicable)`
 
 If a domain does not use billing/credits/payments, keep the placeholder explicit with `not applicable` and remove money-specific rules from runtime code/docs.
+
+- `{{CODEOWNERS_DEFAULT_TEAM}}`: `@your-org/platform-engineering`
+- `{{CODEOWNERS_SECURITY_TEAM}}`: `@your-org/security-ops`
 
 ## Validation Command
 

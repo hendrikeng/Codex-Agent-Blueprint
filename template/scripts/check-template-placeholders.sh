@@ -6,7 +6,7 @@ if ! command -v rg >/dev/null 2>&1; then
   exit 1
 fi
 
-HITS=$(rg -n "\{\{[A-Z0-9_]+\}\}" . --glob '!PLACEHOLDERS.md' --glob '!node_modules/**' --glob '!.git/**' || true)
+HITS=$(rg --hidden -n "\{\{[A-Z0-9_]+\}\}" . --glob '!PLACEHOLDERS.md' --glob '!node_modules/**' --glob '!.git/**' || true)
 
 if [ -n "$HITS" ]; then
   echo "[placeholder-check] unresolved placeholders found:"

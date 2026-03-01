@@ -37,6 +37,7 @@ Start here, then follow linked source-of-truth docs:
 - Product state snapshot: `docs/product-specs/current-state.md`
 - Execution plans: `docs/exec-plans/README.md`
 - Ops automation conveyor: `docs/ops/automation/README.md`
+- Role orchestration contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`
 
 ## Non-Negotiables
 

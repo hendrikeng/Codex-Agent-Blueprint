@@ -9,4 +9,5 @@ Source of Truth: This document.
 - Define escalation and recovery expectations for critical services.
 - Keep runbooks current with architecture and deployment changes.
 - Automation conveyor runbook: `docs/ops/automation/README.md`
+- Role orchestration contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`
 - Automation state and traces live under `docs/ops/automation/`.

@@ -10,6 +10,8 @@ import {
   listMarkdownFiles,
   metadataValue,
   normalizeStatus,
+  parseRiskTier,
+  parseSecurityApproval,
   parseListField,
   parseMetadata,
   parsePriority,
@@ -33,6 +35,29 @@ const DEFAULT_EVIDENCE_TRACK_MODE = 'curated';
 const DEFAULT_EVIDENCE_DEDUP_MODE = 'strict-upsert';
 const DEFAULT_EVIDENCE_PRUNE_ON_COMPLETE = true;
 const DEFAULT_EVIDENCE_KEEP_MAX_PER_BLOCKER = 1;
+const DEFAULT_ROLE_ORCHESTRATION_ENABLED = true;
+const DEFAULT_RISK_THRESHOLD_MEDIUM = 3;
+const DEFAULT_RISK_THRESHOLD_HIGH = 6;
+const DEFAULT_RISK_WEIGHT_DECLARED_MEDIUM = 2;
+const DEFAULT_RISK_WEIGHT_DECLARED_HIGH = 4;
+const DEFAULT_RISK_WEIGHT_DEPENDENCY = 1;
+const DEFAULT_RISK_WEIGHT_SENSITIVE_TAG = 2;
+const DEFAULT_RISK_WEIGHT_SENSITIVE_PATH = 2;
+const DEFAULT_RISK_WEIGHT_AUTONOMY_FULL = 1;
+const DEFAULT_RISK_WEIGHT_VALIDATION_FAILURE = 2;
+const ROLE_PLANNER = 'planner';
+const ROLE_EXPLORER = 'explorer';
+const ROLE_WORKER = 'worker';
+const ROLE_REVIEWER = 'reviewer';
+const ROLE_NAMES = new Set([ROLE_PLANNER, ROLE_EXPLORER, ROLE_WORKER, ROLE_REVIEWER]);
+const SECURITY_APPROVAL_NOT_REQUIRED = 'not-required';
+const SECURITY_APPROVAL_PENDING = 'pending';
+const SECURITY_APPROVAL_APPROVED = 'approved';
+const RISK_TIER_ORDER = {
+  low: 0,
+  medium: 1,
+  high: 2
+};
 const EVIDENCE_NOISE_TOKENS = new Set([
   'after',
   'additional',
@@ -315,6 +340,68 @@ async function loadConfig(paths) {
         keepMaxPerBlocker: DEFAULT_EVIDENCE_KEEP_MAX_PER_BLOCKER
       }
     },
+    roleOrchestration: {
+      enabled: DEFAULT_ROLE_ORCHESTRATION_ENABLED,
+      mode: 'risk-adaptive',
+      roleProfiles: {
+        explorer: {
+          model: 'gpt-5.3-codex-spark',
+          reasoningEffort: 'medium',
+          sandboxMode: 'read-only',
+          instructions:
+            'You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. Never modify files.'
+        },
+        reviewer: {
+          model: 'gpt-5.3-codex',
+          reasoningEffort: 'high',
+          sandboxMode: 'read-only',
+          instructions:
+            'Focus on high-priority issues: security vulnerabilities, correctness bugs, race conditions, test flakiness, and performance problems.'
+        },
+        worker: {
+          model: 'gpt-5.3-codex',
+          reasoningEffort: 'high',
+          sandboxMode: 'full-access',
+          instructions:
+            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns.'
+        },
+        planner: {
+          model: 'gpt-5.3-codex',
+          reasoningEffort: 'high',
+          sandboxMode: 'read-only',
+          instructions:
+            'You are an architect agent. Break down tasks into implementation steps, identify dependencies/risks, and output a structured execution plan.'
+        }
+      },
+      pipelines: {
+        low: [ROLE_WORKER],
+        medium: [ROLE_PLANNER, ROLE_WORKER, ROLE_REVIEWER],
+        high: [ROLE_PLANNER, ROLE_EXPLORER, ROLE_WORKER, ROLE_REVIEWER]
+      },
+      riskModel: {
+        thresholds: {
+          medium: DEFAULT_RISK_THRESHOLD_MEDIUM,
+          high: DEFAULT_RISK_THRESHOLD_HIGH
+        },
+        weights: {
+          declaredMedium: DEFAULT_RISK_WEIGHT_DECLARED_MEDIUM,
+          declaredHigh: DEFAULT_RISK_WEIGHT_DECLARED_HIGH,
+          dependency: DEFAULT_RISK_WEIGHT_DEPENDENCY,
+          sensitiveTag: DEFAULT_RISK_WEIGHT_SENSITIVE_TAG,
+          sensitivePath: DEFAULT_RISK_WEIGHT_SENSITIVE_PATH,
+          autonomyFull: DEFAULT_RISK_WEIGHT_AUTONOMY_FULL,
+          validationFailure: DEFAULT_RISK_WEIGHT_VALIDATION_FAILURE
+        },
+        sensitiveTags: ['security', 'auth', 'authentication', 'payments', 'pii', 'migration', 'infra'],
+        sensitivePaths: ['payments', 'billing', 'auth', 'security', 'migrations', 'db', 'compliance']
+      },
+      approvalGates: {
+        requireSecurityOpsForHigh: true,
+        requireSecurityOpsForMediumIfSensitive: true,
+        securityApprovalMetadataField: 'Security-Approval'
+      },
+      providers: {}
+    },
     git: {
       atomicCommits: true
     }
@@ -354,6 +441,38 @@ async function loadConfig(paths) {
       lifecycle: {
         ...defaultConfig.evidence.lifecycle,
         ...(configured.evidence?.lifecycle ?? {})
+      }
+    },
+    roleOrchestration: {
+      ...defaultConfig.roleOrchestration,
+      ...(configured.roleOrchestration ?? {}),
+      roleProfiles: {
+        ...defaultConfig.roleOrchestration.roleProfiles,
+        ...(configured.roleOrchestration?.roleProfiles ?? {})
+      },
+      pipelines: {
+        ...defaultConfig.roleOrchestration.pipelines,
+        ...(configured.roleOrchestration?.pipelines ?? {})
+      },
+      riskModel: {
+        ...defaultConfig.roleOrchestration.riskModel,
+        ...(configured.roleOrchestration?.riskModel ?? {}),
+        thresholds: {
+          ...defaultConfig.roleOrchestration.riskModel.thresholds,
+          ...(configured.roleOrchestration?.riskModel?.thresholds ?? {})
+        },
+        weights: {
+          ...defaultConfig.roleOrchestration.riskModel.weights,
+          ...(configured.roleOrchestration?.riskModel?.weights ?? {})
+        }
+      },
+      approvalGates: {
+        ...defaultConfig.roleOrchestration.approvalGates,
+        ...(configured.roleOrchestration?.approvalGates ?? {})
+      },
+      providers: {
+        ...(defaultConfig.roleOrchestration.providers ?? {}),
+        ...(configured.roleOrchestration?.providers ?? {})
       }
     },
     git: {
@@ -435,9 +554,248 @@ function resolveRuntimeExecutorOptions(options, config) {
   };
 }
 
+function normalizeRoleName(value, fallback = ROLE_WORKER) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return ROLE_NAMES.has(normalized) ? normalized : fallback;
+}
+
+function normalizeRolePipeline(value, fallback) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return fallback;
+  }
+  const normalized = value
+    .map((entry) => normalizeRoleName(entry, ''))
+    .filter((entry) => ROLE_NAMES.has(entry));
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function resolveRoleOrchestration(config) {
+  const source = config?.roleOrchestration ?? {};
+  const riskModel = source.riskModel ?? {};
+  const thresholds = riskModel.thresholds ?? {};
+  const weights = riskModel.weights ?? {};
+  return {
+    enabled: asBoolean(source.enabled, DEFAULT_ROLE_ORCHESTRATION_ENABLED),
+    mode: String(source.mode ?? 'risk-adaptive').trim().toLowerCase(),
+    pipelines: {
+      low: normalizeRolePipeline(source.pipelines?.low, [ROLE_WORKER]),
+      medium: normalizeRolePipeline(source.pipelines?.medium, [ROLE_PLANNER, ROLE_WORKER, ROLE_REVIEWER]),
+      high: normalizeRolePipeline(source.pipelines?.high, [ROLE_PLANNER, ROLE_EXPLORER, ROLE_WORKER, ROLE_REVIEWER])
+    },
+    riskModel: {
+      thresholds: {
+        medium: asInteger(thresholds.medium, DEFAULT_RISK_THRESHOLD_MEDIUM),
+        high: asInteger(thresholds.high, DEFAULT_RISK_THRESHOLD_HIGH)
+      },
+      weights: {
+        declaredMedium: asInteger(weights.declaredMedium, DEFAULT_RISK_WEIGHT_DECLARED_MEDIUM),
+        declaredHigh: asInteger(weights.declaredHigh, DEFAULT_RISK_WEIGHT_DECLARED_HIGH),
+        dependency: asInteger(weights.dependency, DEFAULT_RISK_WEIGHT_DEPENDENCY),
+        sensitiveTag: asInteger(weights.sensitiveTag, DEFAULT_RISK_WEIGHT_SENSITIVE_TAG),
+        sensitivePath: asInteger(weights.sensitivePath, DEFAULT_RISK_WEIGHT_SENSITIVE_PATH),
+        autonomyFull: asInteger(weights.autonomyFull, DEFAULT_RISK_WEIGHT_AUTONOMY_FULL),
+        validationFailure: asInteger(weights.validationFailure, DEFAULT_RISK_WEIGHT_VALIDATION_FAILURE)
+      },
+      sensitiveTags: Array.isArray(riskModel.sensitiveTags)
+        ? riskModel.sensitiveTags.map((value) => String(value).trim().toLowerCase()).filter(Boolean)
+        : ['security', 'auth', 'authentication', 'payments', 'pii', 'migration', 'infra'],
+      sensitivePaths: Array.isArray(riskModel.sensitivePaths)
+        ? riskModel.sensitivePaths.map((value) => String(value).trim().toLowerCase()).filter(Boolean)
+        : ['payments', 'billing', 'auth', 'security', 'migrations', 'db', 'compliance']
+    },
+    approvalGates: {
+      requireSecurityOpsForHigh: asBoolean(source.approvalGates?.requireSecurityOpsForHigh, true),
+      requireSecurityOpsForMediumIfSensitive: asBoolean(
+        source.approvalGates?.requireSecurityOpsForMediumIfSensitive,
+        true
+      ),
+      securityApprovalMetadataField: String(
+        source.approvalGates?.securityApprovalMetadataField ?? 'Security-Approval'
+      )
+    }
+  };
+}
+
+function riskTierOrder(value) {
+  return RISK_TIER_ORDER[String(value ?? 'low').trim().toLowerCase()] ?? RISK_TIER_ORDER.low;
+}
+
+function maxRiskTier(a, b) {
+  return riskTierOrder(a) >= riskTierOrder(b) ? a : b;
+}
+
+function sensitivityMatches(values, needles) {
+  const hits = [];
+  const normalizedValues = values.map((value) => String(value ?? '').trim().toLowerCase()).filter(Boolean);
+  for (const needle of needles) {
+    for (const value of normalizedValues) {
+      if (value.includes(needle)) {
+        hits.push({ needle, value });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+function computedRiskTierFromScore(score, thresholds) {
+  if (score >= thresholds.high) {
+    return 'high';
+  }
+  if (score >= thresholds.medium) {
+    return 'medium';
+  }
+  return 'low';
+}
+
+function computeRiskAssessment(plan, state, config) {
+  const roleConfig = resolveRoleOrchestration(config);
+  const weights = roleConfig.riskModel.weights;
+  const thresholds = roleConfig.riskModel.thresholds;
+  let score = 0;
+  const reasons = [];
+  const declaredRiskTier = parseRiskTier(plan.riskTier, 'low');
+
+  if (declaredRiskTier === 'medium') {
+    score += weights.declaredMedium;
+    reasons.push(`declared risk tier medium (+${weights.declaredMedium})`);
+  } else if (declaredRiskTier === 'high') {
+    score += weights.declaredHigh;
+    reasons.push(`declared risk tier high (+${weights.declaredHigh})`);
+  }
+
+  if (plan.dependencies.length > 0) {
+    const dependencyScore = Math.min(3, plan.dependencies.length) * weights.dependency;
+    score += dependencyScore;
+    reasons.push(`dependencies (${plan.dependencies.length}) (+${dependencyScore})`);
+  }
+
+  const tagMatches = sensitivityMatches(plan.tags, roleConfig.riskModel.sensitiveTags);
+  if (tagMatches.length > 0) {
+    const tagScore = Math.min(2, tagMatches.length) * weights.sensitiveTag;
+    score += tagScore;
+    reasons.push(`sensitive tags (${tagMatches.map((hit) => hit.value).join(', ')}) (+${tagScore})`);
+  }
+
+  const scopeMatches = sensitivityMatches(plan.specTargets, roleConfig.riskModel.sensitivePaths);
+  if (scopeMatches.length > 0) {
+    const scopeScore = Math.min(2, scopeMatches.length) * weights.sensitivePath;
+    score += scopeScore;
+    reasons.push(`sensitive paths (${scopeMatches.map((hit) => hit.value).join(', ')}) (+${scopeScore})`);
+  }
+
+  if (String(plan.autonomyAllowed ?? '').trim().toLowerCase() === 'full') {
+    score += weights.autonomyFull;
+    reasons.push(`autonomy full (+${weights.autonomyFull})`);
+  }
+
+  const validationState = state.validationState?.[plan.planId] ?? {};
+  if (validationState.always === 'failed' || validationState.host === 'failed') {
+    score += weights.validationFailure;
+    reasons.push(`previous validation failure (+${weights.validationFailure})`);
+  }
+
+  const computedRiskTier = computedRiskTierFromScore(score, thresholds);
+  const effectiveRiskTier = maxRiskTier(computedRiskTier, declaredRiskTier);
+  const sensitive = tagMatches.length > 0 || scopeMatches.length > 0;
+
+  return {
+    declaredRiskTier,
+    computedRiskTier,
+    effectiveRiskTier,
+    score,
+    reasons,
+    sensitive,
+    sensitiveTagHits: tagMatches.map((hit) => hit.value),
+    sensitivePathHits: scopeMatches.map((hit) => hit.value)
+  };
+}
+
+function resolvePipelineStages(assessment, config) {
+  const roleConfig = resolveRoleOrchestration(config);
+  if (!roleConfig.enabled) {
+    return [ROLE_WORKER];
+  }
+  const tier = parseRiskTier(assessment.effectiveRiskTier, 'low');
+  const stages = roleConfig.pipelines[tier] ?? roleConfig.pipelines.low;
+  return normalizeRolePipeline(stages, [ROLE_WORKER]);
+}
+
+function ensureRoleState(state, planId, assessment, stages) {
+  if (!state.roleState || typeof state.roleState !== 'object') {
+    state.roleState = {};
+  }
+
+  const stageKey = stages.join('>');
+  const existing = state.roleState[planId];
+  if (
+    existing &&
+    existing.stageKey === stageKey &&
+    existing.effectiveRiskTier === assessment.effectiveRiskTier
+  ) {
+    return existing;
+  }
+
+  const next = {
+    stages: [...stages],
+    stageKey,
+    currentIndex: 0,
+    completedStages: [],
+    declaredRiskTier: assessment.declaredRiskTier,
+    computedRiskTier: assessment.computedRiskTier,
+    effectiveRiskTier: assessment.effectiveRiskTier,
+    score: assessment.score,
+    sensitive: assessment.sensitive,
+    sensitiveTagHits: assessment.sensitiveTagHits ?? [],
+    sensitivePathHits: assessment.sensitivePathHits ?? [],
+    reasons: assessment.reasons ?? [],
+    updatedAt: nowIso()
+  };
+  state.roleState[planId] = next;
+  return next;
+}
+
+function advanceRoleState(roleState, role) {
+  const completed = new Set(Array.isArray(roleState.completedStages) ? roleState.completedStages : []);
+  completed.add(role);
+  roleState.completedStages = [...completed];
+  if (roleState.currentIndex < roleState.stages.length - 1) {
+    roleState.currentIndex += 1;
+  }
+  roleState.updatedAt = nowIso();
+}
+
+function resetRoleStateToImplementation(roleState) {
+  const workerIndex = roleState.stages.indexOf(ROLE_WORKER);
+  if (workerIndex >= 0) {
+    roleState.currentIndex = workerIndex;
+  } else {
+    roleState.currentIndex = Math.max(0, roleState.stages.length - 1);
+  }
+  roleState.updatedAt = nowIso();
+}
+
+function requiresSecurityApproval(plan, assessment, config) {
+  const roleConfig = resolveRoleOrchestration(config);
+  if (!roleConfig.enabled) {
+    return false;
+  }
+  if (assessment.effectiveRiskTier === 'high' && roleConfig.approvalGates.requireSecurityOpsForHigh) {
+    return true;
+  }
+  if (
+    assessment.effectiveRiskTier === 'medium' &&
+    assessment.sensitive &&
+    roleConfig.approvalGates.requireSecurityOpsForMediumIfSensitive
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function createInitialState(runId, requestedMode, effectiveMode) {
   return {
-    version: 1,
+    version: 2,
     runId,
     requestedMode,
     effectiveMode,
@@ -456,6 +814,7 @@ function createInitialState(runId, requestedMode, effectiveMode) {
     },
     validationState: {},
     evidenceState: {},
+    roleState: {},
     inProgress: null,
     stats: {
       promotions: 0,
@@ -476,6 +835,8 @@ function normalizePersistedState(state) {
     normalized.validationState && typeof normalized.validationState === 'object' ? normalized.validationState : {};
   normalized.evidenceState =
     normalized.evidenceState && typeof normalized.evidenceState === 'object' ? normalized.evidenceState : {};
+  normalized.roleState =
+    normalized.roleState && typeof normalized.roleState === 'object' ? normalized.roleState : {};
   normalized.capabilities =
     normalized.capabilities && typeof normalized.capabilities === 'object'
       ? normalized.capabilities
@@ -664,6 +1025,7 @@ async function readPlanRecord(rootDir, filePath, phase) {
   const priority = parsePriority(metadataValue(metadata, 'Priority'));
   const owner = metadataValue(metadata, 'Owner') ?? 'unassigned';
   const dependencies = parseListField(metadataValue(metadata, 'Dependencies'));
+  const tags = parseListField(metadataValue(metadata, 'Tags'));
   const specTargets = parseListField(metadataValue(metadata, 'Spec-Targets'));
   const doneEvidence = parseListField(metadataValue(metadata, 'Done-Evidence'));
 
@@ -679,10 +1041,12 @@ async function readPlanRecord(rootDir, filePath, phase) {
     priority,
     owner,
     dependencies,
+    tags,
     specTargets,
     doneEvidence,
     autonomyAllowed: metadataValue(metadata, 'Autonomy-Allowed') ?? 'both',
-    riskTier: metadataValue(metadata, 'Risk-Tier') ?? 'low',
+    riskTier: parseRiskTier(metadataValue(metadata, 'Risk-Tier'), 'low'),
+    securityApproval: parseSecurityApproval(metadataValue(metadata, 'Security-Approval'), SECURITY_APPROVAL_NOT_REQUIRED),
     acceptanceCriteria: metadataValue(metadata, 'Acceptance-Criteria') ?? ''
   };
 }
@@ -744,7 +1108,12 @@ async function promoteFuturePlans(paths, state, options) {
       'Acceptance-Criteria': future.acceptanceCriteria || 'Define acceptance criteria before execution.',
       Dependencies: future.dependencies.length > 0 ? future.dependencies.join(', ') : 'none',
       'Autonomy-Allowed': metadataValue(future.metadata, 'Autonomy-Allowed') ?? 'both',
-      'Risk-Tier': metadataValue(future.metadata, 'Risk-Tier') ?? 'low',
+      'Risk-Tier': parseRiskTier(metadataValue(future.metadata, 'Risk-Tier'), 'low'),
+      'Security-Approval':
+        parseSecurityApproval(
+          metadataValue(future.metadata, 'Security-Approval'),
+          SECURITY_APPROVAL_NOT_REQUIRED
+        ),
       'Spec-Targets': future.specTargets.length > 0 ? future.specTargets.join(', ') : 'docs/product-specs/current-state.md',
       'Done-Evidence': future.doneEvidence.length > 0 ? future.doneEvidence.join(', ') : 'pending'
     };
@@ -797,19 +1166,40 @@ async function setPlanStatus(planPath, status, dryRun) {
   await fs.writeFile(planPath, updated, 'utf8');
 }
 
-function replaceExecutorTokens(command, plan, session, runId, mode, resultPath) {
+function replaceExecutorTokens(command, plan, sessionContext) {
+  const {
+    session,
+    runId,
+    mode,
+    resultPath,
+    role = ROLE_WORKER,
+    effectiveRiskTier = 'low',
+    declaredRiskTier = 'low',
+    stageIndex = 1,
+    stageTotal = 1
+  } = sessionContext;
   return command
     .replaceAll('{plan_id}', plan.planId)
     .replaceAll('{plan_file}', plan.rel)
     .replaceAll('{run_id}', runId)
     .replaceAll('{mode}', mode)
     .replaceAll('{session}', String(session))
+    .replaceAll('{role}', role)
+    .replaceAll('{effective_risk_tier}', effectiveRiskTier)
+    .replaceAll('{declared_risk_tier}', declaredRiskTier)
+    .replaceAll('{stage_index}', String(stageIndex))
+    .replaceAll('{stage_total}', String(stageTotal))
     .replaceAll('{result_path}', resultPath);
 }
 
-async function executePlanSession(plan, paths, state, options, config, sessionNumber) {
+async function executePlanSession(plan, paths, state, options, config, sessionNumber, sessionContext = {}) {
+  const role = normalizeRoleName(sessionContext.role, ROLE_WORKER);
+  const effectiveRiskTier = parseRiskTier(sessionContext.effectiveRiskTier, 'low');
+  const declaredRiskTier = parseRiskTier(sessionContext.declaredRiskTier, 'low');
+  const stageIndex = asInteger(sessionContext.stageIndex, 1);
+  const stageTotal = asInteger(sessionContext.stageTotal, 1);
   const runSessionDir = path.join(paths.runtimeDir, state.runId);
-  const resultPathAbs = path.join(runSessionDir, `${plan.planId}-session-${sessionNumber}.result.json`);
+  const resultPathAbs = path.join(runSessionDir, `${plan.planId}-${role}-session-${sessionNumber}.result.json`);
   const resultPathRel = toPosix(path.relative(paths.rootDir, resultPathAbs));
 
   if (!options.dryRun) {
@@ -827,15 +1217,27 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   const renderedCommand = replaceExecutorTokens(
     configuredExecutor,
     plan,
-    sessionNumber,
-    state.runId,
-    state.effectiveMode,
-    resultPathRel
+    {
+      session: sessionNumber,
+      runId: state.runId,
+      mode: state.effectiveMode,
+      resultPath: resultPathRel,
+      role,
+      effectiveRiskTier,
+      declaredRiskTier,
+      stageIndex,
+      stageTotal
+    }
   );
 
   await logEvent(paths, state, 'session_started', {
     planId: plan.planId,
     session: sessionNumber,
+    role,
+    effectiveRiskTier,
+    declaredRiskTier,
+    stageIndex,
+    stageTotal,
     command: renderedCommand
   }, options.dryRun);
 
@@ -843,7 +1245,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     return {
       status: 'completed',
       summary: 'Dry-run: executor skipped.',
-      resultPayloadFound: true
+      resultPayloadFound: true,
+      role
     };
   }
 
@@ -853,6 +1256,11 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     ORCH_PLAN_ID: plan.planId,
     ORCH_PLAN_FILE: plan.rel,
     ORCH_SESSION: String(sessionNumber),
+    ORCH_ROLE: role,
+    ORCH_EFFECTIVE_RISK_TIER: effectiveRiskTier,
+    ORCH_DECLARED_RISK_TIER: declaredRiskTier,
+    ORCH_STAGE_INDEX: String(stageIndex),
+    ORCH_STAGE_TOTAL: String(stageTotal),
     ORCH_MODE: state.effectiveMode,
     ORCH_RESULT_PATH: resultPathRel,
     ORCH_CONTEXT_THRESHOLD: String(options.contextThreshold),
@@ -865,21 +1273,24 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   if (execution.signal) {
     return {
       status: 'failed',
-      reason: `Executor terminated by signal ${execution.signal}`
+      reason: `Executor terminated by signal ${execution.signal}`,
+      role
     };
   }
 
   if (execution.status === handoffExitCode) {
     return {
       status: 'handoff_required',
-      reason: `Executor exited with handoff code ${handoffExitCode}`
+      reason: `Executor exited with handoff code ${handoffExitCode}`,
+      role
     };
   }
 
   if (execution.status !== 0) {
     return {
       status: 'failed',
-      reason: `Executor exited with status ${execution.status}`
+      reason: `Executor exited with status ${execution.status}`,
+      role
     };
   }
 
@@ -889,14 +1300,16 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       return {
         status: 'handoff_required',
         reason:
-          'Executor exited 0 without writing ORCH_RESULT_PATH payload. Rolling over immediately to preserve context safety.'
+          'Executor exited 0 without writing ORCH_RESULT_PATH payload. Rolling over immediately to preserve context safety.',
+        role
       };
     }
 
     return {
       status: 'completed',
       summary: 'Executor completed without result payload.',
-      resultPayloadFound: false
+      resultPayloadFound: false,
+      role
     };
   }
 
@@ -914,7 +1327,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     return {
       status: 'handoff_required',
       reason:
-        'Executor payload is missing numeric contextRemaining. Rolling over immediately to avoid low-context execution.'
+        'Executor payload is missing numeric contextRemaining. Rolling over immediately to avoid low-context execution.',
+      role
     };
   }
 
@@ -926,7 +1340,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     return {
       status: 'handoff_required',
       reason: `contextRemaining (${contextRemaining}) at/below threshold (${options.contextThreshold})`,
-      summary: resultPayload.summary ?? ''
+      summary: resultPayload.summary ?? '',
+      role
     };
   }
 
@@ -935,7 +1350,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     reason: resultPayload.reason ?? null,
     summary: resultPayload.summary ?? null,
     contextRemaining,
-    resultPayloadFound: true
+    resultPayloadFound: true,
+    role
   };
 }
 
@@ -1139,6 +1555,12 @@ function syncPlanRecord(plan, nextRecord) {
   plan.status = nextRecord.status;
   plan.metadata = nextRecord.metadata;
   plan.content = nextRecord.content;
+  plan.tags = nextRecord.tags;
+  plan.specTargets = nextRecord.specTargets;
+  plan.dependencies = nextRecord.dependencies;
+  plan.riskTier = nextRecord.riskTier;
+  plan.securityApproval = nextRecord.securityApproval;
+  plan.autonomyAllowed = nextRecord.autonomyAllowed;
 }
 
 
@@ -2225,6 +2647,9 @@ async function finalizeCompletedPlan(plan, paths, state, validationEvidence, opt
     `- Sessions Executed: ${completionInfo.sessionsExecuted ?? 'unknown'}`,
     `- Rollovers: ${completionInfo.rollovers ?? 0}`,
     `- Host Validation Provider: ${completionInfo.hostValidationProvider ?? 'none'}`,
+    `- Risk Tier (Declared): ${completionInfo.declaredRiskTier ?? plan.riskTier ?? 'low'}`,
+    `- Risk Tier (Effective): ${completionInfo.effectiveRiskTier ?? plan.riskTier ?? 'low'}`,
+    `- Role Pipeline: ${completionInfo.rolePipeline ?? ROLE_WORKER}`,
     `- Plan Duration: ${formatDuration(planDurationSeconds)} (${planDurationSeconds ?? 'unknown'}s)`,
     `- Run Duration At Completion: ${formatDuration(runDurationSeconds)} (${runDurationSeconds ?? 'unknown'}s)`
   ];
@@ -2289,7 +2714,10 @@ async function updateProductSpecs(plan, completedPath, paths, state, options) {
   }
 }
 
-async function writeHandoff(paths, state, plan, sessionNumber, reason, summary, options) {
+async function writeHandoff(paths, state, plan, sessionNumber, reason, summary, options, sessionContext = {}) {
+  const role = normalizeRoleName(sessionContext.role, ROLE_WORKER);
+  const stageIndex = asInteger(sessionContext.stageIndex, 1);
+  const stageTotal = asInteger(sessionContext.stageTotal, 1);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const fileName = `${stamp}-session-${sessionNumber}.md`;
   const targetPath = path.join(paths.handoffDir, plan.planId, fileName);
@@ -2308,6 +2736,8 @@ async function writeHandoff(paths, state, plan, sessionNumber, reason, summary, 
     `- Plan-ID: ${plan.planId}`,
     `- Run-ID: ${state.runId}`,
     `- Session: ${sessionNumber}`,
+    `- Role: ${role}`,
+    `- Stage: ${stageIndex}/${stageTotal}`,
     `- Mode: ${state.effectiveMode}`,
     `- Created At: ${nowIso()}`,
     `- Reason: ${reason || 'unspecified'}`,
@@ -2319,6 +2749,7 @@ async function writeHandoff(paths, state, plan, sessionNumber, reason, summary, 
     '## Next Session Checklist',
     '',
     '- Load latest handoff and active plan file.',
+    '- Continue current role stage before advancing pipeline.',
     '- Continue remaining acceptance criteria steps.',
     '- Re-run required validations before completion.',
     ''
@@ -2329,7 +2760,14 @@ async function writeHandoff(paths, state, plan, sessionNumber, reason, summary, 
 }
 
 async function processPlan(plan, paths, state, options, config) {
-  const gate = evaluatePolicyGate(plan, state.effectiveMode);
+  let lastAssessment = computeRiskAssessment(plan, state, config);
+  const gate = evaluatePolicyGate(
+    {
+      ...plan,
+      riskTier: lastAssessment.effectiveRiskTier
+    },
+    state.effectiveMode
+  );
   if (!gate.allowed) {
     await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
 
@@ -2345,21 +2783,63 @@ async function processPlan(plan, paths, state, options, config) {
   const maxSessionsPerPlan = asInteger(options.maxSessionsPerPlan, DEFAULT_MAX_SESSIONS_PER_PLAN);
   const planStartedAt = nowIso();
   let rollovers = 0;
+  let roleState = ensureRoleState(state, plan.planId, lastAssessment, resolvePipelineStages(lastAssessment, config));
 
   for (let session = 1; session <= maxSessionsPerPlan; session += 1) {
+    lastAssessment = computeRiskAssessment(plan, state, config);
+    const dynamicGate = evaluatePolicyGate(
+      {
+        ...plan,
+        riskTier: lastAssessment.effectiveRiskTier
+      },
+      state.effectiveMode
+    );
+    if (!dynamicGate.allowed) {
+      await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
+      return {
+        outcome: 'blocked',
+        reason: dynamicGate.reason,
+        riskTier: lastAssessment.effectiveRiskTier
+      };
+    }
+    roleState = ensureRoleState(state, plan.planId, lastAssessment, resolvePipelineStages(lastAssessment, config));
+    const stageTotal = roleState.stages.length;
+    const roleIndex = Math.min(roleState.currentIndex, Math.max(0, stageTotal - 1));
+    const stageIndex = roleIndex + 1;
+    const currentRole = normalizeRoleName(roleState.stages[roleIndex], ROLE_WORKER);
+
     state.inProgress = {
       planId: plan.planId,
       session,
       planFile: plan.rel,
+      role: currentRole,
+      stageIndex,
+      stageTotal,
+      declaredRiskTier: lastAssessment.declaredRiskTier,
+      computedRiskTier: lastAssessment.computedRiskTier,
+      effectiveRiskTier: lastAssessment.effectiveRiskTier,
       startedAt: nowIso()
     };
 
     await saveState(paths, state, options.dryRun);
 
-    const sessionResult = await executePlanSession(plan, paths, state, options, config, session);
+    const sessionResult = await executePlanSession(plan, paths, state, options, config, session, {
+      role: currentRole,
+      effectiveRiskTier: lastAssessment.effectiveRiskTier,
+      declaredRiskTier: lastAssessment.declaredRiskTier,
+      stageIndex,
+      stageTotal
+    });
     await logEvent(paths, state, 'session_finished', {
       planId: plan.planId,
       session,
+      role: currentRole,
+      stageIndex,
+      stageTotal,
+      declaredRiskTier: lastAssessment.declaredRiskTier,
+      computedRiskTier: lastAssessment.computedRiskTier,
+      effectiveRiskTier: lastAssessment.effectiveRiskTier,
+      riskScore: lastAssessment.score,
       status: sessionResult.status,
       reason: sessionResult.reason ?? null,
       summary: sessionResult.summary ?? null
@@ -2388,12 +2868,16 @@ async function processPlan(plan, paths, state, options, config) {
         session,
         sessionResult.reason,
         sessionResult.summary,
-        options
+        options,
+        { role: currentRole, stageIndex, stageTotal }
       );
       state.stats.handoffs += 1;
       await logEvent(paths, state, 'handoff_created', {
         planId: plan.planId,
         session,
+        role: currentRole,
+        stageIndex,
+        stageTotal,
         handoffPath: toPosix(path.relative(paths.rootDir, handoffPath)),
         reason: sessionResult.reason ?? 'executor-requested'
       }, options.dryRun);
@@ -2414,7 +2898,8 @@ async function processPlan(plan, paths, state, options, config) {
       await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
       return {
         outcome: 'blocked',
-        reason: sessionResult.reason ?? 'executor blocked'
+        reason: sessionResult.reason ?? 'executor blocked',
+        riskTier: lastAssessment.effectiveRiskTier
       };
     }
 
@@ -2422,7 +2907,8 @@ async function processPlan(plan, paths, state, options, config) {
       await setPlanStatus(plan.filePath, 'failed', options.dryRun);
       return {
         outcome: 'failed',
-        reason: sessionResult.reason ?? 'executor failed'
+        reason: sessionResult.reason ?? 'executor failed',
+        riskTier: lastAssessment.effectiveRiskTier
       };
     }
 
@@ -2459,7 +2945,8 @@ async function processPlan(plan, paths, state, options, config) {
           reason: 'completed',
           completedPath: relocatedPlan.rel,
           commitHash: commitResult.commitHash,
-          validationEvidence: []
+          validationEvidence: [],
+          riskTier: lastAssessment.effectiveRiskTier
         };
       }
 
@@ -2471,8 +2958,30 @@ async function processPlan(plan, paths, state, options, config) {
     if (!(await exists(plan.filePath))) {
       return {
         outcome: 'failed',
-        reason: `Plan file is missing after executor session: ${plan.rel}`
+        reason: `Plan file is missing after executor session: ${plan.rel}`,
+        riskTier: lastAssessment.effectiveRiskTier
       };
+    }
+
+    const refreshedPlan = await readPlanRecord(paths.rootDir, plan.filePath, 'active');
+    syncPlanRecord(plan, refreshedPlan);
+
+    advanceRoleState(roleState, currentRole);
+    state.roleState[plan.planId] = roleState;
+    await saveState(paths, state, options.dryRun);
+
+    if (roleIndex < roleState.stages.length - 1) {
+      const nextRole = roleState.stages[Math.min(roleIndex + 1, roleState.stages.length - 1)];
+      await logEvent(paths, state, 'role_stage_advanced', {
+        planId: plan.planId,
+        session,
+        completedRole: currentRole,
+        nextRole,
+        stageIndexCompleted: stageIndex,
+        stageTotal,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier
+      }, options.dryRun);
+      continue;
     }
 
     const completionGate = await evaluateCompletionGate(plan.filePath);
@@ -2488,25 +2997,67 @@ async function processPlan(plan, paths, state, options, config) {
       if (sessionResult.resultPayloadFound === false) {
         return {
           outcome: 'pending',
-          reason: 'Executor produced no structured result payload. Deferring to next run to prevent repeated no-signal loops.'
+          reason: 'Executor produced no structured result payload. Deferring to next run to prevent repeated no-signal loops.',
+          riskTier: lastAssessment.effectiveRiskTier
         };
       }
 
       if (session >= maxSessionsPerPlan) {
         return {
           outcome: 'pending',
-          reason: `Maximum sessions reached without completion (${maxSessionsPerPlan}). ${completionGate.reason}`
+          reason: `Maximum sessions reached without completion (${maxSessionsPerPlan}). ${completionGate.reason}`,
+          riskTier: lastAssessment.effectiveRiskTier
         };
       }
+
+      resetRoleStateToImplementation(roleState);
+      state.roleState[plan.planId] = roleState;
 
       await logEvent(paths, state, 'session_continued', {
         planId: plan.planId,
         session,
+        role: currentRole,
+        nextRole: roleState.stages[roleState.currentIndex],
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
         nextSession: session + 1,
         reason: completionGate.reason
       }, options.dryRun);
 
       continue;
+    }
+
+    const approvalRequired = requiresSecurityApproval(plan, lastAssessment, config);
+    const securityApprovalField =
+      resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
+    const securityApprovalValue = parseSecurityApproval(
+      metadataValue(plan.metadata, securityApprovalField),
+      plan.securityApproval
+    );
+    plan.securityApproval = securityApprovalValue;
+
+    if (approvalRequired && securityApprovalValue !== SECURITY_APPROVAL_APPROVED) {
+      await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
+      if (!options.dryRun && securityApprovalValue === SECURITY_APPROVAL_NOT_REQUIRED) {
+        const rawPlan = await fs.readFile(plan.filePath, 'utf8');
+        const updatedPlan = setMetadataFields(rawPlan, {
+          [securityApprovalField]: SECURITY_APPROVAL_PENDING
+        });
+        await fs.writeFile(plan.filePath, updatedPlan, 'utf8');
+      }
+      const reason = `Security approval required: set '${securityApprovalField}' to '${SECURITY_APPROVAL_APPROVED}' for ${lastAssessment.effectiveRiskTier}-risk completion.`;
+      await logEvent(paths, state, 'security_approval_pending', {
+        planId: plan.planId,
+        riskTier: lastAssessment.effectiveRiskTier,
+        securityApprovalField,
+        securityApproval: securityApprovalValue,
+        sensitive: lastAssessment.sensitive,
+        reason
+      }, options.dryRun);
+      return {
+        outcome: 'blocked',
+        reason,
+        riskTier: lastAssessment.effectiveRiskTier
+      };
     }
 
     await setPlanStatus(plan.filePath, 'validation', options.dryRun);
@@ -2526,7 +3077,8 @@ async function processPlan(plan, paths, state, options, config) {
 
       return {
         outcome: 'failed',
-        reason: `Validation failed: ${alwaysValidation.failedCommand}`
+        reason: `Validation failed: ${alwaysValidation.failedCommand}`,
+        riskTier: lastAssessment.effectiveRiskTier
       };
     }
 
@@ -2558,7 +3110,8 @@ async function processPlan(plan, paths, state, options, config) {
 
       return {
         outcome: 'failed',
-        reason: hostValidation.reason ?? 'Host validation failed.'
+        reason: hostValidation.reason ?? 'Host validation failed.',
+        riskTier: lastAssessment.effectiveRiskTier
       };
     }
 
@@ -2584,7 +3137,8 @@ async function processPlan(plan, paths, state, options, config) {
 
       return {
         outcome: 'pending',
-        reason: hostValidation.reason ?? 'Host validation pending.'
+        reason: hostValidation.reason ?? 'Host validation pending.',
+        riskTier: lastAssessment.effectiveRiskTier
       };
     }
 
@@ -2639,7 +3193,10 @@ async function processPlan(plan, paths, state, options, config) {
         planStartedAt,
         sessionsExecuted: session,
         rollovers,
-        hostValidationProvider: hostValidation.provider ?? 'none'
+        hostValidationProvider: hostValidation.provider ?? 'none',
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        declaredRiskTier: lastAssessment.declaredRiskTier,
+        rolePipeline: roleState.stages.join(' -> ')
       }
     );
 
@@ -2664,13 +3221,15 @@ async function processPlan(plan, paths, state, options, config) {
       reason: 'completed',
       completedPath: toPosix(path.relative(paths.rootDir, completedPath)),
       commitHash: commitResult.commitHash,
-      validationEvidence: mergedValidationEvidence
+      validationEvidence: mergedValidationEvidence,
+      riskTier: lastAssessment.effectiveRiskTier
     };
   }
 
   return {
     outcome: 'pending',
-    reason: `Maximum sessions reached without completion (${maxSessionsPerPlan}).`
+    reason: `Maximum sessions reached without completion (${maxSessionsPerPlan}).`,
+    riskTier: lastAssessment.effectiveRiskTier
   };
 }
 
@@ -2752,23 +3311,31 @@ async function runLoop(paths, state, options, config, runMode) {
     }
 
     const nextPlan = executable[0];
+    const nextPlanRisk = computeRiskAssessment(nextPlan, state, config);
     await logEvent(paths, state, 'plan_started', {
       planId: nextPlan.planId,
       planFile: nextPlan.rel,
-      runMode
+      runMode,
+      declaredRiskTier: nextPlanRisk.declaredRiskTier,
+      computedRiskTier: nextPlanRisk.computedRiskTier,
+      effectiveRiskTier: nextPlanRisk.effectiveRiskTier,
+      riskScore: nextPlanRisk.score,
+      sensitive: nextPlanRisk.sensitive
     }, options.dryRun);
 
     const outcome = await processPlan(nextPlan, paths, state, options, config);
     state.inProgress = null;
 
     if (outcome.outcome === 'completed') {
+      delete state.roleState[nextPlan.planId];
       if (!state.completedPlanIds.includes(nextPlan.planId)) {
         state.completedPlanIds.push(nextPlan.planId);
       }
       await logEvent(paths, state, 'plan_completed', {
         planId: nextPlan.planId,
         completedPath: outcome.completedPath,
-        commitHash: outcome.commitHash ?? null
+        commitHash: outcome.commitHash ?? null,
+        riskTier: outcome.riskTier ?? nextPlanRisk.effectiveRiskTier
       }, options.dryRun);
     } else if (outcome.outcome === 'blocked') {
       if (!state.blockedPlanIds.includes(nextPlan.planId)) {
@@ -2777,21 +3344,25 @@ async function runLoop(paths, state, options, config, runMode) {
       console.log(`[orchestrator] blocked ${nextPlan.planId}: ${outcome.reason}`);
       await logEvent(paths, state, 'plan_blocked', {
         planId: nextPlan.planId,
-        reason: outcome.reason
+        reason: outcome.reason,
+        riskTier: outcome.riskTier ?? nextPlanRisk.effectiveRiskTier
       }, options.dryRun);
     } else if (outcome.outcome === 'pending') {
       deferredPlanIds.add(nextPlan.planId);
       await logEvent(paths, state, 'plan_pending', {
         planId: nextPlan.planId,
-        reason: outcome.reason
+        reason: outcome.reason,
+        riskTier: outcome.riskTier ?? nextPlanRisk.effectiveRiskTier
       }, options.dryRun);
     } else {
+      delete state.roleState[nextPlan.planId];
       if (!state.failedPlanIds.includes(nextPlan.planId)) {
         state.failedPlanIds.push(nextPlan.planId);
       }
       await logEvent(paths, state, 'plan_failed', {
         planId: nextPlan.planId,
-        reason: outcome.reason
+        reason: outcome.reason,
+        riskTier: outcome.riskTier ?? nextPlanRisk.effectiveRiskTier
       }, options.dryRun);
     }
 
@@ -2826,6 +3397,7 @@ async function runCommand(paths, options) {
   await saveState(paths, state, options.dryRun);
 
   try {
+    const roleConfig = resolveRoleOrchestration(config);
     await logEvent(paths, state, 'run_started', {
       requestedMode: modeResolution.requestedMode,
       effectiveMode: modeResolution.effectiveMode,
@@ -2835,6 +3407,11 @@ async function runCommand(paths, options) {
       sessionPolicy: {
         contextThreshold: options.contextThreshold,
         requireResultPayload: options.requireResultPayload
+      },
+      roleOrchestration: {
+        enabled: roleConfig.enabled,
+        mode: roleConfig.mode,
+        pipelines: roleConfig.pipelines
       }
     }, options.dryRun);
 
@@ -2900,6 +3477,7 @@ async function resumeCommand(paths, options) {
   await acquireRunLock(paths, state, options);
 
   try {
+    const roleConfig = resolveRoleOrchestration(config);
     await logEvent(paths, state, 'run_resumed', {
       requestedMode: options.mode ?? state.requestedMode,
       effectiveMode: state.effectiveMode,
@@ -2907,6 +3485,11 @@ async function resumeCommand(paths, options) {
       sessionPolicy: {
         contextThreshold: options.contextThreshold,
         requireResultPayload: options.requireResultPayload
+      },
+      roleOrchestration: {
+        enabled: roleConfig.enabled,
+        mode: roleConfig.mode,
+        pipelines: roleConfig.pipelines
       }
     }, options.dryRun);
 

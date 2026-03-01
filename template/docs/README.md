@@ -14,6 +14,7 @@ Source of Truth: This document.
 - Product state: `docs/product-specs/current-state.md`
 - Plan workflow: `docs/PLANS.md`
 - Ops automation: `docs/ops/automation/README.md`
+- Role orchestration: `docs/ops/automation/ROLE_ORCHESTRATION.md`
 
 ## Layering Model
 

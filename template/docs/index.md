@@ -69,6 +69,7 @@ This is the canonical completeness index for first-class documentation in `docs/
 - `docs/governance/golden-principles.md`
 - `docs/ops/README.md`
 - `docs/ops/automation/README.md`
+- `docs/ops/automation/ROLE_ORCHESTRATION.md`
 - `docs/product-specs/index.md`
 - `docs/product-specs/current-state.md`
 - `docs/references/index.md`
