@@ -1,14 +1,18 @@
 # Evidence Index
 
-Status: canonical
-Owner: {{DOC_OWNER}}
-Last Updated: {{LAST_UPDATED_ISO_DATE}}
-Source of Truth: This directory.
+Purpose: Canonical, plan-scoped evidence references after curation/completion.
 
-This directory contains canonical compact evidence references by plan ID.
+## Usage
 
-## Contract
+- Each completed plan should point `Done-Evidence` to `docs/exec-plans/evidence-index/<plan-id>.md`.
+- Each index file is the compact source for retained evidence links.
 
-- Keep one markdown index per `Plan-ID` (for example, `my-plan-id.md`).
-- Point completed-plan `Done-Evidence` metadata at the corresponding index file.
-- Prefer curated canonical references over timestamped noise artifacts.
+## Indexed Plans
+
+- none
+
+## Policy
+
+- Evidence is curated to keep useful, non-redundant information.
+- Repeated unchanged blocker reruns are collapsed by strict-upsert policy.
+

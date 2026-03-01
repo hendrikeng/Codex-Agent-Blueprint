@@ -3257,7 +3257,7 @@ function normalizeCurationScope(scopeValue) {
   throw new Error(`Invalid scope '${scopeValue}'. Expected one of: active, completed, all.`);
 }
 
-async function writeEvidenceIndex(paths, plan, content, options, config) {
+async function writeEvidenceIndex(paths, plan, content, options, config, overrides = {}) {
   const mode = String(config.evidence?.compaction?.mode ?? 'compact-index').trim().toLowerCase();
   if (mode !== 'compact-index') {
     return null;
@@ -3265,6 +3265,7 @@ async function writeEvidenceIndex(paths, plan, content, options, config) {
 
   const maxReferences = asInteger(config.evidence?.compaction?.maxReferences, DEFAULT_EVIDENCE_MAX_REFERENCES);
   const { selected, totalFound } = await collectEvidenceReferences(paths, plan.rel, content, maxReferences);
+  const sourcePlanRel = toPosix(String(overrides.sourcePlanRel ?? plan.rel));
   const indexRel = toPosix(path.relative(paths.rootDir, path.join(paths.evidenceIndexDir, `${plan.planId}.md`)));
   const indexAbs = path.join(paths.rootDir, indexRel);
 
@@ -3273,7 +3274,7 @@ async function writeEvidenceIndex(paths, plan, content, options, config) {
     '',
     `- Plan-ID: ${plan.planId}`,
     `- Last Updated: ${todayIsoDate()}`,
-    `- Source Plan: \`${plan.rel}\``,
+    `- Source Plan: \`${sourcePlanRel}\``,
     `- Total Evidence References Found: ${totalFound}`,
     `- References Included: ${selected.length}`,
     ''
@@ -3508,8 +3509,16 @@ function createAtomicCommit(rootDir, planId, dryRun, allowDirty) {
 async function finalizeCompletedPlan(plan, paths, state, validationEvidence, options, config, completionInfo = {}) {
   const now = nowIso();
   const completedDate = isoDate(now);
+  const currentBase = path.parse(path.basename(plan.filePath));
+  const completedName = datedPlanFileName(completedDate, currentBase.name, currentBase.ext || '.md');
+  let targetPath = path.join(paths.completedDir, completedName);
+  if (await exists(targetPath)) {
+    const parsed = path.parse(completedName);
+    targetPath = path.join(paths.completedDir, `${parsed.name}-${Date.now()}${parsed.ext || '.md'}`);
+  }
+  const completedRel = toPosix(path.relative(paths.rootDir, targetPath));
   const raw = await fs.readFile(plan.filePath, 'utf8');
-  const indexResult = await writeEvidenceIndex(paths, plan, raw, options, config);
+  const indexResult = await writeEvidenceIndex(paths, plan, raw, options, config, { sourcePlanRel: completedRel });
   const doneEvidenceValue = indexResult?.indexPath ?? (validationEvidence.length > 0 ? validationEvidence.join(', ') : 'none');
   const updatedMetadata = setMetadataFields(raw, {
     Status: 'completed',
@@ -3551,14 +3560,6 @@ async function finalizeCompletedPlan(plan, paths, state, validationEvidence, opt
     ]);
   }
   finalContent = upsertSection(finalContent, 'Closure', closureLines);
-
-  const currentBase = path.parse(path.basename(plan.filePath));
-  const completedName = datedPlanFileName(completedDate, currentBase.name, currentBase.ext || '.md');
-  let targetPath = path.join(paths.completedDir, completedName);
-  if (await exists(targetPath)) {
-    const parsed = path.parse(completedName);
-    targetPath = path.join(paths.completedDir, `${parsed.name}-${Date.now()}${parsed.ext || '.md'}`);
-  }
 
   if (!options.dryRun) {
     await fs.writeFile(targetPath, finalContent, 'utf8');
