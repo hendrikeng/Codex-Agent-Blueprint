@@ -169,7 +169,7 @@
   },
   "validationCommands": [],
   "logging": {
-    "output": "ticker",
+    "output": "pretty",
     "failureTailLines": 60
   },
   "git": {

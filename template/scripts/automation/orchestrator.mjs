@@ -33,8 +33,10 @@ const DEFAULT_COMMAND_TIMEOUT_SECONDS = 1800;
 const DEFAULT_HOST_VALIDATION_MODE = 'hybrid';
 const DEFAULT_HOST_VALIDATION_TIMEOUT_SECONDS = 1800;
 const DEFAULT_HOST_VALIDATION_POLL_SECONDS = 15;
-const DEFAULT_OUTPUT_MODE = 'ticker';
+const DEFAULT_OUTPUT_MODE = 'pretty';
 const DEFAULT_FAILURE_TAIL_LINES = 60;
+const PRETTY_SPINNER_FRAMES = ['|', '/', '-', '\\'];
+let prettySpinnerIndex = 0;
 const DEFAULT_EVIDENCE_MAX_REFERENCES = 25;
 const DEFAULT_EVIDENCE_TRACK_MODE = 'curated';
 const DEFAULT_EVIDENCE_DEDUP_MODE = 'strict-upsert';
@@ -119,7 +121,7 @@ Options:
   --scope active|completed|all       Curation scope for curate-evidence (default: all)
   --dry-run true|false               Do not write changes or run git commits
   --json true|false                  JSON output for audit
-  --output minimal|ticker|verbose    Console output mode (default: ticker)
+  --output minimal|ticker|pretty|verbose Console output mode (default: pretty)
   --failure-tail-lines <n>           Lines of command output to print on failures (default: 60)
 `);
 }
@@ -168,6 +170,9 @@ function normalizeOutputMode(value, fallback = DEFAULT_OUTPUT_MODE) {
   if (normalized === 'ticker') {
     return 'ticker';
   }
+  if (normalized === 'pretty') {
+    return 'pretty';
+  }
   if (normalized === 'verbose') {
     return 'verbose';
   }
@@ -182,9 +187,72 @@ function isTickerOutput(options) {
   return normalizeOutputMode(options?.outputMode, DEFAULT_OUTPUT_MODE) === 'ticker';
 }
 
+function isPrettyOutput(options) {
+  return normalizeOutputMode(options?.outputMode, DEFAULT_OUTPUT_MODE) === 'pretty';
+}
+
+function canUseColor(options) {
+  if (!isPrettyOutput(options)) {
+    return false;
+  }
+  if (!process.stdout.isTTY) {
+    return false;
+  }
+  if (String(process.env.NO_COLOR ?? '').trim() !== '') {
+    return false;
+  }
+  if (String(process.env.CI ?? '').trim() !== '') {
+    return false;
+  }
+  return String(process.env.TERM ?? '').trim().toLowerCase() !== 'dumb';
+}
+
+function colorize(options, code, text) {
+  if (!canUseColor(options)) {
+    return text;
+  }
+  return `\x1b[${code}m${text}\x1b[0m`;
+}
+
+function nextPrettySpinner(options) {
+  if (!process.stdout.isTTY) {
+    return '.';
+  }
+  const frame = PRETTY_SPINNER_FRAMES[prettySpinnerIndex % PRETTY_SPINNER_FRAMES.length];
+  prettySpinnerIndex += 1;
+  return colorize(options, '36', frame);
+}
+
+function classifyPrettyLevel(message) {
+  const value = String(message ?? '').toLowerCase();
+  if (value.includes('failed') || value.includes('error')) return 'error';
+  if (value.includes('blocked') || value.includes('pending') || value.includes('downgraded')) return 'warn';
+  if (value.includes('passed') || value.includes('complete') || value.includes('promoted')) return 'ok';
+  if (value.includes('start') || value.includes('resume') || value.includes('session') || value.includes('transition')) {
+    return 'run';
+  }
+  return 'info';
+}
+
+function prettyLevelTag(options, level) {
+  if (level === 'error') return colorize(options, '31', 'ERROR');
+  if (level === 'warn') return colorize(options, '33', 'WARN ');
+  if (level === 'ok') return colorize(options, '32', 'OK   ');
+  if (level === 'run') return colorize(options, '36', 'RUN  ');
+  return colorize(options, '35', 'INFO ');
+}
+
 function progressLog(options, message) {
   if (isTickerOutput(options)) {
     console.log(`[ticker] ${nowIso()} ${message}`);
+    return;
+  }
+  if (isPrettyOutput(options)) {
+    const stamp = colorize(options, '90', nowIso().slice(11, 19));
+    const level = classifyPrettyLevel(message);
+    const spinner = nextPrettySpinner(options);
+    const tag = prettyLevelTag(options, level);
+    console.log(`${stamp} ${spinner} ${tag} ${message}`);
     return;
   }
   console.log(`[orchestrator] ${message}`);
@@ -217,6 +285,20 @@ function printRunSummary(options, label, state, processed, runDurationSeconds) {
       options,
       `${label} complete processed=${processed} runId=${state.runId} completed=${state.completedPlanIds.length} blocked=${state.blockedPlanIds.length} failed=${state.failedPlanIds.length} duration=${formatDuration(runDurationSeconds)}`
     );
+    return;
+  }
+  if (isPrettyOutput(options)) {
+    const border = colorize(options, '90', '------------------------------------------------------------');
+    const title = colorize(options, '1;36', `${label.toUpperCase()} SUMMARY`);
+    console.log(border);
+    console.log(title);
+    console.log(`runId: ${state.runId}`);
+    console.log(`processed: ${processed}`);
+    console.log(`completed: ${state.completedPlanIds.length}`);
+    console.log(`blocked: ${state.blockedPlanIds.length}`);
+    console.log(`failed: ${state.failedPlanIds.length}`);
+    console.log(`duration: ${formatDuration(runDurationSeconds)} (${runDurationSeconds ?? 'unknown'}s)`);
+    console.log(border);
     return;
   }
 

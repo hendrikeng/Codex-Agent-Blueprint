@@ -44,10 +44,17 @@ function commandIncludesRoleModel(command) {
 }
 
 function ensureScriptSignatures(orchestratorRaw, wrapperRaw) {
-  if (!orchestratorRaw.includes("const DEFAULT_OUTPUT_MODE = 'ticker';")) {
+  if (!orchestratorRaw.includes("const DEFAULT_OUTPUT_MODE = 'pretty';")) {
     addFinding(
-      'MISSING_TICKER_DEFAULT',
-      "scripts/automation/orchestrator.mjs must default to output mode 'ticker'.",
+      'MISSING_PRETTY_DEFAULT',
+      "scripts/automation/orchestrator.mjs must default to output mode 'pretty'.",
+      'scripts/automation/orchestrator.mjs'
+    );
+  }
+  if (!orchestratorRaw.includes('function isPrettyOutput(')) {
+    addFinding(
+      'MISSING_PRETTY_MODE_SUPPORT',
+      'scripts/automation/orchestrator.mjs is missing pretty-mode support helpers.',
       'scripts/automation/orchestrator.mjs'
     );
   }
@@ -95,10 +102,10 @@ function ensureConfigPolicy(config, configPath) {
     );
   }
 
-  if (config?.logging?.output !== 'ticker') {
+  if (config?.logging?.output !== 'pretty') {
     addFinding(
-      'TICKER_NOT_DEFAULT',
-      "logging.output must be 'ticker'.",
+      'PRETTY_NOT_DEFAULT',
+      "logging.output must be 'pretty'.",
       rel(configPath)
     );
   }

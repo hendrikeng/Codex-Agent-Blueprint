@@ -38,7 +38,7 @@ Reusable blueprint for initializing agent-first repositories with standardized d
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
 - Role routing is risk-adaptive (`low: worker`, `medium: planner->worker->reviewer`, `high: planner->explorer->worker->reviewer`) with Security-Approval gates for high/sensitive plans.
 - Role stages are isolated executor sessions; role commands should include `{role_model}` to enforce model switching.
-- Orchestrator defaults to lean console output with raw session logs written under `docs/ops/automation/runtime/<run-id>/` (`--output ticker` for ultra-compact mode).
+- Orchestrator defaults to interactive pretty console output with raw session logs written under `docs/ops/automation/runtime/<run-id>/` (`--output ticker` for ultra-compact mode).
 
 ## When To Run Checks
 

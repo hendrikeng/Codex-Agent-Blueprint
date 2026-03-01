@@ -52,7 +52,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `--max-sessions-per-plan <n>` (default `20`)
   - `--max-rollovers <n>` (default `20`)
 - Output controls:
-  - `--output minimal|ticker|verbose` (default `ticker`)
+  - `--output minimal|ticker|pretty|verbose` (default `pretty`)
   - `--failure-tail-lines <n>` (default `60`)
 
 ## Executor Configuration
@@ -67,7 +67,7 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `"enforceRoleModelSelection": true` requires each role command to include `{role_model}`.
   - `"contextThreshold": 10000`
   - `"requireResultPayload": true`
-  - `"logging.output": "ticker"` (`minimal` | `ticker` | `verbose`) and `"logging.failureTailLines": 60` tune operator-facing output noise.
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`) and `"logging.failureTailLines": 60` tune operator-facing output noise.
   - `executor.promptTemplate` is provider-agnostic and reused across Codex/Claude/Gemini/Grok adapters.
 - Role orchestration:
   - `roleOrchestration.enabled: true` enables risk-adaptive role routing.
@@ -118,12 +118,13 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - Evidence folders with markdown artifacts always have a canonical `README.md` generated/maintained by curation.
   - `docs/exec-plans/evidence-index/README.md` is generated/maintained as the index-directory guide.
 - Logging and observability:
+  - `pretty` output adds interactive-style, color-capable lifecycle logs (TTY-safe and CI-safe fallback).
   - `minimal` output prints high-signal lifecycle lines only (plan/session start-end, role transitions, validation state, blockers).
   - `ticker` output prints compact single-line lifecycle events and a single-line run summary.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
 - Drift guardrail:
-  - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, ticker logging default).
+  - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
 
 ## Plan File Naming
