@@ -89,9 +89,11 @@ This directory defines the autonomous planning-to-execution conveyor for overnig
   - `validation.always` should include a unit/integration test command (framework-appropriate).
   - `validation.hostRequired`: Docker/port/browser checks required before completion.
   - `validation.hostRequired` should include infra/bootstrap commands plus host-dependent E2E/system tests.
+  - Executors should not run `validation.hostRequired` commands inline; completion gating runs them via host validation providers (`ci`/`local`).
   - `validation.hostRequired` must be set per repository for DB/search/browser-dependent plans; an empty list means host validation auto-passes.
   - `alwaysExamples` and `hostRequiredExamples` in `orchestrator.config.json` provide a starter baseline (`unit`, `infra`, `db migrate`, `e2e`) that should be replaced with repo-specific commands.
   - Framework mapping is repository-defined (`vitest`, `jest`, `playwright`, `pytest`, `go test`, etc.); lane intent is mandatory even when command names differ.
+  - For Playwright web-server tests, bind dev server explicitly to loopback (`127.0.0.1`/`localhost`) and keep the e2e command in `validation.hostRequired`.
   - `validation.host.mode`: `ci`, `local`, or `hybrid` (default).
   - `validation.host.ci.command`: optional command that performs CI-dispatched host validation.
   - `validation.host.local.command`: optional local host-validation command override.
