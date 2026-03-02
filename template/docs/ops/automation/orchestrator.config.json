@@ -47,6 +47,11 @@
       }
     }
   },
+  "recovery": {
+    "retryFailed": true,
+    "autoUnblock": true,
+    "maxFailedRetries": 3
+  },
   "evidence": {
     "compaction": {
       "mode": "compact-index",

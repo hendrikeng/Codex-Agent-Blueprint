@@ -76,6 +76,10 @@ Use the manual path when any of these are true:
   - `--failure-tail-lines <n>` (default `60`)
   - `--heartbeat-seconds <n>` (default `12`)
   - `--stall-warn-seconds <n>` (default `120`)
+- Recovery controls:
+  - `--retry-failed true|false` (default `true`)
+  - `--auto-unblock true|false` (default `true`)
+  - `--max-failed-retries <n>` (default `3`)
 - Parallel controls:
   - `--parallel-plans <n>` enables dependency-aware parallel branch/worktree execution.
 
@@ -95,6 +99,7 @@ Use the manual path when any of these are true:
   - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/agent-runtime-context.md` by default).
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
   - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, and `"logging.stallWarnSeconds": 120` tune operator-facing output noise and liveness signaling.
+  - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 3` control automatic retry/unblock behavior for resumable plans.
   - `"parallel.maxPlans"` sets default worker concurrency for `run --parallel-plans`.
   - `"parallel.worktreeRoot"`, `"parallel.branchPrefix"`, `"parallel.baseRef"`, `"parallel.gitRemote"` configure branch/worktree strategy.
   - `"parallel.pushBranches": true` pushes worker branches automatically.
@@ -261,6 +266,9 @@ Executor commands should use these outcomes:
 - If an executor exits `0` without payload (or without numeric `contextRemaining`), orchestrator forces an immediate handoff/rollover to protect coding accuracy.
 - If host-required validations cannot run in the current environment, orchestration keeps the plan `in-progress`, records a host-validation pending reason, and continues with other executable plans.
 - If validation lanes are required but unconfigured, `run`/`resume` fail immediately (fail-closed).
+- Failed plans are automatically re-queued on `resume` when policy/security/dependency gates are now satisfied (up to `--max-failed-retries`).
+- Blocked plans are automatically re-queued on `resume` when their blocking gates are now satisfied (for example, approvals provided).
+- `blocked` remains reserved for external/manual gates; `failed` remains a validation/execution failure signal.
 - When a plan completes, `Done-Evidence` points to its canonical evidence index file.
 - During curation, removed evidence paths are automatically rewritten in plan docs to the retained canonical reference.
 

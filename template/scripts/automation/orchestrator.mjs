@@ -40,6 +40,9 @@ const PRETTY_SPINNER_FRAMES = ['|', '/', '-', '\\'];
 const PRETTY_LIVE_DOT_FRAMES = ['...', '.. ', '.  ', ' ..'];
 const DEFAULT_HEARTBEAT_SECONDS = 12;
 const DEFAULT_STALL_WARN_SECONDS = 120;
+const DEFAULT_RETRY_FAILED_PLANS = true;
+const DEFAULT_AUTO_UNBLOCK_PLANS = true;
+const DEFAULT_MAX_FAILED_RETRIES = 3;
 const DEFAULT_PARALLEL_PLANS = 1;
 const DEFAULT_PARALLEL_WORKTREE_ROOT = 'docs/ops/automation/runtime/worktrees';
 const DEFAULT_PARALLEL_BRANCH_PREFIX = 'orch';
@@ -148,6 +151,9 @@ Options:
   --failure-tail-lines <n>           Lines of command output to print on failures (default: 60)
   --heartbeat-seconds <n>            Live status heartbeat cadence in seconds (default: 12)
   --stall-warn-seconds <n>           Warn when no command output for this many seconds (default: 120)
+  --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
+  --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
+  --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 3)
 `);
 }
 
@@ -1204,6 +1210,21 @@ function resolveRuntimeExecutorOptions(options, config) {
     heartbeatSeconds,
     asInteger(options.stallWarnSeconds ?? config.logging?.stallWarnSeconds, DEFAULT_STALL_WARN_SECONDS)
   );
+  const retryFailedPlans = asBoolean(
+    options.retryFailed ?? options['retry-failed'] ?? config.recovery?.retryFailed,
+    DEFAULT_RETRY_FAILED_PLANS
+  );
+  const autoUnblockPlans = asBoolean(
+    options.autoUnblock ?? options['auto-unblock'] ?? config.recovery?.autoUnblock,
+    DEFAULT_AUTO_UNBLOCK_PLANS
+  );
+  const maxFailedRetries = Math.max(
+    1,
+    asInteger(
+      options.maxFailedRetries ?? options['max-failed-retries'] ?? config.recovery?.maxFailedRetries,
+      DEFAULT_MAX_FAILED_RETRIES
+    )
+  );
 
   return {
     ...options,
@@ -1217,7 +1238,10 @@ function resolveRuntimeExecutorOptions(options, config) {
     outputMode,
     failureTailLines,
     heartbeatSeconds,
-    stallWarnSeconds
+    stallWarnSeconds,
+    retryFailedPlans,
+    autoUnblockPlans,
+    maxFailedRetries
   };
 }
 
@@ -1604,6 +1628,7 @@ function createInitialState(runId, requestedMode, effectiveMode) {
       checkedAt: null
     },
     validationState: {},
+    recoveryState: {},
     evidenceState: {},
     roleState: {},
     parallelState: {
@@ -1628,6 +1653,8 @@ function normalizePersistedState(state) {
   normalized.failedPlanIds = Array.isArray(normalized.failedPlanIds) ? normalized.failedPlanIds : [];
   normalized.validationState =
     normalized.validationState && typeof normalized.validationState === 'object' ? normalized.validationState : {};
+  normalized.recoveryState =
+    normalized.recoveryState && typeof normalized.recoveryState === 'object' ? normalized.recoveryState : {};
   normalized.evidenceState =
     normalized.evidenceState && typeof normalized.evidenceState === 'object' ? normalized.evidenceState : {};
   normalized.roleState =
@@ -1739,6 +1766,54 @@ function updatePlanValidationState(state, planId, patch) {
     ...patch,
     updatedAt: nowIso()
   };
+}
+
+function ensurePlanRecoveryState(state, planId) {
+  if (!state.recoveryState || typeof state.recoveryState !== 'object') {
+    state.recoveryState = {};
+  }
+  if (!state.recoveryState[planId] || typeof state.recoveryState[planId] !== 'object') {
+    state.recoveryState[planId] = {
+      failedAttempts: 0,
+      lastFailureReason: null,
+      lastFailedAt: null,
+      lastRetriedAt: null,
+      updatedAt: null
+    };
+  }
+  return state.recoveryState[planId];
+}
+
+function failedAttemptCount(state, planId) {
+  const current = state?.recoveryState?.[planId];
+  return Math.max(0, asInteger(current?.failedAttempts, 0));
+}
+
+function registerPlanFailureAttempt(state, planId, reason) {
+  const current = ensurePlanRecoveryState(state, planId);
+  state.recoveryState[planId] = {
+    ...current,
+    failedAttempts: Math.max(0, asInteger(current.failedAttempts, 0)) + 1,
+    lastFailureReason: reason ?? null,
+    lastFailedAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function registerPlanRetryAttempt(state, planId) {
+  const current = ensurePlanRecoveryState(state, planId);
+  state.recoveryState[planId] = {
+    ...current,
+    lastRetriedAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function clearPlanRecoveryState(state, planId) {
+  if (!state.recoveryState || typeof state.recoveryState !== 'object') {
+    return;
+  }
+  delete state.recoveryState[planId];
 }
 
 function ensureEvidenceState(state, planId) {
@@ -2011,10 +2086,15 @@ async function promoteFuturePlans(paths, state, options) {
   return promoted;
 }
 
-function executablePlans(activePlans, completedPlanIds, excludedPlanIds = new Set()) {
+function executablePlans(activePlans, completedPlanIds, excludedPlanIds = new Set(), recoveredPlanIds = new Set()) {
   return activePlans
     .filter((plan) => ACTIVE_STATUSES.has(plan.status))
-    .filter((plan) => plan.status !== 'failed' && plan.status !== 'blocked' && plan.status !== 'completed')
+    .filter((plan) => plan.status !== 'completed')
+    .filter((plan) =>
+      plan.status !== 'failed' && plan.status !== 'blocked'
+        ? true
+        : recoveredPlanIds.has(plan.planId)
+    )
     .filter((plan) => !excludedPlanIds.has(plan.planId))
     .filter((plan) => plan.dependencies.every((dependency) => completedPlanIds.has(dependency)))
     .sort((a, b) => {
@@ -2029,6 +2109,70 @@ function blockedPlans(activePlans, completedPlanIds, excludedPlanIds = new Set()
     .filter((plan) => ACTIVE_STATUSES.has(plan.status))
     .filter((plan) => !excludedPlanIds.has(plan.planId))
     .filter((plan) => plan.dependencies.some((dependency) => !completedPlanIds.has(dependency)));
+}
+
+function securityApprovalSatisfied(plan, assessment, config) {
+  const securityApprovalField =
+    resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
+  const securityApprovalValue = parseSecurityApproval(
+    metadataValue(plan.metadata, securityApprovalField),
+    plan.securityApproval
+  );
+  if (!requiresSecurityApproval(plan, assessment, config)) {
+    return { ok: true, securityApprovalField, securityApprovalValue };
+  }
+  return {
+    ok: securityApprovalValue === SECURITY_APPROVAL_APPROVED,
+    securityApprovalField,
+    securityApprovalValue
+  };
+}
+
+function classifyRecoverablePlans(activePlans, completedPlanIds, state, options, config) {
+  const retryableFailed = new Map();
+  const unblockable = new Map();
+
+  for (const plan of activePlans) {
+    if (!ACTIVE_STATUSES.has(plan.status)) {
+      continue;
+    }
+    if (!planDependenciesReady(plan, completedPlanIds)) {
+      continue;
+    }
+
+    const assessment = computeRiskAssessment(plan, state, config);
+    const policyGate = evaluatePolicyGate(
+      {
+        ...plan,
+        riskTier: assessment.effectiveRiskTier
+      },
+      state.effectiveMode
+    );
+    const approval = securityApprovalSatisfied(plan, assessment, config);
+
+    if (plan.status === 'failed' && options.retryFailedPlans) {
+      const attempts = failedAttemptCount(state, plan.planId);
+      if (attempts < asInteger(options.maxFailedRetries, DEFAULT_MAX_FAILED_RETRIES) && policyGate.allowed && approval.ok) {
+        retryableFailed.set(plan.planId, {
+          attempts,
+          maxAttempts: asInteger(options.maxFailedRetries, DEFAULT_MAX_FAILED_RETRIES)
+        });
+      }
+    }
+
+    if (plan.status === 'blocked' && options.autoUnblockPlans) {
+      if (policyGate.allowed && approval.ok) {
+        unblockable.set(plan.planId, {
+          reason: 'Policy/approval gates now satisfied.'
+        });
+      }
+    }
+  }
+
+  return {
+    retryableFailed,
+    unblockable
+  };
 }
 
 async function setPlanStatus(planPath, status, dryRun) {
@@ -4754,18 +4898,58 @@ async function runLoop(paths, state, options, config, runMode) {
   const maxPlans = asInteger(options.maxPlans, Number.MAX_SAFE_INTEGER);
   const deferredPlanIds = new Set();
   const dependencyWaitCache = new Map();
+  const recoveryAnnounced = new Set();
 
   while (processed < maxPlans) {
     const catalog = await collectPlanCatalog(paths);
     reconcileOutcomeTracking(state, catalog);
     const completedIds = new Set(state.completedPlanIds);
-
-    const failedOrBlockedIds = new Set([
-      ...state.failedPlanIds,
-      ...state.blockedPlanIds,
-      ...deferredPlanIds
+    const recoverable = classifyRecoverablePlans(catalog.active, completedIds, state, options, config);
+    const recoverablePlanIds = new Set([
+      ...recoverable.retryableFailed.keys(),
+      ...recoverable.unblockable.keys()
     ]);
-    let executable = executablePlans(catalog.active, completedIds, failedOrBlockedIds);
+
+    for (const [planId, details] of recoverable.retryableFailed.entries()) {
+      if (recoveryAnnounced.has(`retry:${planId}`)) {
+        continue;
+      }
+      recoveryAnnounced.add(`retry:${planId}`);
+      await logEvent(paths, state, 'plan_retry_armed', {
+        planId,
+        attempts: details.attempts,
+        maxAttempts: details.maxAttempts
+      }, options.dryRun);
+      progressLog(options, `retry armed ${planId}: attempt ${details.attempts + 1}/${details.maxAttempts}`);
+    }
+    for (const [planId, details] of recoverable.unblockable.entries()) {
+      if (recoveryAnnounced.has(`unblock:${planId}`)) {
+        continue;
+      }
+      recoveryAnnounced.add(`unblock:${planId}`);
+      await logEvent(paths, state, 'plan_unblock_armed', {
+        planId,
+        reason: details.reason
+      }, options.dryRun);
+      progressLog(options, `auto-unblock armed ${planId}: ${details.reason}`);
+    }
+
+    const failedOrBlockedIds = new Set([...deferredPlanIds]);
+    for (const planId of state.failedPlanIds) {
+      if (!recoverablePlanIds.has(planId)) {
+        failedOrBlockedIds.add(planId);
+      }
+    }
+    for (const planId of state.blockedPlanIds) {
+      if (!recoverablePlanIds.has(planId)) {
+        failedOrBlockedIds.add(planId);
+      }
+    }
+
+    state.failedPlanIds = state.failedPlanIds.filter((planId) => !recoverablePlanIds.has(planId));
+    state.blockedPlanIds = state.blockedPlanIds.filter((planId) => !recoverablePlanIds.has(planId));
+
+    let executable = executablePlans(catalog.active, completedIds, failedOrBlockedIds, recoverablePlanIds);
     let blockedByDependency = blockedPlans(catalog.active, completedIds, failedOrBlockedIds);
     if (options.planId) {
       executable = executable.filter((plan) => matchesPlanIdFilter(plan, options.planId));
@@ -4800,6 +4984,9 @@ async function runLoop(paths, state, options, config, runMode) {
     }
 
     const nextPlan = executable[0];
+    if (nextPlan.status === 'failed' && recoverable.retryableFailed.has(nextPlan.planId)) {
+      registerPlanRetryAttempt(state, nextPlan.planId);
+    }
     const nextPlanRisk = computeRiskAssessment(nextPlan, state, config);
     await logEvent(paths, state, 'plan_started', {
       planId: nextPlan.planId,
@@ -4821,6 +5008,7 @@ async function runLoop(paths, state, options, config, runMode) {
 
     if (outcome.outcome === 'completed') {
       delete state.roleState[nextPlan.planId];
+      clearPlanRecoveryState(state, nextPlan.planId);
       if (!state.completedPlanIds.includes(nextPlan.planId)) {
         state.completedPlanIds.push(nextPlan.planId);
       }
@@ -4851,6 +5039,7 @@ async function runLoop(paths, state, options, config, runMode) {
       progressLog(options, `plan pending ${nextPlan.planId}: ${outcome.reason}`);
     } else {
       delete state.roleState[nextPlan.planId];
+      registerPlanFailureAttempt(state, nextPlan.planId, outcome.reason ?? 'unknown failure');
       if (!state.failedPlanIds.includes(nextPlan.planId)) {
         state.failedPlanIds.push(nextPlan.planId);
       }
@@ -4959,6 +5148,12 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asInteger(options.heartbeatSeconds, DEFAULT_HEARTBEAT_SECONDS)),
     '--stall-warn-seconds',
     String(asInteger(options.stallWarnSeconds, DEFAULT_STALL_WARN_SECONDS)),
+    '--retry-failed',
+    String(asBoolean(options.retryFailedPlans, DEFAULT_RETRY_FAILED_PLANS)),
+    '--auto-unblock',
+    String(asBoolean(options.autoUnblockPlans, DEFAULT_AUTO_UNBLOCK_PLANS)),
+    '--max-failed-retries',
+    String(asInteger(options.maxFailedRetries, DEFAULT_MAX_FAILED_RETRIES)),
     '--commit',
     String(asBoolean(options.commit, true)),
     '--allow-dirty',
@@ -5226,7 +5421,7 @@ async function runParallelCommand(paths, options) {
 
     let candidates = catalog.active
       .filter((plan) => ACTIVE_STATUSES.has(plan.status))
-      .filter((plan) => plan.status !== 'failed' && plan.status !== 'blocked' && plan.status !== 'completed')
+      .filter((plan) => plan.status !== 'completed')
       .sort((a, b) => {
         const priorityDelta = priorityOrder(a.priority) - priorityOrder(b.priority);
         if (priorityDelta !== 0) return priorityDelta;
@@ -5241,6 +5436,16 @@ async function runParallelCommand(paths, options) {
     }
 
     const completedForScheduling = new Set([...state.completedPlanIds, ...catalog.completed.map((plan) => plan.planId)]);
+    const recoverable = classifyRecoverablePlans(catalog.active, completedForScheduling, state, options, config);
+    const recoverablePlanIds = new Set([
+      ...recoverable.retryableFailed.keys(),
+      ...recoverable.unblockable.keys()
+    ]);
+    candidates = candidates.filter((plan) => (
+      plan.status !== 'failed' && plan.status !== 'blocked'
+        ? true
+        : recoverablePlanIds.has(plan.planId)
+    ));
     const pending = new Map(candidates.map((plan) => [plan.planId, plan]));
     const launched = new Set();
     const active = new Map();
