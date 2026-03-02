@@ -928,6 +928,7 @@ async function runShellMonitored(
 
   const child = spawn(command, {
     shell: true,
+    detached: process.platform !== 'win32',
     cwd,
     env,
     stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit'
@@ -1011,11 +1012,11 @@ async function runShellMonitored(
           options,
           `first-touch deadline exceeded phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} deadline=${firstTouchDeadlineSeconds}s`
         );
-        child.kill('SIGTERM');
+        signalMonitoredProcess(child, 'SIGTERM');
         if (!forceKillTimer) {
           forceKillTimer = setTimeout(() => {
-            if (pidIsAlive(child.pid)) {
-              child.kill('SIGKILL');
+            if (monitoredProcessAlive(child)) {
+              signalMonitoredProcess(child, 'SIGKILL');
             }
           }, 5000);
           forceKillTimer.unref?.();
@@ -1030,11 +1031,11 @@ async function runShellMonitored(
           options,
           `worker stall fail-fast phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(workerIdleSeconds)} threshold=${workerStallFailSeconds}s`
         );
-        child.kill('SIGTERM');
+        signalMonitoredProcess(child, 'SIGTERM');
         if (!forceKillTimer) {
           forceKillTimer = setTimeout(() => {
-            if (pidIsAlive(child.pid)) {
-              child.kill('SIGKILL');
+            if (monitoredProcessAlive(child)) {
+              signalMonitoredProcess(child, 'SIGKILL');
             }
           }, 5000);
           forceKillTimer.unref?.();
@@ -1054,10 +1055,10 @@ async function runShellMonitored(
   if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
     timeoutTimer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      signalMonitoredProcess(child, 'SIGTERM');
       forceKillTimer = setTimeout(() => {
-        if (pidIsAlive(child.pid)) {
-          child.kill('SIGKILL');
+        if (monitoredProcessAlive(child)) {
+          signalMonitoredProcess(child, 'SIGKILL');
         }
       }, 5000);
       forceKillTimer.unref?.();
@@ -1116,6 +1117,47 @@ async function runShellMonitored(
       finish(status, signal);
     });
   });
+}
+
+function signalMonitoredProcess(child, signal = 'SIGTERM') {
+  const pid = Number(child?.pid);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-pid, signal);
+      return true;
+    } catch {
+      // Fallback to direct child signal if group signal is unavailable.
+    }
+  }
+
+  try {
+    child.kill(signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function monitoredProcessAlive(child) {
+  const pid = Number(child?.pid);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      // Fall through to direct pid check.
+    }
+  }
+
+  return pidIsAlive(pid);
 }
 
 function pidIsAlive(pid) {
