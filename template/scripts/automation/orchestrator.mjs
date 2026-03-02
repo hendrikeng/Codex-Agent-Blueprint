@@ -1279,7 +1279,11 @@ function resolveParallelExecutionOptions(options, config) {
   const branchPrefix = String(configParallel.branchPrefix ?? DEFAULT_PARALLEL_BRANCH_PREFIX).trim() || DEFAULT_PARALLEL_BRANCH_PREFIX;
   const baseRef = String(configParallel.baseRef ?? DEFAULT_PARALLEL_BASE_REF).trim() || DEFAULT_PARALLEL_BASE_REF;
   const gitRemote = String(configParallel.gitRemote ?? DEFAULT_PARALLEL_GIT_REMOTE).trim() || DEFAULT_PARALLEL_GIT_REMOTE;
-  const workerOutputMode = normalizeOutputMode(configParallel.workerOutputMode ?? DEFAULT_PARALLEL_WORKER_OUTPUT, DEFAULT_PARALLEL_WORKER_OUTPUT);
+  const parentOutputMode = normalizeOutputMode(options.outputMode, DEFAULT_OUTPUT_MODE);
+  const workerOutputMode = normalizeOutputMode(
+    configParallel.workerOutputMode ?? parentOutputMode,
+    parentOutputMode
+  );
   return {
     parallelPlans,
     worktreeRoot: worktreeRoot ?? DEFAULT_PARALLEL_WORKTREE_ROOT,
@@ -5519,7 +5523,13 @@ async function runParallelWorkerPlan(plan, paths, state, options, config, parall
     };
     return result;
   } finally {
-    if (prepared && !parallelOptions.keepWorktrees) {
+    const shouldKeepForDiagnostics = Boolean(
+      prepared && !options.dryRun && (!result || result.outcome !== 'completed')
+    );
+    if (shouldKeepForDiagnostics && result) {
+      result.cleanupWarning = result.cleanupWarning ?? `worker worktree preserved for diagnostics: ${prepared.worktreeDir}`;
+    }
+    if (prepared && !parallelOptions.keepWorktrees && !shouldKeepForDiagnostics) {
       const cleanup = await cleanupParallelWorktree(paths, prepared.worktreeDir, options);
       if (!cleanup.ok) {
         if (result) {

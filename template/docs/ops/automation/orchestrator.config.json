@@ -195,7 +195,7 @@
     "branchPrefix": "orch",
     "baseRef": "HEAD",
     "gitRemote": "origin",
-    "workerOutputMode": "minimal",
+    "workerOutputMode": "pretty",
     "keepWorktrees": false,
     "pushBranches": false,
     "openPullRequests": false,
