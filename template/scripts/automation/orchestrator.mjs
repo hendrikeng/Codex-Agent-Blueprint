@@ -45,6 +45,7 @@ const DEFAULT_STALL_WARN_SECONDS = 120;
 const DEFAULT_TOUCH_SUMMARY = true;
 const DEFAULT_TOUCH_SAMPLE_SIZE = 3;
 const DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS = 180;
+const DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS = 60;
 const DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT = 1;
 const DEFAULT_WORKER_STALL_FAIL_SECONDS = 900;
 const DEFAULT_CONTACT_PACKS_ENABLED = true;
@@ -2980,13 +2981,33 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   };
 
   const executionStartedAtMs = Date.now();
+  const baseWorkerFirstTouchDeadlineSeconds = Math.max(
+    0,
+    asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)
+  );
+  const effectiveWorkerFirstTouchDeadlineSeconds =
+    role === ROLE_WORKER &&
+    workerNoTouchRetryCount > 0 &&
+    baseWorkerFirstTouchDeadlineSeconds > 0
+      ? Math.min(
+          baseWorkerFirstTouchDeadlineSeconds,
+          DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS
+        )
+      : baseWorkerFirstTouchDeadlineSeconds;
+  const sessionExecutionOptions =
+    effectiveWorkerFirstTouchDeadlineSeconds === baseWorkerFirstTouchDeadlineSeconds
+      ? options
+      : {
+          ...options,
+          workerFirstTouchDeadlineSeconds: effectiveWorkerFirstTouchDeadlineSeconds
+        };
   const execution = await runShellMonitored(
     renderedCommand,
     paths.rootDir,
     env,
     options.executorTimeoutMs,
     captureOutput ? 'pipe' : 'inherit',
-    options,
+    sessionExecutionOptions,
     {
       phase: 'session',
       planId: plan.planId,
@@ -3043,10 +3064,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   }
 
   if (didFirstTouchDeadlineTimeout(execution)) {
-    const deadlineSeconds = Math.max(
-      0,
-      asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)
-    );
+    const deadlineSeconds = effectiveWorkerFirstTouchDeadlineSeconds;
     return withSessionTouchSummary({
       status: 'pending',
       reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without source/tests edits.`,
