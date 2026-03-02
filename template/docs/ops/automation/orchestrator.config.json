@@ -2,7 +2,7 @@
   "executor": {
     "command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --role {role} --effective-risk-tier {effective_risk_tier} --declared-risk-tier {declared_risk_tier} --stage-index {stage_index} --stage-total {stage_total} --result-path {result_path}",
     "provider": "codex",
-    "promptTemplate": "Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Primary runtime policy reference: {runtime_context_file}. Role instructions: {role_instructions}. Focus edits on {plan_file}, {plan_evidence_file}, and {plan_evidence_index_file}; avoid scanning unrelated docs unless required for this role stage. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Avoid redundant validation reruns: do not repeat the same verification command in consecutive sessions unless relevant files changed or the last run failed. Do not run host-bound validations directly in this executor session (infra/bootstrap, DB migrations, Playwright/E2E/browser tests); treat them as validation.hostRequired work and leave execution to the host-validation lane. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Use status pending (not blocked) only when the same role needs another session in this run. For planner/explorer/reviewer role stages, return status completed once role-scoped objectives are done, even when the overall plan stays in-progress for later roles. Reserve blocked for external/manual gates orchestration cannot progress automatically. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. Do not wait for host-required validations to run inside this executor session. If implementation acceptance criteria are complete and the plan is ready for orchestration validation lanes, set top-level Status: completed to trigger validation; otherwise keep top-level Status: in-progress and list remaining implementation work.",
+    "promptTemplate": "Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Primary runtime policy reference: {runtime_context_file}. Role instructions: {role_instructions}. Focus edits on {plan_file}, {plan_evidence_file}, and {plan_evidence_index_file}; avoid scanning unrelated docs unless required for this role stage. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Avoid redundant validation reruns: do not repeat the same verification command in consecutive sessions unless relevant files changed or the last run failed. Do not run host-bound validations directly in this executor session (infra/bootstrap, DB migrations, Playwright/E2E/browser tests); treat them as validation.hostRequired work and leave execution to the host-validation lane. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Use status pending (not blocked) only when the same role needs another session in this run after concrete progress. For worker role sessions, do not defer implementation to planner/explorer; if no external blocker exists, apply at least one concrete repository edit before returning pending. For planner/explorer/reviewer role stages, return status completed once role-scoped objectives are done, even when the overall plan stays in-progress for later roles. Planner/explorer must record concrete next implementation steps directly in plan/evidence docs before returning completed. Reserve blocked for external/manual gates orchestration cannot progress automatically. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. Do not wait for host-required validations to run inside this executor session. If implementation acceptance criteria are complete and the plan is ready for orchestration validation lanes, set top-level Status: completed to trigger validation; otherwise keep top-level Status: in-progress and list remaining implementation work.",
     "providers": {
       "codex": {
         "command": "codex exec --full-auto -c model_reasoning_effort={role_reasoning_effort} -m {role_model} {prompt}"
@@ -72,7 +72,7 @@
         "model": "gpt-5.3-codex-spark",
         "reasoningEffort": "medium",
         "sandboxMode": "read-only",
-        "instructions": "You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. You may update active plan/evidence docs for this stage, but do not modify product/source code."
+        "instructions": "You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. You may update active plan/evidence docs for this stage, but do not modify product/source code. Record concrete implementation-ready findings in plan/evidence docs before finishing."
       },
       "reviewer": {
         "model": "gpt-5.3-codex",
@@ -84,13 +84,13 @@
         "model": "gpt-5.3-codex",
         "reasoningEffort": "high",
         "sandboxMode": "full-access",
-        "instructions": "You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns."
+        "instructions": "You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Do not defer implementation work back to planner/explorer when a concrete edit can be made now."
       },
       "planner": {
         "model": "gpt-5.3-codex",
         "reasoningEffort": "high",
         "sandboxMode": "read-only",
-        "instructions": "You are an architect agent. Break down tasks into implementation steps, identify dependencies/risks, and output a structured execution plan. Avoid running full repository validation commands in this stage."
+        "instructions": "You are an architect agent. Break down tasks into implementation steps, identify dependencies/risks, and output a structured execution plan. Update plan/evidence docs with concrete next-step checklists, and avoid modifying product/source code or running full repository validation commands in this stage."
       }
     },
     "pipelines": {
@@ -189,7 +189,8 @@
     "heartbeatSeconds": 12,
     "stallWarnSeconds": 120,
     "touchSummary": true,
-    "touchSampleSize": 3
+    "touchSampleSize": 3,
+    "workerFirstTouchDeadlineSeconds": 180
   },
   "parallel": {
     "maxPlans": 1,

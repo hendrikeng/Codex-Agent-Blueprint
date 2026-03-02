@@ -100,7 +100,7 @@ Use the manual path when any of these are true:
   - `"requireResultPayload": true`
   - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/agent-runtime-context.md` by default).
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
-  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, and `"logging.touchSampleSize": 3` tune operator-facing output noise, liveness, and live file-touch visibility.
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, and `"logging.workerFirstTouchDeadlineSeconds": 180` tune operator-facing output noise, liveness, live file-touch visibility, and worker no-progress fail-fast behavior (`0` disables).
   - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 3` control automatic retry/unblock behavior for resumable plans.
   - `"parallel.maxPlans"` sets default worker concurrency for `run --parallel-plans`.
   - `"parallel.worktreeRoot"`, `"parallel.branchPrefix"`, `"parallel.baseRef"`, `"parallel.gitRemote"` configure branch/worktree strategy.
@@ -166,7 +166,7 @@ Use the manual path when any of these are true:
   - File-touch detail lines (`file activity ...`) emit category counts and representative file samples when touched-file sets change.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
-  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, and `logging.touchSampleSize` tune heartbeat cadence, stall-warning threshold, and file-touch detail level (override via CLI flags).
+  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, `logging.touchSampleSize`, and `logging.workerFirstTouchDeadlineSeconds` tune heartbeat cadence, stall-warning threshold, file-touch detail level, and worker first-edit deadline fail-fast (`--worker-first-touch-deadline-seconds`).
 - Drift guardrail:
   - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default, runtime-context and stage-reuse policy).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
@@ -275,6 +275,8 @@ Executor commands should use these outcomes:
 - Blocked plans are automatically re-queued on `resume` when their blocking gates are now satisfied (for example, approvals provided).
 - `pending` keeps work in the active implementation role instead of auto-advancing the full pipeline; reviewer `pending` routes back to worker for fixes.
 - Planner/explorer `pending` with implementation-handoff reasons (for example, read-only constraints or implementation still pending) auto-advances to the next stage to avoid no-op loops.
+- Planner/explorer/reviewer sessions are restricted to execution plan/evidence docs (`docs/exec-plans/**`); touching other paths fails fast as a policy violation.
+- Worker `pending` without any touched files now fails fast in-run to prevent repeated no-progress implementation loops.
 - Repeated identical `pending` signals for the same role fail fast in-run so orchestration does not spin on no-progress loops.
 - `blocked` / `failed` / `pending` outcomes print concrete `next steps` guidance with a ready-to-run `automation:resume` command.
 - `blocked` remains reserved for external/manual gates; `failed` remains a validation/execution failure signal.

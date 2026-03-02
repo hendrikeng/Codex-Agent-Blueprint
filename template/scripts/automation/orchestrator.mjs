@@ -42,6 +42,7 @@ const DEFAULT_HEARTBEAT_SECONDS = 12;
 const DEFAULT_STALL_WARN_SECONDS = 120;
 const DEFAULT_TOUCH_SUMMARY = true;
 const DEFAULT_TOUCH_SAMPLE_SIZE = 3;
+const DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS = 180;
 const DEFAULT_RETRY_FAILED_PLANS = true;
 const DEFAULT_AUTO_UNBLOCK_PLANS = true;
 const DEFAULT_MAX_FAILED_RETRIES = 3;
@@ -156,6 +157,7 @@ Options:
   --stall-warn-seconds <n>           Warn when no command output for this many seconds (default: 120)
   --touch-summary true|false         Show live touched-file summary in heartbeats (default: true)
   --touch-sample-size <n>            Number of touched-file examples in heartbeat details (default: 3)
+  --worker-first-touch-deadline-seconds <n> Fail-fast worker sessions that make no edits after n seconds (default: 180, 0 disables)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
   --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
   --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 3)
@@ -675,6 +677,10 @@ function didTimeout(result) {
   return result?.error?.code === 'ETIMEDOUT';
 }
 
+function didFirstTouchDeadlineTimeout(result) {
+  return result?.error?.code === 'ENO_TOUCH_DEADLINE';
+}
+
 function roleActivity(role) {
   const normalized = normalizeRoleName(role, ROLE_WORKER);
   if (normalized === ROLE_PLANNER) return 'planning';
@@ -828,6 +834,19 @@ function monitorTouchedPaths(cwd, baselineSet, options = {}) {
   };
 }
 
+function disallowedTouchedPathsForRole(role, touchedPaths = []) {
+  const normalizedRole = normalizeRoleName(role, ROLE_WORKER);
+  if (normalizedRole === ROLE_WORKER) {
+    return [];
+  }
+  const normalized = [...new Set(
+    (Array.isArray(touchedPaths) ? touchedPaths : [])
+      .map((entry) => toPosix(String(entry ?? '').trim()).replace(/^\.?\//, ''))
+      .filter(Boolean)
+  )];
+  return normalized.filter((filePath) => !filePath.startsWith('docs/exec-plans/'));
+}
+
 async function runShellMonitored(
   command,
   cwd,
@@ -843,6 +862,7 @@ async function runShellMonitored(
   let stdout = '';
   let stderr = '';
   let timedOut = false;
+  let firstTouchDeadlineTimedOut = false;
   let processError = null;
   let settled = false;
   let warnEmitted = false;
@@ -854,6 +874,16 @@ async function runShellMonitored(
   let touchSummary = null;
   let lastTouchChangeAtMs = startedAtMs;
   let lastTouchFingerprint = null;
+  const firstTouchDeadlineSeconds = Math.max(
+    0,
+    asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)
+  );
+  const enforceFirstTouchDeadline =
+    touchBaseline != null &&
+    String(context.phase ?? '').trim().toLowerCase() === 'session' &&
+    normalizeRoleName(context.role, ROLE_WORKER) === ROLE_WORKER &&
+    firstTouchDeadlineSeconds > 0;
+  const firstTouchDeadlineMs = enforceFirstTouchDeadline ? firstTouchDeadlineSeconds * 1000 : 0;
 
   const child = spawn(command, {
     shell: true,
@@ -922,6 +952,29 @@ async function runShellMonitored(
         `stall warning phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`
       );
     }
+
+    if (enforceFirstTouchDeadline && !firstTouchDeadlineTimedOut) {
+      const touchedCount =
+        typeof touchSummary?.count === 'number' && Number.isFinite(touchSummary.count)
+          ? touchSummary.count
+          : 0;
+      if (touchedCount <= 0 && nowMs - startedAtMs >= firstTouchDeadlineMs) {
+        firstTouchDeadlineTimedOut = true;
+        progressLog(
+          options,
+          `first-touch deadline exceeded phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} deadline=${firstTouchDeadlineSeconds}s`
+        );
+        child.kill('SIGTERM');
+        if (!forceKillTimer) {
+          forceKillTimer = setTimeout(() => {
+            if (pidIsAlive(child.pid)) {
+              child.kill('SIGKILL');
+            }
+          }, 5000);
+          forceKillTimer.unref?.();
+        }
+      }
+    }
   };
 
   if (heartbeatEnabled) {
@@ -969,12 +1022,16 @@ async function runShellMonitored(
       }
       settled = true;
       cleanupTimers();
+      const finalTouchSummary = touchBaseline
+        ? (monitorTouchedPaths(cwd, touchBaseline, { touchSampleSize }) ?? touchSummary)
+        : touchSummary;
       resolve({
         status,
         signal,
-        error: timedOut ? { code: 'ETIMEDOUT' } : processError,
+        error: firstTouchDeadlineTimedOut ? { code: 'ENO_TOUCH_DEADLINE' } : timedOut ? { code: 'ETIMEDOUT' } : processError,
         stdout,
-        stderr
+        stderr,
+        touchSummary: finalTouchSummary ?? null
       });
     };
 
@@ -1049,7 +1106,7 @@ async function loadConfig(paths) {
           reasoningEffort: 'medium',
           sandboxMode: 'read-only',
           instructions:
-            'You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. You may update active plan/evidence docs for this stage, but do not modify product/source code.'
+            'You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. You may update active plan/evidence docs for this stage, but do not modify product/source code. Record concrete implementation-ready findings in plan/evidence docs before finishing.'
         },
         reviewer: {
           model: 'gpt-5.3-codex',
@@ -1063,14 +1120,14 @@ async function loadConfig(paths) {
           reasoningEffort: 'high',
           sandboxMode: 'full-access',
           instructions:
-            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns.'
+            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Do not defer implementation work back to planner/explorer when a concrete edit can be made now.'
         },
         planner: {
           model: 'gpt-5.3-codex',
           reasoningEffort: 'high',
           sandboxMode: 'read-only',
           instructions:
-            'You are an architect agent. Break down tasks into implementation steps, identify dependencies/risks, and output a structured execution plan.'
+            'You are an architect agent. Break down tasks into implementation steps, identify dependencies/risks, and output a structured execution plan. Update plan/evidence docs with concrete next-step checklists, and avoid modifying product/source code.'
         }
       },
       pipelines: {
@@ -1108,7 +1165,8 @@ async function loadConfig(paths) {
       heartbeatSeconds: DEFAULT_HEARTBEAT_SECONDS,
       stallWarnSeconds: DEFAULT_STALL_WARN_SECONDS,
       touchSummary: DEFAULT_TOUCH_SUMMARY,
-      touchSampleSize: DEFAULT_TOUCH_SAMPLE_SIZE
+      touchSampleSize: DEFAULT_TOUCH_SAMPLE_SIZE,
+      workerFirstTouchDeadlineSeconds: DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS
     },
     parallel: {
       maxPlans: DEFAULT_PARALLEL_PLANS,
@@ -1380,6 +1438,15 @@ function resolveRuntimeExecutorOptions(options, config) {
     1,
     asInteger(options.touchSampleSize ?? options['touch-sample-size'] ?? config.logging?.touchSampleSize, DEFAULT_TOUCH_SAMPLE_SIZE)
   );
+  const workerFirstTouchDeadlineSeconds = Math.max(
+    0,
+    asInteger(
+      options.workerFirstTouchDeadlineSeconds ??
+        options['worker-first-touch-deadline-seconds'] ??
+        config.logging?.workerFirstTouchDeadlineSeconds,
+      DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS
+    )
+  );
   const retryFailedPlans = asBoolean(
     options.retryFailed ?? options['retry-failed'] ?? config.recovery?.retryFailed,
     DEFAULT_RETRY_FAILED_PLANS
@@ -1411,6 +1478,7 @@ function resolveRuntimeExecutorOptions(options, config) {
     stallWarnSeconds,
     touchSummary,
     touchSampleSize,
+    workerFirstTouchDeadlineSeconds,
     retryFailedPlans,
     autoUnblockPlans,
     maxFailedRetries
@@ -2640,6 +2708,11 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     }
   );
   const commandOutput = captureOutput ? executionOutput(execution) : '';
+  const sessionTouchSummary = execution.touchSummary ?? null;
+  const withSessionTouchSummary = (result) => ({
+    ...result,
+    touchSummary: sessionTouchSummary
+  });
   if (captureOutput) {
     await writeSessionExecutorLog(
       sessionLogPathAbs,
@@ -2667,7 +2740,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
 
   if (didTimeout(execution)) {
     const reason = `Executor command timed out after ${Math.floor((options.executorTimeoutMs ?? 0) / 1000)}s`;
-    return {
+    return withSessionTouchSummary({
       status: 'failed',
       reason,
       role,
@@ -2675,12 +2748,27 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       model: roleProfile.model || null,
       sessionLogPath,
       failureTail: tailLines(commandOutput, options.failureTailLines)
-    };
+    });
+  }
+
+  if (didFirstTouchDeadlineTimeout(execution)) {
+    const deadlineSeconds = Math.max(
+      0,
+      asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)
+    );
+    return withSessionTouchSummary({
+      status: 'pending',
+      reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without repository edits.`,
+      role,
+      provider: roleProfile.provider,
+      model: roleProfile.model || null,
+      sessionLogPath
+    });
   }
 
   if (execution.signal) {
     const reason = `Executor terminated by signal ${execution.signal}`;
-    return {
+    return withSessionTouchSummary({
       status: 'failed',
       reason,
       role,
@@ -2688,11 +2776,11 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       model: roleProfile.model || null,
       sessionLogPath,
       failureTail: tailLines(commandOutput, options.failureTailLines)
-    };
+    });
   }
 
   if (execution.status === handoffExitCode) {
-    return {
+    return withSessionTouchSummary({
       status: 'handoff_required',
       reason: `Executor exited with handoff code ${handoffExitCode}`,
       role,
@@ -2700,12 +2788,12 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       model: roleProfile.model || null,
       sessionLogPath,
       failureTail: tailLines(commandOutput, options.failureTailLines)
-    };
+    });
   }
 
   if (execution.status !== 0) {
     const reason = `Executor exited with status ${execution.status}`;
-    return {
+    return withSessionTouchSummary({
       status: 'failed',
       reason,
       role,
@@ -2713,13 +2801,13 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       model: roleProfile.model || null,
       sessionLogPath,
       failureTail: tailLines(commandOutput, options.failureTailLines)
-    };
+    });
   }
 
   const resultPayload = await readJsonIfExists(resultPathAbs, null);
   if (!resultPayload) {
     if (options.requireResultPayload) {
-      return {
+      return withSessionTouchSummary({
         status: 'handoff_required',
         reason:
           'Executor exited 0 without writing ORCH_RESULT_PATH payload. Rolling over immediately to preserve context safety.',
@@ -2728,10 +2816,10 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
         model: roleProfile.model || null,
         sessionLogPath,
         failureTail: tailLines(commandOutput, options.failureTailLines)
-      };
+      });
     }
 
-    return {
+    return withSessionTouchSummary({
       status: 'completed',
       summary: 'Executor completed without result payload.',
       resultPayloadFound: false,
@@ -2739,7 +2827,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       provider: roleProfile.provider,
       model: roleProfile.model || null,
       sessionLogPath
-    };
+    });
   }
 
   const reportedStatus = String(resultPayload.status ?? 'completed').trim().toLowerCase();
@@ -2753,7 +2841,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   const contextRemaining = hasContextRemaining ? rawContextRemaining : null;
 
   if (normalizedStatus === 'completed' && options.requireResultPayload && !hasContextRemaining) {
-    return {
+    return withSessionTouchSummary({
       status: 'handoff_required',
       reason:
         'Executor payload is missing numeric contextRemaining. Rolling over immediately to avoid low-context execution.',
@@ -2761,7 +2849,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       provider: roleProfile.provider,
       model: roleProfile.model || null,
       sessionLogPath
-    };
+    });
   }
 
   if (
@@ -2769,7 +2857,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     hasContextRemaining &&
     contextRemaining <= options.contextThreshold
   ) {
-    return {
+    return withSessionTouchSummary({
       status: 'handoff_required',
       reason: `contextRemaining (${contextRemaining}) at/below threshold (${options.contextThreshold})`,
       summary: resultPayload.summary ?? '',
@@ -2777,10 +2865,10 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       provider: roleProfile.provider,
       model: roleProfile.model || null,
       sessionLogPath
-    };
+    });
   }
 
-  return {
+  return withSessionTouchSummary({
     status: normalizedStatus,
     reason: resultPayload.reason ?? null,
     summary: resultPayload.summary ?? null,
@@ -2790,7 +2878,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     provider: roleProfile.provider,
     model: roleProfile.model || null,
     sessionLogPath
-  };
+  });
 }
 
 function sectionBounds(content, sectionTitle) {
@@ -4681,7 +4769,10 @@ async function processPlan(plan, paths, state, options, config) {
       summary: sessionResult.summary ?? null,
       provider: sessionResult.provider ?? currentRoleProfile.provider,
       model: sessionResult.model ?? currentRoleProfile.model ?? null,
-      commandLogPath: sessionResult.sessionLogPath ?? null
+      commandLogPath: sessionResult.sessionLogPath ?? null,
+      touchCount: sessionResult.touchSummary?.count ?? 0,
+      touchCategories: sessionResult.touchSummary?.categories ?? [],
+      touchSamples: sessionResult.touchSummary?.samples ?? []
     }, options.dryRun);
     const contextSuffix =
       typeof sessionResult.contextRemaining === 'number' && Number.isFinite(sessionResult.contextRemaining)
@@ -4839,10 +4930,59 @@ async function processPlan(plan, paths, state, options, config) {
 
     const refreshedPlan = await readPlanRecord(paths.rootDir, plan.filePath, 'active');
     syncPlanRecord(plan, refreshedPlan);
+    const disallowedWrites = disallowedTouchedPathsForRole(currentRole, sessionResult.touchSummary?.touched ?? []);
+    if (disallowedWrites.length > 0) {
+      const violationSample = disallowedWrites.slice(0, 3).join(', ');
+      const violationReason =
+        `Role '${currentRole}' touched files outside docs/exec-plans. ` +
+        `Allowed scope is execution plan/evidence docs only. Sample: ${violationSample}`;
+      await logEvent(paths, state, 'session_policy_violation', {
+        planId: plan.planId,
+        session,
+        role: currentRole,
+        stageIndex,
+        stageTotal,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        disallowedTouchedCount: disallowedWrites.length,
+        disallowedTouchedSample: disallowedWrites.slice(0, 10),
+        reason: violationReason
+      }, options.dryRun);
+      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
+      progressLog(options, `session policy violation ${plan.planId}: ${violationReason}`);
+      return {
+        outcome: 'failed',
+        reason: violationReason,
+        riskTier: lastAssessment.effectiveRiskTier
+      };
+    }
 
     if (sessionResult.status === 'pending') {
       const pendingReason = sessionResult.reason ?? 'Executor reported pending implementation work.';
       const nextRole = resolvePendingNextRole(currentRole, roleState, roleIndex, pendingReason);
+      const pendingTouchCount =
+        typeof sessionResult.touchSummary?.count === 'number' && Number.isFinite(sessionResult.touchSummary.count)
+          ? sessionResult.touchSummary.count
+          : 0;
+      if (currentRole === ROLE_WORKER && nextRole === currentRole && pendingTouchCount <= 0) {
+        const failFastReason =
+          `Worker returned pending without touching files. ${pendingReason} ` +
+          'Apply at least one concrete repository edit before returning pending.';
+        await logEvent(paths, state, 'session_pending_fail_fast', {
+          planId: plan.planId,
+          session,
+          role: currentRole,
+          nextRole,
+          effectiveRiskTier: lastAssessment.effectiveRiskTier,
+          touchCount: pendingTouchCount,
+          reason: failFastReason
+        }, options.dryRun);
+        progressLog(options, `session fail-fast ${plan.planId}: ${failFastReason}`);
+        return {
+          outcome: 'pending',
+          reason: failFastReason,
+          riskTier: lastAssessment.effectiveRiskTier
+        };
+      }
       const signal = pendingSignalSignature(currentRole, nextRole, pendingReason);
       if (nextRole === currentRole && signal === lastPendingSignal) {
         const failFastReason = `Repeated pending signal without progress for role '${currentRole}'. ${pendingReason}`;
@@ -5600,6 +5740,8 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asBoolean(options.touchSummary, DEFAULT_TOUCH_SUMMARY)),
     '--touch-sample-size',
     String(asInteger(options.touchSampleSize, DEFAULT_TOUCH_SAMPLE_SIZE)),
+    '--worker-first-touch-deadline-seconds',
+    String(asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)),
     '--retry-failed',
     String(asBoolean(options.retryFailedPlans, DEFAULT_RETRY_FAILED_PLANS)),
     '--auto-unblock',
@@ -6500,7 +6642,9 @@ async function main() {
     heartbeatSeconds: rawOptions['heartbeat-seconds'] ?? rawOptions.heartbeatSeconds,
     stallWarnSeconds: rawOptions['stall-warn-seconds'] ?? rawOptions.stallWarnSeconds,
     touchSummary: rawOptions['touch-summary'] ?? rawOptions.touchSummary,
-    touchSampleSize: rawOptions['touch-sample-size'] ?? rawOptions.touchSampleSize
+    touchSampleSize: rawOptions['touch-sample-size'] ?? rawOptions.touchSampleSize,
+    workerFirstTouchDeadlineSeconds:
+      rawOptions['worker-first-touch-deadline-seconds'] ?? rawOptions.workerFirstTouchDeadlineSeconds
   };
 
   const rootDir = process.cwd();
