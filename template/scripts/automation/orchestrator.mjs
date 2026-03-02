@@ -311,6 +311,8 @@ function renderLiveStatusLine(options, message) {
 
 function classifyPrettyLevel(message) {
   const value = String(message ?? '').toLowerCase();
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.startsWith('next steps ')) return 'warn';
   if (value.includes('failed') || value.includes('error')) return 'error';
   if (value.includes('blocked') || value.includes('pending') || value.includes('downgraded')) return 'warn';
   if (value.includes('passed') || value.includes('complete') || value.includes('promoted')) return 'ok';
