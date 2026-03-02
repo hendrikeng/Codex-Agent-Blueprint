@@ -69,8 +69,16 @@ function toEventType(event) {
   return value.length > 0 ? value : 'unknown';
 }
 
+function eventDetails(event) {
+  if (event?.details && typeof event.details === 'object' && !Array.isArray(event.details)) {
+    return event.details;
+  }
+  return {};
+}
+
 function toPlanId(event) {
-  const direct = String(event?.planId ?? '').trim();
+  const details = eventDetails(event);
+  const direct = String(event?.planId ?? event?.taskId ?? details.planId ?? details.taskId ?? '').trim();
   if (direct) {
     return direct;
   }
@@ -79,7 +87,8 @@ function toPlanId(event) {
 }
 
 function toRunId(event) {
-  const direct = String(event?.runId ?? '').trim();
+  const details = eventDetails(event);
+  const direct = String(event?.runId ?? details.runId ?? '').trim();
   if (direct) {
     return direct;
   }
@@ -176,6 +185,14 @@ async function main() {
           blocked: 0,
           pending: 0,
           handoff: 0,
+          workerNoTouchRetries: 0,
+          firstWorkerEditSeconds: null,
+          stageDurationsSeconds: {
+            planner: [],
+            explorer: [],
+            worker: [],
+            reviewer: []
+          },
           validationPassed: 0,
           validationFailed: 0,
           validationBlocked: 0
@@ -183,6 +200,7 @@ async function main() {
       }
 
       const stats = planStats.get(planId);
+      const details = eventDetails(event);
       const timestampMs = timestamp ? timestamp.getTime() : null;
       if (timestampMs !== null) {
         if (stats.firstSeenMs === null || timestampMs < stats.firstSeenMs) {
@@ -217,6 +235,38 @@ async function main() {
       if (typeLower.includes('handoff') || typeLower.includes('rollover')) {
         stats.handoff += 1;
       }
+      if (typeLower === 'session_pending_no_touch_retry') {
+        stats.workerNoTouchRetries += 1;
+      }
+
+      if (typeLower === 'worker_first_edit') {
+        const firstEditSeconds = asNumber(details.secondsFromPlanStart);
+        if (firstEditSeconds != null && firstEditSeconds >= 0) {
+          stats.firstWorkerEditSeconds =
+            stats.firstWorkerEditSeconds == null
+              ? firstEditSeconds
+              : Math.min(stats.firstWorkerEditSeconds, firstEditSeconds);
+        }
+      }
+      if (typeLower === 'session_finished') {
+        const role = String(details.role ?? '').trim().toLowerCase();
+        const durationSeconds = asNumber(details.durationSeconds);
+        if (role && Array.isArray(stats.stageDurationsSeconds?.[role]) && durationSeconds != null && durationSeconds >= 0) {
+          stats.stageDurationsSeconds[role].push(durationSeconds);
+        }
+
+        const touchCount = asNumber(details.touchCount);
+        if (
+          role === 'worker' &&
+          (touchCount ?? 0) > 0 &&
+          stats.firstWorkerEditSeconds == null &&
+          stats.firstSeenMs != null &&
+          timestampMs != null &&
+          timestampMs >= stats.firstSeenMs
+        ) {
+          stats.firstWorkerEditSeconds = (timestampMs - stats.firstSeenMs) / 1000;
+        }
+      }
 
       if (typeLower.includes('validation')) {
         if (typeLower.includes('passed') || typeLower.includes('success')) {
@@ -236,9 +286,18 @@ async function main() {
   let blockedPlans = 0;
   let pendingPlans = 0;
   let handoffEvents = 0;
+  let workerNoTouchRetries = 0;
   let validationPassed = 0;
   let validationFailed = 0;
   let validationBlocked = 0;
+  const firstWorkerEditSeconds = [];
+  const handoffsPerPlan = [];
+  const stageDurationsSeconds = {
+    planner: [],
+    explorer: [],
+    worker: [],
+    reviewer: []
+  };
 
   for (const stats of planStats.values()) {
     if (stats.completed > 0) {
@@ -255,9 +314,22 @@ async function main() {
     }
 
     handoffEvents += stats.handoff;
+    handoffsPerPlan.push(stats.handoff);
+    workerNoTouchRetries += stats.workerNoTouchRetries;
     validationPassed += stats.validationPassed;
     validationFailed += stats.validationFailed;
     validationBlocked += stats.validationBlocked;
+    if (asNumber(stats.firstWorkerEditSeconds) != null) {
+      firstWorkerEditSeconds.push(stats.firstWorkerEditSeconds);
+    }
+    for (const role of Object.keys(stageDurationsSeconds)) {
+      const durations = Array.isArray(stats.stageDurationsSeconds?.[role]) ? stats.stageDurationsSeconds[role] : [];
+      for (const duration of durations) {
+        if (asNumber(duration) != null) {
+          stageDurationsSeconds[role].push(duration);
+        }
+      }
+    }
 
     if (asNumber(stats.firstSeenMs) !== null && asNumber(stats.terminalMs) !== null && stats.terminalMs >= stats.firstSeenMs) {
       leadTimesSeconds.push((stats.terminalMs - stats.firstSeenMs) / 1000);
@@ -295,6 +367,35 @@ async function main() {
         mean: round(mean(leadTimesSeconds)),
         median: round(median(leadTimesSeconds))
       },
+      speed: {
+        timeToFirstWorkerEditSeconds: {
+          sampleSize: firstWorkerEditSeconds.length,
+          mean: round(mean(firstWorkerEditSeconds)),
+          median: round(median(firstWorkerEditSeconds))
+        },
+        stageDurationsSeconds: {
+          planner: {
+            sampleSize: stageDurationsSeconds.planner.length,
+            mean: round(mean(stageDurationsSeconds.planner)),
+            median: round(median(stageDurationsSeconds.planner))
+          },
+          explorer: {
+            sampleSize: stageDurationsSeconds.explorer.length,
+            mean: round(mean(stageDurationsSeconds.explorer)),
+            median: round(median(stageDurationsSeconds.explorer))
+          },
+          worker: {
+            sampleSize: stageDurationsSeconds.worker.length,
+            mean: round(mean(stageDurationsSeconds.worker)),
+            median: round(median(stageDurationsSeconds.worker))
+          },
+          reviewer: {
+            sampleSize: stageDurationsSeconds.reviewer.length,
+            mean: round(mean(stageDurationsSeconds.reviewer)),
+            median: round(median(stageDurationsSeconds.reviewer))
+          }
+        }
+      },
       validation: {
         passed: validationPassed,
         failed: validationFailed,
@@ -305,7 +406,13 @@ async function main() {
         compactedEvents: evidenceCompacted
       },
       rework: {
-        handoffOrRolloverEvents: handoffEvents
+        handoffOrRolloverEvents: handoffEvents,
+        handoffsPerPlan: {
+          sampleSize: handoffsPerPlan.length,
+          mean: round(mean(handoffsPerPlan)),
+          median: round(median(handoffsPerPlan))
+        },
+        workerNoTouchRetries
       }
     },
     eventTypeCounts: eventTypeEntries

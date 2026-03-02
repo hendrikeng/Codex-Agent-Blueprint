@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const DEFAULT_PROMPT_TEMPLATE =
-  'Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Primary runtime policy reference: {runtime_context_file}. Role instructions: {role_instructions}. Focus edits on {plan_file}, {plan_evidence_file}, and {plan_evidence_index_file}; avoid scanning unrelated docs unless required for this role stage. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Avoid redundant validation reruns: do not repeat the same verification command in consecutive sessions unless relevant files changed or the last run failed. Do not run host-bound validations directly in this executor session (infra/bootstrap, DB migrations, Playwright/E2E/browser tests); treat them as validation.hostRequired work and leave execution to the host-validation lane. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Use status pending (not blocked) only when the same role needs another session in this run after concrete progress. For worker role sessions, do not defer implementation to planner/explorer; if no external blocker exists, apply at least one concrete repository edit before returning pending. For planner/explorer/reviewer role stages, return status completed once role-scoped objectives are done, even when the overall plan stays in-progress for later roles. Planner/explorer must record concrete next implementation steps directly in plan/evidence docs before returning completed. Reserve blocked for external/manual gates orchestration cannot progress automatically. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. Do not wait for host-required validations to run inside this executor session. If implementation acceptance criteria are complete and the plan is ready for orchestration validation lanes, set top-level Status: completed to trigger validation; otherwise keep top-level Status: in-progress and list remaining implementation work.';
+  'Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Primary task contact pack: {contact_pack_file}. Primary runtime policy reference: {runtime_context_file}. Use the contact pack first and expand scope only when a blocker requires targeted evidence. Role instructions: {role_instructions}. Focus edits on {plan_file}, {plan_evidence_file}, and {plan_evidence_index_file}; avoid scanning unrelated docs unless required for this role stage. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Avoid redundant validation reruns: do not repeat the same verification command in consecutive sessions unless relevant files changed or the last run failed. Do not run host-bound validations directly in this executor session (infra/bootstrap, DB migrations, Playwright/E2E/browser tests); treat them as validation.hostRequired work and leave execution to the host-validation lane. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Use status pending (not blocked) only when the same role needs another session in this run after concrete progress. For worker role sessions, do not defer implementation to planner/explorer; if no external blocker exists, apply at least one concrete repository edit before returning pending. For planner/explorer/reviewer role stages, return status completed once role-scoped objectives are done, even when the overall plan stays in-progress for later roles. Planner/explorer must record concrete next implementation steps directly in plan/evidence docs before returning completed. Reserve blocked for external/manual gates orchestration cannot progress automatically. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. Do not wait for host-required validations to run inside this executor session. If implementation acceptance criteria are complete and the plan is ready for orchestration validation lanes, set top-level Status: completed to trigger validation; otherwise keep top-level Status: in-progress and list remaining implementation work.';
 const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/agent-runtime-context.md';
 
 function parseArgs(argv) {
@@ -99,6 +99,12 @@ function asBoolean(value, fallback = false) {
   return fallback;
 }
 
+function asInteger(value, fallback = 0) {
+  if (value == null) return fallback;
+  const parsed = Number.parseInt(String(value).trim(), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function normalizeRoleProfile(profile = {}, defaults = {}) {
   const merged = {
     ...defaults,
@@ -160,7 +166,14 @@ async function main() {
   const declaredRiskTier = getOptionalOption(options, 'declared-risk-tier', 'low').toLowerCase();
   const stageIndex = getOptionalOption(options, 'stage-index', '1');
   const stageTotal = getOptionalOption(options, 'stage-total', '1');
+  const workerNoTouchRetryCount = Math.max(0, asInteger(process.env.ORCH_WORKER_NO_TOUCH_RETRY_COUNT, 0));
+  const workerNoTouchRetryLimit = Math.max(0, asInteger(process.env.ORCH_WORKER_NO_TOUCH_RETRY_LIMIT, 0));
   const runtimeContextFile = String(config?.context?.runtimeContextPath ?? DEFAULT_RUNTIME_CONTEXT_PATH).trim() || DEFAULT_RUNTIME_CONTEXT_PATH;
+  const contactPackFile = getOptionalOption(
+    options,
+    'contact-pack-file',
+    process.env.ORCH_CONTACT_PACK_FILE ?? runtimeContextFile
+  );
   const planEvidenceFile = toPosix(path.join('docs', 'exec-plans', 'active', 'evidence', `${planId}.md`));
   const planEvidenceIndexFile = toPosix(path.join('docs', 'exec-plans', 'evidence-index', `${planId}.md`));
 
@@ -227,13 +240,24 @@ async function main() {
     stage_index: stageIndex,
     stage_total: stageTotal,
     result_path: resultPath,
+    contact_pack_file: contactPackFile,
     runtime_context_file: runtimeContextFile,
     plan_evidence_file: planEvidenceFile,
     plan_evidence_index_file: planEvidenceIndexFile
   };
 
   const promptTemplate = String(executor.promptTemplate || DEFAULT_PROMPT_TEMPLATE).trim();
-  const prompt = renderRaw(promptTemplate, values);
+  if (!promptTemplate.includes('{contact_pack_file}')) {
+    throw new Error(
+      `Executor prompt template must include '{contact_pack_file}' in ${configPath} to enforce task-scoped context loading.`
+    );
+  }
+  const basePrompt = renderRaw(promptTemplate, values);
+  const workerRetryDirective =
+    role === 'worker' && workerNoTouchRetryCount > 0
+      ? `Worker retry directive: previous worker session returned pending with zero touched files (${workerNoTouchRetryCount}/${workerNoTouchRetryLimit || '?'}). Apply at least one concrete repository edit immediately before extended analysis. If no repository edit is possible because of an external dependency, return status blocked with the explicit external gate instead of pending.`
+      : '';
+  const prompt = workerRetryDirective ? `${basePrompt} ${workerRetryDirective}` : basePrompt;
   const command = renderShellEscaped(selectedCommandTemplate, {
     ...values,
     prompt
@@ -249,6 +273,7 @@ async function main() {
     ORCH_ROLE_REASONING_EFFORT: providerRoleProfile.reasoningEffort,
     ORCH_ROLE_SANDBOX_MODE: providerRoleProfile.sandboxMode,
     ORCH_ROLE_INSTRUCTIONS: providerRoleProfile.instructions,
+    ORCH_CONTACT_PACK_FILE: contactPackFile,
     ORCH_RUNTIME_CONTEXT_FILE: runtimeContextFile,
     ORCH_PLAN_EVIDENCE_FILE: planEvidenceFile,
     ORCH_PLAN_EVIDENCE_INDEX_FILE: planEvidenceIndexFile,

@@ -11,6 +11,7 @@ const requiredPaths = {
   wrapper: path.join(rootDir, 'scripts', 'automation', 'executor-wrapper.mjs'),
   config: path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json'),
   contextCompiler: path.join(rootDir, 'scripts', 'automation', 'compile-runtime-context.mjs'),
+  contactPackCompiler: path.join(rootDir, 'scripts', 'automation', 'compile-task-contact-pack.mjs'),
   verifyFast: path.join(rootDir, 'scripts', 'automation', 'verify-fast.mjs'),
   verifyFull: path.join(rootDir, 'scripts', 'automation', 'verify-full.mjs'),
   perfCollector: path.join(rootDir, 'scripts', 'automation', 'collect-performance-baseline.mjs'),
@@ -153,6 +154,14 @@ function ensureConfigPolicy(config, configPath) {
       rel(configPath)
     );
   }
+  const executorCommand = String(config?.executor?.command ?? '').trim();
+  if (!executorCommand.includes('{contact_pack_file}')) {
+    addFinding(
+      'MISSING_CONTACT_PACK_EXECUTOR_TOKEN',
+      "executor.command must include '{contact_pack_file}'.",
+      rel(configPath)
+    );
+  }
 
   const runtimeContextPath = String(config?.context?.runtimeContextPath ?? '').trim();
   if (!runtimeContextPath) {
@@ -168,6 +177,45 @@ function ensureConfigPolicy(config, configPath) {
     addFinding(
       'INVALID_RUNTIME_CONTEXT_MAX_TOKENS',
       'context.maxTokens must be a positive integer.',
+      rel(configPath)
+    );
+  }
+  const promptTemplate = String(config?.executor?.promptTemplate ?? '').trim();
+  if (!promptTemplate.includes('{contact_pack_file}')) {
+    addFinding(
+      'MISSING_CONTACT_PACK_PROMPT_PLACEHOLDER',
+      "executor.promptTemplate must include '{contact_pack_file}'.",
+      rel(configPath)
+    );
+  }
+  const contactPacks = config?.context?.contactPacks ?? {};
+  if (typeof contactPacks.enabled !== 'boolean') {
+    addFinding(
+      'INVALID_CONTACT_PACK_ENABLED',
+      'context.contactPacks.enabled must be a boolean.',
+      rel(configPath)
+    );
+  }
+  const maxPolicyBullets = Number.parseInt(String(contactPacks.maxPolicyBullets ?? ''), 10);
+  if (!Number.isFinite(maxPolicyBullets) || maxPolicyBullets <= 0) {
+    addFinding(
+      'INVALID_CONTACT_PACK_MAX_POLICY_BULLETS',
+      'context.contactPacks.maxPolicyBullets must be a positive integer.',
+      rel(configPath)
+    );
+  }
+  if (typeof contactPacks.includeRecentEvidence !== 'boolean') {
+    addFinding(
+      'INVALID_CONTACT_PACK_INCLUDE_RECENT_EVIDENCE',
+      'context.contactPacks.includeRecentEvidence must be a boolean.',
+      rel(configPath)
+    );
+  }
+  const maxRecentEvidenceItems = Number.parseInt(String(contactPacks.maxRecentEvidenceItems ?? ''), 10);
+  if (!Number.isFinite(maxRecentEvidenceItems) || maxRecentEvidenceItems < 0) {
+    addFinding(
+      'INVALID_CONTACT_PACK_MAX_RECENT_EVIDENCE_ITEMS',
+      'context.contactPacks.maxRecentEvidenceItems must be an integer >= 0.',
       rel(configPath)
     );
   }
@@ -288,6 +336,24 @@ function ensureConfigPolicy(config, configPath) {
       "roleOrchestration.stageReuse.roles must include 'planner' and 'explorer'.",
       rel(configPath)
     );
+  }
+  if (stageReuse.sameRunOnly !== false) {
+    addFinding(
+      'STAGE_REUSE_SAME_RUN_ONLY_MUST_BE_FALSE',
+      'roleOrchestration.stageReuse.sameRunOnly must be false to allow safe reuse across resume runs.',
+      rel(configPath)
+    );
+  }
+  const stageBudgets = config?.roleOrchestration?.stageBudgetsSeconds ?? {};
+  for (const role of ['planner', 'explorer', 'reviewer']) {
+    const value = Number.parseInt(String(stageBudgets[role] ?? ''), 10);
+    if (!Number.isFinite(value) || value <= 0) {
+      addFinding(
+        'INVALID_STAGE_BUDGET_SECONDS',
+        `roleOrchestration.stageBudgetsSeconds.${role} must be a positive integer.`,
+        rel(configPath)
+      );
+    }
   }
 }
 

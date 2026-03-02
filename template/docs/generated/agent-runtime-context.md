@@ -1,6 +1,6 @@
 # Agent Runtime Context (Generated)
 
-Generated At: 2026-03-01T20:30:02.614Z
+Generated At: 2026-03-02T12:39:02.268Z
 Primary Sources: AGENTS.md, docs/governance/policy-manifest.json, docs/ops/automation/orchestrator.config.json
 
 ## Mission

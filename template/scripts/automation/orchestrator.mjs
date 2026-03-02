@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
+import { compileTaskContactPack } from './compile-task-contact-pack.mjs';
 import {
   ACTIVE_STATUSES,
   isValidPlanId,
@@ -31,6 +32,7 @@ const DEFAULT_MAX_SESSIONS_PER_PLAN = 12;
 const DEFAULT_HANDOFF_EXIT_CODE = 75;
 const DEFAULT_REQUIRE_RESULT_PAYLOAD = true;
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = 1800;
+const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/agent-runtime-context.md';
 const DEFAULT_HOST_VALIDATION_MODE = 'hybrid';
 const DEFAULT_HOST_VALIDATION_TIMEOUT_SECONDS = 1800;
 const DEFAULT_HOST_VALIDATION_POLL_SECONDS = 15;
@@ -43,6 +45,11 @@ const DEFAULT_STALL_WARN_SECONDS = 120;
 const DEFAULT_TOUCH_SUMMARY = true;
 const DEFAULT_TOUCH_SAMPLE_SIZE = 3;
 const DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS = 180;
+const DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT = 1;
+const DEFAULT_CONTACT_PACKS_ENABLED = true;
+const DEFAULT_CONTACT_PACKS_MAX_POLICY_BULLETS = 10;
+const DEFAULT_CONTACT_PACKS_INCLUDE_RECENT_EVIDENCE = true;
+const DEFAULT_CONTACT_PACKS_MAX_RECENT_EVIDENCE_ITEMS = 6;
 const DEFAULT_RETRY_FAILED_PLANS = true;
 const DEFAULT_AUTO_UNBLOCK_PLANS = true;
 const DEFAULT_MAX_FAILED_RETRIES = 3;
@@ -75,10 +82,13 @@ const DEFAULT_RISK_WEIGHT_SENSITIVE_PATH = 2;
 const DEFAULT_RISK_WEIGHT_AUTONOMY_FULL = 1;
 const DEFAULT_RISK_WEIGHT_VALIDATION_FAILURE = 2;
 const DEFAULT_STAGE_REUSE_ENABLED = true;
-const DEFAULT_STAGE_REUSE_SAME_RUN_ONLY = true;
+const DEFAULT_STAGE_REUSE_SAME_RUN_ONLY = false;
 const DEFAULT_STAGE_REUSE_REQUIRES_STABLE_PLAN_HASH = true;
 const DEFAULT_STAGE_REUSE_REQUIRES_NO_SCOPE_CHANGE = true;
 const DEFAULT_STAGE_REUSE_MAX_AGE_MINUTES = 60;
+const DEFAULT_STAGE_BUDGET_PLANNER_SECONDS = 300;
+const DEFAULT_STAGE_BUDGET_EXPLORER_SECONDS = 300;
+const DEFAULT_STAGE_BUDGET_REVIEWER_SECONDS = 420;
 const ROLE_PLANNER = 'planner';
 const ROLE_EXPLORER = 'explorer';
 const ROLE_WORKER = 'worker';
@@ -158,6 +168,7 @@ Options:
   --touch-summary true|false         Show live touched-file summary in heartbeats (default: true)
   --touch-sample-size <n>            Number of touched-file examples in heartbeat details (default: 3)
   --worker-first-touch-deadline-seconds <n> Fail-fast worker sessions that make no edits after n seconds (default: 180, 0 disables)
+  --worker-no-touch-retry-limit <n> Retry worker pending-without-edits sessions automatically up to n times (default: 1)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
   --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
   --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 3)
@@ -580,6 +591,7 @@ function buildPaths(rootDir) {
     opsAutomationDir,
     handoffDir: path.join(opsAutomationDir, 'handoffs'),
     runtimeDir: path.join(opsAutomationDir, 'runtime'),
+    contactPackDir: path.join(opsAutomationDir, 'runtime', 'contacts'),
     parallelWorktreesDir: path.join(opsAutomationDir, 'runtime', 'worktrees'),
     runLockPath: path.join(opsAutomationDir, 'runtime', 'orchestrator.lock.json'),
     runStatePath: path.join(opsAutomationDir, 'run-state.json'),
@@ -596,6 +608,7 @@ async function ensureDirectories(paths, dryRun) {
   await fs.mkdir(paths.opsAutomationDir, { recursive: true });
   await fs.mkdir(paths.handoffDir, { recursive: true });
   await fs.mkdir(paths.runtimeDir, { recursive: true });
+  await fs.mkdir(paths.contactPackDir, { recursive: true });
   await fs.mkdir(paths.parallelWorktreesDir, { recursive: true });
   await fs.mkdir(paths.evidenceIndexDir, { recursive: true });
 }
@@ -1066,6 +1079,16 @@ async function loadConfig(paths) {
       handoffExitCode: DEFAULT_HANDOFF_EXIT_CODE,
       timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS
     },
+    context: {
+      runtimeContextPath: DEFAULT_RUNTIME_CONTEXT_PATH,
+      maxTokens: 1400,
+      contactPacks: {
+        enabled: DEFAULT_CONTACT_PACKS_ENABLED,
+        maxPolicyBullets: DEFAULT_CONTACT_PACKS_MAX_POLICY_BULLETS,
+        includeRecentEvidence: DEFAULT_CONTACT_PACKS_INCLUDE_RECENT_EVIDENCE,
+        maxRecentEvidenceItems: DEFAULT_CONTACT_PACKS_MAX_RECENT_EVIDENCE_ITEMS
+      }
+    },
     validationCommands: [],
     validation: {
       always: [],
@@ -1120,7 +1143,7 @@ async function loadConfig(paths) {
           reasoningEffort: 'high',
           sandboxMode: 'full-access',
           instructions:
-            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Do not defer implementation work back to planner/explorer when a concrete edit can be made now.'
+            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Start with a concrete repository edit as soon as feasible, then continue iteratively. Do not defer implementation work back to planner/explorer when a concrete edit can be made now.'
         },
         planner: {
           model: 'gpt-5.3-codex',
@@ -1134,6 +1157,11 @@ async function loadConfig(paths) {
         low: [ROLE_WORKER],
         medium: [ROLE_PLANNER, ROLE_WORKER, ROLE_REVIEWER],
         high: [ROLE_PLANNER, ROLE_EXPLORER, ROLE_WORKER, ROLE_REVIEWER]
+      },
+      stageBudgetsSeconds: {
+        planner: DEFAULT_STAGE_BUDGET_PLANNER_SECONDS,
+        explorer: DEFAULT_STAGE_BUDGET_EXPLORER_SECONDS,
+        reviewer: DEFAULT_STAGE_BUDGET_REVIEWER_SECONDS
       },
       riskModel: {
         thresholds: {
@@ -1166,7 +1194,8 @@ async function loadConfig(paths) {
       stallWarnSeconds: DEFAULT_STALL_WARN_SECONDS,
       touchSummary: DEFAULT_TOUCH_SUMMARY,
       touchSampleSize: DEFAULT_TOUCH_SAMPLE_SIZE,
-      workerFirstTouchDeadlineSeconds: DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS
+      workerFirstTouchDeadlineSeconds: DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS,
+      workerNoTouchRetryLimit: DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT
     },
     parallel: {
       maxPlans: DEFAULT_PARALLEL_PLANS,
@@ -1202,6 +1231,14 @@ async function loadConfig(paths) {
     executor: {
       ...defaultConfig.executor,
       ...(configured.executor ?? {})
+    },
+    context: {
+      ...defaultConfig.context,
+      ...(configured.context ?? {}),
+      contactPacks: {
+        ...defaultConfig.context.contactPacks,
+        ...(configured.context?.contactPacks ?? {})
+      }
     },
     validation: {
       ...defaultConfig.validation,
@@ -1241,6 +1278,10 @@ async function loadConfig(paths) {
       pipelines: {
         ...defaultConfig.roleOrchestration.pipelines,
         ...(configured.roleOrchestration?.pipelines ?? {})
+      },
+      stageBudgetsSeconds: {
+        ...defaultConfig.roleOrchestration.stageBudgetsSeconds,
+        ...(configured.roleOrchestration?.stageBudgetsSeconds ?? {})
       },
       riskModel: {
         ...defaultConfig.roleOrchestration.riskModel,
@@ -1447,6 +1488,32 @@ function resolveRuntimeExecutorOptions(options, config) {
       DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS
     )
   );
+  const workerNoTouchRetryLimit = Math.max(
+    0,
+    asInteger(
+      options.workerNoTouchRetryLimit ??
+        options['worker-no-touch-retry-limit'] ??
+        config.logging?.workerNoTouchRetryLimit,
+      DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT
+    )
+  );
+  const contactPacks = config.context?.contactPacks ?? {};
+  const contactPackEnabled = asBoolean(
+    contactPacks.enabled,
+    DEFAULT_CONTACT_PACKS_ENABLED
+  );
+  const contactPackMaxPolicyBullets = Math.max(
+    1,
+    asInteger(contactPacks.maxPolicyBullets, DEFAULT_CONTACT_PACKS_MAX_POLICY_BULLETS)
+  );
+  const contactPackIncludeRecentEvidence = asBoolean(
+    contactPacks.includeRecentEvidence,
+    DEFAULT_CONTACT_PACKS_INCLUDE_RECENT_EVIDENCE
+  );
+  const contactPackMaxRecentEvidenceItems = Math.max(
+    0,
+    asInteger(contactPacks.maxRecentEvidenceItems, DEFAULT_CONTACT_PACKS_MAX_RECENT_EVIDENCE_ITEMS)
+  );
   const retryFailedPlans = asBoolean(
     options.retryFailed ?? options['retry-failed'] ?? config.recovery?.retryFailed,
     DEFAULT_RETRY_FAILED_PLANS
@@ -1479,6 +1546,11 @@ function resolveRuntimeExecutorOptions(options, config) {
     touchSummary,
     touchSampleSize,
     workerFirstTouchDeadlineSeconds,
+    workerNoTouchRetryLimit,
+    contactPackEnabled,
+    contactPackMaxPolicyBullets,
+    contactPackIncludeRecentEvidence,
+    contactPackMaxRecentEvidenceItems,
     retryFailedPlans,
     autoUnblockPlans,
     maxFailedRetries
@@ -1578,6 +1650,7 @@ function resolveRoleOrchestration(config) {
   const thresholds = riskModel.thresholds ?? {};
   const weights = riskModel.weights ?? {};
   const stageReuseSource = source.stageReuse ?? {};
+  const stageBudgetsSource = source.stageBudgetsSeconds ?? {};
   const stageReuseRoles = Array.isArray(stageReuseSource.roles)
     ? stageReuseSource.roles
       .map((entry) => normalizeRoleName(entry, ''))
@@ -1590,6 +1663,11 @@ function resolveRoleOrchestration(config) {
       low: normalizeRolePipeline(source.pipelines?.low, [ROLE_WORKER]),
       medium: normalizeRolePipeline(source.pipelines?.medium, [ROLE_PLANNER, ROLE_WORKER, ROLE_REVIEWER]),
       high: normalizeRolePipeline(source.pipelines?.high, [ROLE_PLANNER, ROLE_EXPLORER, ROLE_WORKER, ROLE_REVIEWER])
+    },
+    stageBudgetsSeconds: {
+      planner: Math.max(0, asInteger(stageBudgetsSource.planner, DEFAULT_STAGE_BUDGET_PLANNER_SECONDS)),
+      explorer: Math.max(0, asInteger(stageBudgetsSource.explorer, DEFAULT_STAGE_BUDGET_EXPLORER_SECONDS)),
+      reviewer: Math.max(0, asInteger(stageBudgetsSource.reviewer, DEFAULT_STAGE_BUDGET_REVIEWER_SECONDS))
     },
     stageReuse: {
       enabled: asBoolean(stageReuseSource.enabled, DEFAULT_STAGE_REUSE_ENABLED),
@@ -2574,6 +2652,7 @@ function replaceExecutorTokens(command, plan, sessionContext) {
     runId,
     mode,
     resultPath,
+    contactPackFile = DEFAULT_RUNTIME_CONTEXT_PATH,
     role = ROLE_WORKER,
     effectiveRiskTier = 'low',
     declaredRiskTier = 'low',
@@ -2591,7 +2670,63 @@ function replaceExecutorTokens(command, plan, sessionContext) {
     .replaceAll('{declared_risk_tier}', declaredRiskTier)
     .replaceAll('{stage_index}', String(stageIndex))
     .replaceAll('{stage_total}', String(stageTotal))
-    .replaceAll('{result_path}', resultPath);
+    .replaceAll('{result_path}', resultPath)
+    .replaceAll('{contact_pack_file}', contactPackFile);
+}
+
+async function prepareTaskContactPack(plan, paths, state, options, config, sessionContext) {
+  const runtimeContextPath =
+    String(config?.context?.runtimeContextPath ?? DEFAULT_RUNTIME_CONTEXT_PATH).trim() ||
+    DEFAULT_RUNTIME_CONTEXT_PATH;
+  const role = normalizeRoleName(sessionContext.role, ROLE_WORKER);
+  const contactPackEnabled = asBoolean(options.contactPackEnabled, DEFAULT_CONTACT_PACKS_ENABLED);
+  if (!contactPackEnabled) {
+    return {
+      enabled: false,
+      contactPackFile: toPosix(runtimeContextPath),
+      generated: false,
+      reason: 'contact packs disabled by configuration'
+    };
+  }
+
+  const contactPackRel = toPosix(
+    path.join('docs', 'ops', 'automation', 'runtime', 'contacts', state.runId, plan.planId, `${role}.md`)
+  );
+
+  if (options.dryRun) {
+    return {
+      enabled: true,
+      contactPackFile: contactPackRel,
+      generated: false,
+      reason: 'dry-run'
+    };
+  }
+
+  const result = await compileTaskContactPack({
+    rootDir: paths.rootDir,
+    planId: plan.planId,
+    planFile: plan.rel,
+    role,
+    declaredRiskTier: sessionContext.declaredRiskTier,
+    effectiveRiskTier: sessionContext.effectiveRiskTier,
+    stageIndex: sessionContext.stageIndex,
+    stageTotal: sessionContext.stageTotal,
+    outputPath: contactPackRel,
+    configPath: toPosix(path.relative(paths.rootDir, paths.orchestratorConfigPath)),
+    maxPolicyBullets: options.contactPackMaxPolicyBullets,
+    includeRecentEvidence: options.contactPackIncludeRecentEvidence,
+    maxRecentEvidenceItems: options.contactPackMaxRecentEvidenceItems
+  });
+
+  return {
+    enabled: true,
+    contactPackFile: result.outputPath,
+    generated: true,
+    bytes: result.bytes,
+    lineCount: result.lineCount,
+    policyRuleCount: result.policyRuleCount,
+    evidenceCount: result.evidenceCount
+  };
 }
 
 async function writeSessionExecutorLog(logPathAbs, metadataLines, outputText, dryRun) {
@@ -2612,6 +2747,14 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   const declaredRiskTier = parseRiskTier(sessionContext.declaredRiskTier, 'low');
   const stageIndex = asInteger(sessionContext.stageIndex, 1);
   const stageTotal = asInteger(sessionContext.stageTotal, 1);
+  const workerNoTouchRetryCount = Math.max(0, asInteger(sessionContext.workerNoTouchRetryCount, 0));
+  const workerNoTouchRetryLimit = Math.max(
+    0,
+    asInteger(
+      sessionContext.workerNoTouchRetryLimit,
+      asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)
+    )
+  );
   const runSessionDir = path.join(paths.runtimeDir, state.runId);
   const resultPathAbs = path.join(runSessionDir, `${plan.planId}-${role}-session-${sessionNumber}.result.json`);
   const resultPathRel = toPosix(path.relative(paths.rootDir, resultPathAbs));
@@ -2630,6 +2773,27 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     };
   }
 
+  let contactPack = null;
+  try {
+    contactPack = await prepareTaskContactPack(plan, paths, state, options, config, {
+      role,
+      declaredRiskTier,
+      effectiveRiskTier,
+      stageIndex,
+      stageTotal
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      status: 'failed',
+      reason: `Failed to prepare task contact pack: ${reason}`,
+      role,
+      provider: roleProfile.provider,
+      model: roleProfile.model || null
+    };
+  }
+  const contactPackFile = String(contactPack?.contactPackFile ?? DEFAULT_RUNTIME_CONTEXT_PATH).trim() || DEFAULT_RUNTIME_CONTEXT_PATH;
+
   const renderedCommand = replaceExecutorTokens(
     configuredExecutor,
     plan,
@@ -2642,7 +2806,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       effectiveRiskTier,
       declaredRiskTier,
       stageIndex,
-      stageTotal
+      stageTotal,
+      contactPackFile
     }
   );
   const captureOutput = shouldCaptureCommandOutput(options);
@@ -2660,6 +2825,11 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     declaredRiskTier,
     stageIndex,
     stageTotal,
+    contactPackFile,
+    contactPackEnabled: contactPack?.enabled ?? false,
+    contactPackGenerated: contactPack?.generated ?? false,
+    contactPackPolicyRuleCount: contactPack?.policyRuleCount ?? 0,
+    contactPackEvidenceCount: contactPack?.evidenceCount ?? 0,
     executorCommandConfigured: true,
     commandLogPath: sessionLogPath
   }, options.dryRun);
@@ -2672,7 +2842,9 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       role,
       provider: roleProfile.provider,
       model: roleProfile.model || null,
-      sessionLogPath
+      sessionLogPath,
+      contactPackFile,
+      durationSeconds: 0
     };
   }
 
@@ -2689,10 +2861,14 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     ORCH_STAGE_TOTAL: String(stageTotal),
     ORCH_MODE: state.effectiveMode,
     ORCH_RESULT_PATH: resultPathRel,
+    ORCH_CONTACT_PACK_FILE: contactPackFile,
     ORCH_CONTEXT_THRESHOLD: String(options.contextThreshold),
-    ORCH_HANDOFF_TOKEN_BUDGET: String(options.handoffTokenBudget)
+    ORCH_HANDOFF_TOKEN_BUDGET: String(options.handoffTokenBudget),
+    ORCH_WORKER_NO_TOUCH_RETRY_COUNT: String(workerNoTouchRetryCount),
+    ORCH_WORKER_NO_TOUCH_RETRY_LIMIT: String(workerNoTouchRetryLimit)
   };
 
+  const executionStartedAtMs = Date.now();
   const execution = await runShellMonitored(
     renderedCommand,
     paths.rootDir,
@@ -2708,10 +2884,13 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     }
   );
   const commandOutput = captureOutput ? executionOutput(execution) : '';
+  const durationSeconds = Math.max(0, (Date.now() - executionStartedAtMs) / 1000);
   const sessionTouchSummary = execution.touchSummary ?? null;
   const withSessionTouchSummary = (result) => ({
     ...result,
-    touchSummary: sessionTouchSummary
+    touchSummary: sessionTouchSummary,
+    contactPackFile,
+    durationSeconds
   });
   if (captureOutput) {
     await writeSessionExecutorLog(
@@ -2730,7 +2909,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
         `- Reasoning-Effort: ${roleProfile.reasoningEffort}`,
         `- Sandbox-Mode: ${roleProfile.sandboxMode}`,
         `- Effective-Risk-Tier: ${effectiveRiskTier}`,
-        `- Declared-Risk-Tier: ${declaredRiskTier}`
+        `- Declared-Risk-Tier: ${declaredRiskTier}`,
+        `- Contact-Pack: ${contactPackFile}`
       ],
       commandOutput,
       options.dryRun
@@ -4697,9 +4877,13 @@ async function processPlan(plan, paths, state, options, config) {
 
   const maxRollovers = asInteger(options.maxRollovers, DEFAULT_MAX_ROLLOVERS);
   const maxSessionsPerPlan = asInteger(options.maxSessionsPerPlan, DEFAULT_MAX_SESSIONS_PER_PLAN);
+  const roleConfig = resolveRoleOrchestration(config);
   const planStartedAt = nowIso();
+  const planStartedAtMs = Date.now();
+  let firstWorkerEditSeconds = null;
   let rollovers = 0;
   let lastPendingSignal = null;
+  let workerNoTouchRetryCount = 0;
   let roleState = ensureRoleState(state, plan, lastAssessment, resolvePipelineStages(lastAssessment, config), config);
   await announceStageReuse(paths, state, plan, roleState, options);
 
@@ -4752,7 +4936,9 @@ async function processPlan(plan, paths, state, options, config) {
       effectiveRiskTier: lastAssessment.effectiveRiskTier,
       declaredRiskTier: lastAssessment.declaredRiskTier,
       stageIndex,
-      stageTotal
+      stageTotal,
+      workerNoTouchRetryCount: currentRole === ROLE_WORKER ? workerNoTouchRetryCount : 0,
+      workerNoTouchRetryLimit: asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)
     });
     await logEvent(paths, state, 'session_finished', {
       planId: plan.planId,
@@ -4770,10 +4956,30 @@ async function processPlan(plan, paths, state, options, config) {
       provider: sessionResult.provider ?? currentRoleProfile.provider,
       model: sessionResult.model ?? currentRoleProfile.model ?? null,
       commandLogPath: sessionResult.sessionLogPath ?? null,
+      contactPackFile: sessionResult.contactPackFile ?? null,
+      durationSeconds:
+        typeof sessionResult.durationSeconds === 'number' && Number.isFinite(sessionResult.durationSeconds)
+          ? Math.round(sessionResult.durationSeconds * 100) / 100
+          : null,
       touchCount: sessionResult.touchSummary?.count ?? 0,
       touchCategories: sessionResult.touchSummary?.categories ?? [],
       touchSamples: sessionResult.touchSummary?.samples ?? []
     }, options.dryRun);
+    const workerTouchCount =
+      typeof sessionResult.touchSummary?.count === 'number' && Number.isFinite(sessionResult.touchSummary.count)
+        ? sessionResult.touchSummary.count
+        : 0;
+    if (currentRole === ROLE_WORKER && workerTouchCount > 0 && firstWorkerEditSeconds == null) {
+      firstWorkerEditSeconds = Math.max(0, (Date.now() - planStartedAtMs) / 1000);
+      await logEvent(paths, state, 'worker_first_edit', {
+        planId: plan.planId,
+        session,
+        role: currentRole,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        secondsFromPlanStart: Math.round(firstWorkerEditSeconds * 100) / 100,
+        touchCount: workerTouchCount
+      }, options.dryRun);
+    }
     const contextSuffix =
       typeof sessionResult.contextRemaining === 'number' && Number.isFinite(sessionResult.contextRemaining)
         ? ` contextRemaining=${sessionResult.contextRemaining}`
@@ -4963,9 +5169,79 @@ async function processPlan(plan, paths, state, options, config) {
         typeof sessionResult.touchSummary?.count === 'number' && Number.isFinite(sessionResult.touchSummary.count)
           ? sessionResult.touchSummary.count
           : 0;
+      const stageBudgetSeconds = Math.max(
+        0,
+        asInteger(roleConfig.stageBudgetsSeconds?.[currentRole], 0)
+      );
+      const sessionDurationSeconds =
+        typeof sessionResult.durationSeconds === 'number' && Number.isFinite(sessionResult.durationSeconds)
+          ? sessionResult.durationSeconds
+          : 0;
+      if (
+        currentRole !== ROLE_WORKER &&
+        nextRole === currentRole &&
+        stageBudgetSeconds > 0 &&
+        pendingTouchCount <= 0 &&
+        sessionDurationSeconds > stageBudgetSeconds
+      ) {
+        const budgetReason =
+          `Role '${currentRole}' exceeded stage budget (${Math.round(sessionDurationSeconds)}s > ${stageBudgetSeconds}s) ` +
+          `without meaningful progress. ${pendingReason}`;
+        await logEvent(paths, state, 'session_stage_budget_exceeded', {
+          planId: plan.planId,
+          session,
+          role: currentRole,
+          nextRole,
+          effectiveRiskTier: lastAssessment.effectiveRiskTier,
+          durationSeconds: Math.round(sessionDurationSeconds * 100) / 100,
+          stageBudgetSeconds,
+          touchCount: pendingTouchCount,
+          reason: budgetReason
+        }, options.dryRun);
+        progressLog(options, `session stage-budget fail-fast ${plan.planId}: ${budgetReason}`);
+        return {
+          outcome: 'pending',
+          reason: budgetReason,
+          riskTier: lastAssessment.effectiveRiskTier
+        };
+      }
+      const workerNoTouchRetryLimit = Math.max(
+        0,
+        asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)
+      );
+      if (
+        currentRole === ROLE_WORKER &&
+        nextRole === currentRole &&
+        pendingTouchCount <= 0 &&
+        workerNoTouchRetryCount < workerNoTouchRetryLimit &&
+        session < maxSessionsPerPlan
+      ) {
+        workerNoTouchRetryCount += 1;
+        const retryReason =
+          `Worker returned pending without touching files; retrying worker with edit-first directive ` +
+          `(${workerNoTouchRetryCount}/${workerNoTouchRetryLimit}). ${pendingReason}`;
+        await logEvent(paths, state, 'session_pending_no_touch_retry', {
+          planId: plan.planId,
+          session,
+          role: currentRole,
+          nextRole,
+          effectiveRiskTier: lastAssessment.effectiveRiskTier,
+          touchCount: pendingTouchCount,
+          retryAttempt: workerNoTouchRetryCount,
+          retryLimit: workerNoTouchRetryLimit,
+          reason: retryReason
+        }, options.dryRun);
+        progressLog(options, `session retry ${plan.planId}: ${retryReason}`);
+        lastPendingSignal = null;
+        continue;
+      }
       if (currentRole === ROLE_WORKER && nextRole === currentRole && pendingTouchCount <= 0) {
+        const retrySummary =
+          workerNoTouchRetryLimit > 0
+            ? `after ${workerNoTouchRetryCount}/${workerNoTouchRetryLimit} no-touch retries`
+            : 'with no-touch retries disabled';
         const failFastReason =
-          `Worker returned pending without touching files. ${pendingReason} ` +
+          `Worker returned pending without touching files ${retrySummary}. ${pendingReason} ` +
           'Apply at least one concrete repository edit before returning pending.';
         await logEvent(paths, state, 'session_pending_fail_fast', {
           planId: plan.planId,
@@ -4982,6 +5258,11 @@ async function processPlan(plan, paths, state, options, config) {
           reason: failFastReason,
           riskTier: lastAssessment.effectiveRiskTier
         };
+      }
+      if (currentRole === ROLE_WORKER && pendingTouchCount > 0) {
+        workerNoTouchRetryCount = 0;
+      } else if (currentRole !== ROLE_WORKER) {
+        workerNoTouchRetryCount = 0;
       }
       const signal = pendingSignalSignature(currentRole, nextRole, pendingReason);
       if (nextRole === currentRole && signal === lastPendingSignal) {
@@ -5029,6 +5310,7 @@ async function processPlan(plan, paths, state, options, config) {
     }
 
     lastPendingSignal = null;
+    workerNoTouchRetryCount = 0;
 
     advanceRoleState(roleState, currentRole);
     state.roleState[plan.planId] = roleState;
@@ -5742,6 +6024,8 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asInteger(options.touchSampleSize, DEFAULT_TOUCH_SAMPLE_SIZE)),
     '--worker-first-touch-deadline-seconds',
     String(asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)),
+    '--worker-no-touch-retry-limit',
+    String(asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)),
     '--retry-failed',
     String(asBoolean(options.retryFailedPlans, DEFAULT_RETRY_FAILED_PLANS)),
     '--auto-unblock',
@@ -6356,12 +6640,19 @@ async function runCommand(paths, options) {
       capabilities: state.capabilities,
       sessionPolicy: {
         contextThreshold: options.contextThreshold,
-        requireResultPayload: options.requireResultPayload
+        requireResultPayload: options.requireResultPayload,
+        contactPacks: {
+          enabled: options.contactPackEnabled,
+          maxPolicyBullets: options.contactPackMaxPolicyBullets,
+          includeRecentEvidence: options.contactPackIncludeRecentEvidence,
+          maxRecentEvidenceItems: options.contactPackMaxRecentEvidenceItems
+        }
       },
       roleOrchestration: {
         enabled: roleConfig.enabled,
         mode: roleConfig.mode,
         pipelines: roleConfig.pipelines,
+        stageBudgetsSeconds: roleConfig.stageBudgetsSeconds,
         stageReuse: roleConfig.stageReuse
       }
     }, options.dryRun);
@@ -6444,12 +6735,19 @@ async function resumeCommand(paths, options) {
       capabilities: state.capabilities,
       sessionPolicy: {
         contextThreshold: options.contextThreshold,
-        requireResultPayload: options.requireResultPayload
+        requireResultPayload: options.requireResultPayload,
+        contactPacks: {
+          enabled: options.contactPackEnabled,
+          maxPolicyBullets: options.contactPackMaxPolicyBullets,
+          includeRecentEvidence: options.contactPackIncludeRecentEvidence,
+          maxRecentEvidenceItems: options.contactPackMaxRecentEvidenceItems
+        }
       },
       roleOrchestration: {
         enabled: roleConfig.enabled,
         mode: roleConfig.mode,
         pipelines: roleConfig.pipelines,
+        stageBudgetsSeconds: roleConfig.stageBudgetsSeconds,
         stageReuse: roleConfig.stageReuse
       }
     }, options.dryRun);
@@ -6644,7 +6942,9 @@ async function main() {
     touchSummary: rawOptions['touch-summary'] ?? rawOptions.touchSummary,
     touchSampleSize: rawOptions['touch-sample-size'] ?? rawOptions.touchSampleSize,
     workerFirstTouchDeadlineSeconds:
-      rawOptions['worker-first-touch-deadline-seconds'] ?? rawOptions.workerFirstTouchDeadlineSeconds
+      rawOptions['worker-first-touch-deadline-seconds'] ?? rawOptions.workerFirstTouchDeadlineSeconds,
+    workerNoTouchRetryLimit:
+      rawOptions['worker-no-touch-retry-limit'] ?? rawOptions.workerNoTouchRetryLimit
   };
 
   const rootDir = process.cwd();

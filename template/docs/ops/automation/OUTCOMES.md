@@ -19,6 +19,12 @@ Use this to demonstrate that orchestration reduces blast radius and debugging ov
 
 ## Scorecard Metrics
 
+- Time to first worker edit:
+  - Definition: plan start to first worker session that touches repository files.
+  - Output: mean/median seconds (`summary.speed.timeToFirstWorkerEditSeconds`).
+- Stage duration by role:
+  - Definition: per-session execution duration from `session_finished` events grouped by role.
+  - Output: sample size + mean/median for planner/explorer/worker/reviewer (`summary.speed.stageDurationsSeconds`).
 - Lead time:
   - Definition: first plan event timestamp to terminal plan event timestamp.
   - Output: mean/median lead time seconds across plans.
@@ -30,7 +36,7 @@ Use this to demonstrate that orchestration reduces blast radius and debugging ov
   - Output: curated vs noisy evidence trend.
 - Rework loops:
   - Definition: count rollover/handoff and repeated non-terminal sessions.
-  - Output: indicator of unclear scope or missing preconditions.
+  - Output: handoff totals, handoffs-per-plan distribution, and worker no-touch retry count.
 
 ## Report Workflow
 
@@ -42,10 +48,14 @@ Use this to demonstrate that orchestration reduces blast radius and debugging ov
 ## Interpretation Guide
 
 - Good signal:
+  - Time-to-first-edit medians trend down for similar risk tiers.
+  - Planner/explorer/reviewer stage durations stay within expected budget envelopes.
   - Stable lead times for similar risk tiers.
   - Validation failures trend down over time.
   - Evidence compaction keeps references concise.
 - Investigation signal:
+  - Time-to-first-edit spikes without corresponding risk increase.
+  - Long planner/explorer/reviewer sessions with zero touched files.
   - Spiking handoff/rework counts.
   - Repeated validation failures on same plan group.
   - High event volume with low completion throughput.

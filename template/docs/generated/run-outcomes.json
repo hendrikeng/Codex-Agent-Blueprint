@@ -22,6 +22,35 @@
       "mean": null,
       "median": null
     },
+    "speed": {
+      "timeToFirstWorkerEditSeconds": {
+        "sampleSize": 0,
+        "mean": null,
+        "median": null
+      },
+      "stageDurationsSeconds": {
+        "planner": {
+          "sampleSize": 0,
+          "mean": null,
+          "median": null
+        },
+        "explorer": {
+          "sampleSize": 0,
+          "mean": null,
+          "median": null
+        },
+        "worker": {
+          "sampleSize": 0,
+          "mean": null,
+          "median": null
+        },
+        "reviewer": {
+          "sampleSize": 0,
+          "mean": null,
+          "median": null
+        }
+      }
+    },
     "validation": {
       "passed": 0,
       "failed": 0,
@@ -32,7 +61,13 @@
       "compactedEvents": 0
     },
     "rework": {
-      "handoffOrRolloverEvents": 0
+      "handoffOrRolloverEvents": 0,
+      "handoffsPerPlan": {
+        "sampleSize": 0,
+        "mean": null,
+        "median": null
+      },
+      "workerNoTouchRetries": 0
     }
   },
   "eventTypeCounts": []

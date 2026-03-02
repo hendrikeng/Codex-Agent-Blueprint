@@ -8,6 +8,7 @@ Source of Truth: This document.
 ## Context Budget Rules
 
 - Prioritize active task requirements and recent authoritative state.
+- Default to task-scoped contact packs per role session; expand beyond the pack only for explicit blockers.
 - Trim low-value context before truncating policy or invariants.
 - Keep prompts deterministic for critical workflows.
 

@@ -24,6 +24,7 @@ Every provider command must support:
 - Role model selection via `{role_model}` placeholder.
 - Command exit status propagation.
 - Structured result payload written by executor wrapper to `ORCH_RESULT_PATH`.
+- Prompt templates must support task-scoped contact packs via `{contact_pack_file}`.
 
 ## Baseline Command Templates
 

@@ -40,6 +40,7 @@ Recommended baseline:
 - `high`: `planner -> explorer -> worker -> reviewer`
 - Effective risk tier is computed from declared risk + score-based signals (dependencies, tags, sensitive path hints, prior validation failures, autonomy mode).
 - Optional stage reuse can skip already-completed `planner`/`explorer` stages when plan shape and scope are unchanged within policy limits.
+- `stageBudgetsSeconds` provides role-specific no-progress budget ceilings for `planner`, `explorer`, and `reviewer`.
 
 ## Security Approval Gate
 
@@ -57,6 +58,7 @@ Recommended baseline:
   - `--declared-risk-tier {declared_risk_tier}`
   - `--stage-index {stage_index}`
   - `--stage-total {stage_total}`
+  - `--contact-pack-file {contact_pack_file}`
 - Environment variables:
   - `ORCH_ROLE`
   - `ORCH_ROLE_MODEL`
@@ -86,5 +88,7 @@ Recommended baseline:
 - `pending` session results do not auto-advance risk pipeline stages; reviewer `pending` is routed back to `worker`.
 - Planner/explorer `pending` entries that clearly indicate implementation handoff (read-only or implementation-incomplete reasons) are auto-advanced to the next stage.
 - Repeated identical `pending` signals for the same role fail fast to prevent no-progress loops.
+- Worker `pending` sessions with no touched files are auto-retried (bounded by `logging.workerNoTouchRetryLimit`) before fail-fast pending.
+- Planner/explorer/reviewer `pending` sessions with no touched files fail fast when the role stage budget is exceeded.
 - Worker/reviewer sessions should not run host-bound validation commands (infra/bootstrap, DB migrations, Playwright/E2E); those are executed by the host-validation lane from `validation.hostRequired`.
 - Risk and stage decisions are recorded in `run-events.jsonl`.

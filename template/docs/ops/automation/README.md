@@ -37,6 +37,7 @@ Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
 - `run-state.json`, `run-events.jsonl`, `runtime/`, and `handoffs/` are transient runtime artifacts; they are ignored by dirty preflight.
 - `docs/ops/automation/handoffs/`: per-plan rollover handoff notes.
 - `docs/ops/automation/runtime/`: per-run executor result payloads and the transient active-run lock file (`orchestrator.lock.json`).
+- `docs/ops/automation/runtime/contacts/<run-id>/<plan-id>/<role>.md`: generated task-scoped contact packs for each role session.
 
 ## Source Of Truth
 
@@ -78,6 +79,8 @@ Use the manual path when any of these are true:
   - `--stall-warn-seconds <n>` (default `120`)
   - `--touch-summary true|false` (default `true`)
   - `--touch-sample-size <n>` (default `3`)
+  - `--worker-first-touch-deadline-seconds <n>` (default `180`, `0` disables)
+  - `--worker-no-touch-retry-limit <n>` (default `1`)
 - Recovery controls:
   - `--retry-failed true|false` (default `true`)
   - `--auto-unblock true|false` (default `true`)
@@ -91,7 +94,7 @@ Use the manual path when any of these are true:
 - Set this once per repository; default is the portable `executor-wrapper` entrypoint.
 - If empty, `run`/`resume` fail immediately with a clear error.
 - Example (`orchestrator.config.json`):
-  - `"command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --role {role} --effective-risk-tier {effective_risk_tier} --declared-risk-tier {declared_risk_tier} --stage-index {stage_index} --stage-total {stage_total} --result-path {result_path}"`
+  - `"command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --role {role} --effective-risk-tier {effective_risk_tier} --declared-risk-tier {declared_risk_tier} --stage-index {stage_index} --stage-total {stage_total} --result-path {result_path} --contact-pack-file {contact_pack_file}"`
   - `"provider": "codex"` (override per run with `ORCH_EXECUTOR_PROVIDER=...`)
   - `"providers.codex.command": "codex exec --full-auto -c model_reasoning_effort={role_reasoning_effort} -m {role_model} {prompt}"` (`{prompt}`, `{role_model}`, and `{role_reasoning_effort}` are required)
   - `"providers.claude.command": "claude -p --model {role_model} {prompt}"` (`{prompt}` and `{role_model}` are required)
@@ -100,7 +103,8 @@ Use the manual path when any of these are true:
   - `"requireResultPayload": true`
   - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/agent-runtime-context.md` by default).
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
-  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, and `"logging.workerFirstTouchDeadlineSeconds": 180` tune operator-facing output noise, liveness, live file-touch visibility, and worker no-progress fail-fast behavior (`0` disables).
+  - `"context.contactPacks"` configures per-task scoped role contact packs (`enabled`, `maxPolicyBullets`, `includeRecentEvidence`, `maxRecentEvidenceItems`).
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, `"logging.workerFirstTouchDeadlineSeconds": 180`, and `"logging.workerNoTouchRetryLimit": 1` tune operator-facing output noise, liveness, live file-touch visibility, and worker no-progress fail-fast behavior (`workerFirstTouchDeadlineSeconds: 0` disables deadline fail-fast).
   - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 3` control automatic retry/unblock behavior for resumable plans.
   - `"parallel.maxPlans"` sets default worker concurrency for `run --parallel-plans`.
   - `"parallel.worktreeRoot"`, `"parallel.branchPrefix"`, `"parallel.baseRef"`, `"parallel.gitRemote"` configure branch/worktree strategy.
@@ -120,7 +124,8 @@ Use the manual path when any of these are true:
   - `roleOrchestration.pipelines.low` defaults to `worker`.
   - `roleOrchestration.pipelines.medium` defaults to `planner -> worker -> reviewer`.
   - `roleOrchestration.pipelines.high` defaults to `planner -> explorer -> worker -> reviewer`.
-  - `roleOrchestration.stageReuse` allows safe skip of previously completed planner/explorer stages when plan shape and scope remain stable.
+  - `roleOrchestration.stageBudgetsSeconds` sets planner/explorer/reviewer session budget ceilings used for no-progress fail-fast.
+  - `roleOrchestration.stageReuse` allows safe skip of previously completed planner/explorer stages when plan shape and scope remain stable (including across resume runs when `sameRunOnly: false`).
   - `roleOrchestration.riskModel` computes an effective risk tier from declared risk, dependencies, tags, scope paths, and prior validation failures.
   - `roleOrchestration.approvalGates` enforces Security Ops approval for high-risk completions and sensitive medium-risk completions.
   - `roleOrchestration.providers.<provider>.roles.<role>.command` can override provider command templates by role.
@@ -166,7 +171,7 @@ Use the manual path when any of these are true:
   - File-touch detail lines (`file activity ...`) emit category counts and representative file samples when touched-file sets change.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
-  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, `logging.touchSampleSize`, and `logging.workerFirstTouchDeadlineSeconds` tune heartbeat cadence, stall-warning threshold, file-touch detail level, and worker first-edit deadline fail-fast (`--worker-first-touch-deadline-seconds`).
+  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, `logging.touchSampleSize`, `logging.workerFirstTouchDeadlineSeconds`, and `logging.workerNoTouchRetryLimit` tune heartbeat cadence, stall-warning threshold, file-touch detail level, worker first-edit deadline fail-fast (`--worker-first-touch-deadline-seconds`), and automatic worker no-touch retries (`--worker-no-touch-retry-limit`).
 - Drift guardrail:
   - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default, runtime-context and stage-reuse policy).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
@@ -266,6 +271,7 @@ Executor commands should use these outcomes:
 - A plan is auto-moved to `docs/exec-plans/completed/` only when its top-level `Status:` line is `completed`.
 - If the top-level `Status:` is not `completed`, orchestration starts another executor session for the same plan in the same run (up to `--max-sessions-per-plan`), then leaves it in `active/` for later `resume` if still incomplete.
 - Session boundaries are strict: each planner/explorer/worker/reviewer stage starts a new executor process and can use a role-specific model profile.
+- Each session gets a task-scoped contact pack (`{contact_pack_file}`) and should use it as primary context before expanding scope.
 - Executor sessions must always emit a structured result payload (`ORCH_RESULT_PATH`) with a numeric `contextRemaining`.
 - Default context rollover policy is proactive: a new session is forced when `contextRemaining <= 10000` (override with `--context-threshold` or `executor.contextThreshold`).
 - If an executor exits `0` without payload (or without numeric `contextRemaining`), orchestrator forces an immediate handoff/rollover to protect coding accuracy.
@@ -276,7 +282,7 @@ Executor commands should use these outcomes:
 - `pending` keeps work in the active implementation role instead of auto-advancing the full pipeline; reviewer `pending` routes back to worker for fixes.
 - Planner/explorer `pending` with implementation-handoff reasons (for example, read-only constraints or implementation still pending) auto-advances to the next stage to avoid no-op loops.
 - Planner/explorer/reviewer sessions are restricted to execution plan/evidence docs (`docs/exec-plans/**`); touching other paths fails fast as a policy violation.
-- Worker `pending` without any touched files now fails fast in-run to prevent repeated no-progress implementation loops.
+- Worker `pending` without touched files auto-retries first (bounded by `--worker-no-touch-retry-limit`), then fails fast if still no-progress.
 - Repeated identical `pending` signals for the same role fail fast in-run so orchestration does not spin on no-progress loops.
 - `blocked` / `failed` / `pending` outcomes print concrete `next steps` guidance with a ready-to-run `automation:resume` command.
 - `blocked` remains reserved for external/manual gates; `failed` remains a validation/execution failure signal.
