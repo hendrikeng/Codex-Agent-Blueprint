@@ -40,6 +40,8 @@ const PRETTY_SPINNER_FRAMES = ['|', '/', '-', '\\'];
 const PRETTY_LIVE_DOT_FRAMES = ['...', '.. ', '.  ', ' ..'];
 const DEFAULT_HEARTBEAT_SECONDS = 12;
 const DEFAULT_STALL_WARN_SECONDS = 120;
+const DEFAULT_TOUCH_SUMMARY = true;
+const DEFAULT_TOUCH_SAMPLE_SIZE = 3;
 const DEFAULT_RETRY_FAILED_PLANS = true;
 const DEFAULT_AUTO_UNBLOCK_PLANS = true;
 const DEFAULT_MAX_FAILED_RETRIES = 3;
@@ -152,6 +154,8 @@ Options:
   --failure-tail-lines <n>           Lines of command output to print on failures (default: 60)
   --heartbeat-seconds <n>            Live status heartbeat cadence in seconds (default: 12)
   --stall-warn-seconds <n>           Warn when no command output for this many seconds (default: 120)
+  --touch-summary true|false         Show live touched-file summary in heartbeats (default: true)
+  --touch-sample-size <n>            Number of touched-file examples in heartbeat details (default: 3)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
   --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
   --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 3)
@@ -692,10 +696,136 @@ function formatCommandHeartbeatLine(options, context, elapsedSeconds, idleSecond
   const planId = safeDisplayToken(context.planId, 'run');
   const role = safeDisplayToken(context.role, 'n/a');
   const activity = safeDisplayToken(context.activity, phase);
+  const touchSummary = formatTouchSummaryInline(context.touchSummary);
   return (
     `${stamp} ${dots} ${tag} phase=${phase} plan=${planId} role=${role} activity=${activity} ` +
-    `elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)}`
+    `elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)} ${touchSummary}`
   );
+}
+
+function summarizeTouchedPaths(paths, sampleSize = DEFAULT_TOUCH_SAMPLE_SIZE) {
+  const normalized = [...new Set((Array.isArray(paths) ? paths : []).map((entry) => toPosix(String(entry ?? '').trim())).filter(Boolean))];
+  if (normalized.length === 0) {
+    return {
+      count: 0,
+      categories: [],
+      samples: [],
+      fingerprint: 'none'
+    };
+  }
+
+  const categoryCounts = new Map();
+  for (const filePath of normalized) {
+    const category = classifyTouchedPath(filePath);
+    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+  }
+
+  const categories = [...categoryCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([category, count]) => ({ category, count }));
+  const samples = normalized.slice(0, Math.max(1, sampleSize));
+  const fingerprint = createHash('sha1')
+    .update(normalized.join('\n'))
+    .digest('hex')
+    .slice(0, 10);
+
+  return {
+    count: normalized.length,
+    categories,
+    samples,
+    fingerprint
+  };
+}
+
+function classifyTouchedPath(filePath) {
+  const value = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
+  const baseName = path.posix.basename(value).toLowerCase();
+
+  if (value.startsWith('docs/exec-plans/')) {
+    return 'plan-docs';
+  }
+  if (value.startsWith('docs/ops/automation/')) {
+    return 'automation';
+  }
+  if (value.startsWith('docs/')) {
+    return 'docs';
+  }
+  if (
+    baseName.endsWith('.spec.ts') ||
+    baseName.endsWith('.spec.tsx') ||
+    baseName.endsWith('.spec.js') ||
+    baseName.endsWith('.spec.jsx') ||
+    baseName.endsWith('.test.ts') ||
+    baseName.endsWith('.test.tsx') ||
+    baseName.endsWith('.test.js') ||
+    baseName.endsWith('.test.jsx') ||
+    value.includes('/__tests__/') ||
+    value.includes('/tests/') ||
+    value.includes('/test/') ||
+    value.includes('/e2e/')
+  ) {
+    return 'tests';
+  }
+  if (
+    baseName === 'package-lock.json' ||
+    baseName === 'pnpm-lock.yaml' ||
+    baseName === 'yarn.lock' ||
+    baseName === 'bun.lockb'
+  ) {
+    return 'lockfiles';
+  }
+  if (
+    value.startsWith('apps/') ||
+    value.startsWith('libs/') ||
+    value.startsWith('packages/') ||
+    value.startsWith('src/')
+  ) {
+    return 'source';
+  }
+  if (value.startsWith('scripts/')) {
+    return 'scripts';
+  }
+  return 'other';
+}
+
+function formatTouchSummaryInline(summary) {
+  const payload = summary && typeof summary === 'object' ? summary : null;
+  if (!payload || payload.count <= 0) {
+    return 'touch=none';
+  }
+  const categories = payload.categories
+    .slice(0, 2)
+    .map((entry) => `${entry.category}:${entry.count}`)
+    .join(',');
+  return `touch=${payload.count}(${categories || 'n/a'})`;
+}
+
+function formatTouchSummaryDetails(summary) {
+  const payload = summary && typeof summary === 'object' ? summary : null;
+  if (!payload || payload.count <= 0) {
+    return 'touched=0';
+  }
+  const categories = payload.categories
+    .slice(0, 4)
+    .map((entry) => `${entry.category}:${entry.count}`)
+    .join(', ');
+  const samples = payload.samples.length > 0 ? payload.samples.join(', ') : 'none';
+  return `touched=${payload.count} categories=[${categories}] sample=[${samples}]`;
+}
+
+function monitorTouchedPaths(cwd, baselineSet, options = {}) {
+  if (!(baselineSet instanceof Set)) {
+    return null;
+  }
+
+  const current = dirtyRepoPaths(cwd, { includeTransient: true })
+    .filter((entry) => !isTransientAutomationPath(entry));
+  const touched = current.filter((entry) => !baselineSet.has(entry));
+  const summary = summarizeTouchedPaths(touched, options.touchSampleSize);
+  return {
+    ...summary,
+    touched
+  };
 }
 
 async function runShellMonitored(
@@ -716,6 +846,14 @@ async function runShellMonitored(
   let processError = null;
   let settled = false;
   let warnEmitted = false;
+  const touchSummaryEnabled = asBoolean(options.touchSummary, DEFAULT_TOUCH_SUMMARY);
+  const touchSampleSize = Math.max(1, asInteger(options.touchSampleSize, DEFAULT_TOUCH_SAMPLE_SIZE));
+  const touchBaseline = touchSummaryEnabled && gitAvailable(cwd)
+    ? new Set(dirtyRepoPaths(cwd, { includeTransient: true }).filter((entry) => !isTransientAutomationPath(entry)))
+    : null;
+  let touchSummary = null;
+  let lastTouchChangeAtMs = startedAtMs;
+  let lastTouchFingerprint = null;
 
   const child = spawn(command, {
     shell: true,
@@ -743,16 +881,37 @@ async function runShellMonitored(
   const heartbeatEnabled = isPrettyOutput(options) || isTickerOutput(options);
   let heartbeatTimer = null;
   const emitHeartbeat = () => {
+    if (touchBaseline) {
+      const latestTouchSummary = monitorTouchedPaths(cwd, touchBaseline, { touchSampleSize });
+      if (latestTouchSummary) {
+        touchSummary = latestTouchSummary;
+        if (latestTouchSummary.fingerprint !== lastTouchFingerprint) {
+          lastTouchFingerprint = latestTouchSummary.fingerprint;
+          lastTouchChangeAtMs = Date.now();
+          if (latestTouchSummary.count > 0) {
+            progressLog(
+              options,
+              `file activity phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} ${formatTouchSummaryDetails(latestTouchSummary)}`
+            );
+          }
+        }
+      }
+    }
+
     const nowMs = Date.now();
     const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
-    const idleSeconds = Math.floor((nowMs - lastOutputAtMs) / 1000);
+    const effectiveProgressAtMs = Math.max(lastOutputAtMs, lastTouchChangeAtMs);
+    const idleSeconds = Math.floor((nowMs - effectiveProgressAtMs) / 1000);
 
     if (supportsLiveStatusLine(options)) {
-      renderLiveStatusLine(options, formatCommandHeartbeatLine(options, context, elapsedSeconds, idleSeconds));
+      renderLiveStatusLine(
+        options,
+        formatCommandHeartbeatLine(options, { ...context, touchSummary }, elapsedSeconds, idleSeconds)
+      );
     } else {
       progressLog(
         options,
-        `heartbeat phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} activity=${safeDisplayToken(context.activity, safeDisplayToken(context.phase, 'session'))} elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)}`
+        `heartbeat phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} activity=${safeDisplayToken(context.activity, safeDisplayToken(context.phase, 'session'))} elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`
       );
     }
 
@@ -760,7 +919,7 @@ async function runShellMonitored(
       warnEmitted = true;
       progressLog(
         options,
-        `stall warning phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)}`
+        `stall warning phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`
       );
     }
   };
@@ -890,7 +1049,7 @@ async function loadConfig(paths) {
           reasoningEffort: 'medium',
           sandboxMode: 'read-only',
           instructions:
-            'You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. Never modify files.'
+            'You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. You may update active plan/evidence docs for this stage, but do not modify product/source code.'
         },
         reviewer: {
           model: 'gpt-5.3-codex',
@@ -947,7 +1106,9 @@ async function loadConfig(paths) {
       output: DEFAULT_OUTPUT_MODE,
       failureTailLines: DEFAULT_FAILURE_TAIL_LINES,
       heartbeatSeconds: DEFAULT_HEARTBEAT_SECONDS,
-      stallWarnSeconds: DEFAULT_STALL_WARN_SECONDS
+      stallWarnSeconds: DEFAULT_STALL_WARN_SECONDS,
+      touchSummary: DEFAULT_TOUCH_SUMMARY,
+      touchSampleSize: DEFAULT_TOUCH_SAMPLE_SIZE
     },
     parallel: {
       maxPlans: DEFAULT_PARALLEL_PLANS,
@@ -1211,6 +1372,14 @@ function resolveRuntimeExecutorOptions(options, config) {
     heartbeatSeconds,
     asInteger(options.stallWarnSeconds ?? config.logging?.stallWarnSeconds, DEFAULT_STALL_WARN_SECONDS)
   );
+  const touchSummary = asBoolean(
+    options.touchSummary ?? options['touch-summary'] ?? config.logging?.touchSummary,
+    DEFAULT_TOUCH_SUMMARY
+  );
+  const touchSampleSize = Math.max(
+    1,
+    asInteger(options.touchSampleSize ?? options['touch-sample-size'] ?? config.logging?.touchSampleSize, DEFAULT_TOUCH_SAMPLE_SIZE)
+  );
   const retryFailedPlans = asBoolean(
     options.retryFailed ?? options['retry-failed'] ?? config.recovery?.retryFailed,
     DEFAULT_RETRY_FAILED_PLANS
@@ -1240,6 +1409,8 @@ function resolveRuntimeExecutorOptions(options, config) {
     failureTailLines,
     heartbeatSeconds,
     stallWarnSeconds,
+    touchSummary,
+    touchSampleSize,
     retryFailedPlans,
     autoUnblockPlans,
     maxFailedRetries
@@ -5425,6 +5596,10 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asInteger(options.heartbeatSeconds, DEFAULT_HEARTBEAT_SECONDS)),
     '--stall-warn-seconds',
     String(asInteger(options.stallWarnSeconds, DEFAULT_STALL_WARN_SECONDS)),
+    '--touch-summary',
+    String(asBoolean(options.touchSummary, DEFAULT_TOUCH_SUMMARY)),
+    '--touch-sample-size',
+    String(asInteger(options.touchSampleSize, DEFAULT_TOUCH_SAMPLE_SIZE)),
     '--retry-failed',
     String(asBoolean(options.retryFailedPlans, DEFAULT_RETRY_FAILED_PLANS)),
     '--auto-unblock',
@@ -6323,7 +6498,9 @@ async function main() {
     outputMode: rawOptions.output ?? rawOptions['output-mode'],
     failureTailLines: rawOptions['failure-tail-lines'] ?? rawOptions.failureTailLines,
     heartbeatSeconds: rawOptions['heartbeat-seconds'] ?? rawOptions.heartbeatSeconds,
-    stallWarnSeconds: rawOptions['stall-warn-seconds'] ?? rawOptions.stallWarnSeconds
+    stallWarnSeconds: rawOptions['stall-warn-seconds'] ?? rawOptions.stallWarnSeconds,
+    touchSummary: rawOptions['touch-summary'] ?? rawOptions.touchSummary,
+    touchSampleSize: rawOptions['touch-sample-size'] ?? rawOptions.touchSampleSize
   };
 
   const rootDir = process.cwd();

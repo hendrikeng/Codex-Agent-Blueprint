@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const DEFAULT_PROMPT_TEMPLATE =
-  'Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Role instructions: {role_instructions}. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Avoid redundant validation reruns: do not repeat the same verification command in consecutive sessions unless relevant files changed or the last run failed. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Use status pending (not blocked) only when the same role needs another session in this run. For planner/explorer/reviewer role stages, return status completed once role-scoped objectives are done, even when the overall plan stays in-progress for later roles. Reserve blocked for external/manual gates orchestration cannot progress automatically. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. Do not wait for host-required validations to run inside this executor session. If implementation acceptance criteria are complete and the plan is ready for orchestration validation lanes, set top-level Status: completed to trigger validation; otherwise keep top-level Status: in-progress and list remaining implementation work.';
+  'Continue plan {plan_id} in {plan_file}. Current role: {role}. Declared risk tier: {declared_risk_tier}. Effective risk tier: {effective_risk_tier}. Execution profile: model={role_model}, reasoning={role_reasoning_effort}, sandbox={role_sandbox_mode}. Primary runtime policy reference: {runtime_context_file}. Role instructions: {role_instructions}. Focus edits on {plan_file}, {plan_evidence_file}, and {plan_evidence_index_file}; avoid scanning unrelated docs unless required for this role stage. Apply the next concrete step for this role. Update the plan document with progress and evidence. Reuse existing evidence files when blocker state is unchanged; update canonical evidence index/readme links instead of creating new timestamped evidence files. Avoid redundant validation reruns: do not repeat the same verification command in consecutive sessions unless relevant files changed or the last run failed. ALWAYS write a structured JSON result to ORCH_RESULT_PATH with status (completed|blocked|handoff_required|pending), summary, reason, and numeric contextRemaining. Use status pending (not blocked) only when the same role needs another session in this run. For planner/explorer/reviewer role stages, return status completed once role-scoped objectives are done, even when the overall plan stays in-progress for later roles. Reserve blocked for external/manual gates orchestration cannot progress automatically. Never exit 0 without writing this payload. If contextRemaining is at/below ORCH_CONTEXT_THRESHOLD, return status handoff_required. Do not wait for host-required validations to run inside this executor session. If implementation acceptance criteria are complete and the plan is ready for orchestration validation lanes, set top-level Status: completed to trigger validation; otherwise keep top-level Status: in-progress and list remaining implementation work.';
+const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/agent-runtime-context.md';
 
 function parseArgs(argv) {
   const options = {};
@@ -23,6 +24,10 @@ function parseArgs(argv) {
     i += 1;
   }
   return options;
+}
+
+function toPosix(value) {
+  return String(value).split(path.sep).join('/');
 }
 
 function shellEscape(value) {
@@ -155,6 +160,9 @@ async function main() {
   const declaredRiskTier = getOptionalOption(options, 'declared-risk-tier', 'low').toLowerCase();
   const stageIndex = getOptionalOption(options, 'stage-index', '1');
   const stageTotal = getOptionalOption(options, 'stage-total', '1');
+  const runtimeContextFile = String(config?.context?.runtimeContextPath ?? DEFAULT_RUNTIME_CONTEXT_PATH).trim() || DEFAULT_RUNTIME_CONTEXT_PATH;
+  const planEvidenceFile = toPosix(path.join('docs', 'exec-plans', 'active', 'evidence', `${planId}.md`));
+  const planEvidenceIndexFile = toPosix(path.join('docs', 'exec-plans', 'evidence-index', `${planId}.md`));
 
   const provider = normalizeProvider(
     options.provider ?? process.env.ORCH_EXECUTOR_PROVIDER ?? executor.provider ?? 'codex'
@@ -218,7 +226,10 @@ async function main() {
     role_instructions: providerRoleProfile.instructions,
     stage_index: stageIndex,
     stage_total: stageTotal,
-    result_path: resultPath
+    result_path: resultPath,
+    runtime_context_file: runtimeContextFile,
+    plan_evidence_file: planEvidenceFile,
+    plan_evidence_index_file: planEvidenceIndexFile
   };
 
   const promptTemplate = String(executor.promptTemplate || DEFAULT_PROMPT_TEMPLATE).trim();
@@ -238,6 +249,9 @@ async function main() {
     ORCH_ROLE_REASONING_EFFORT: providerRoleProfile.reasoningEffort,
     ORCH_ROLE_SANDBOX_MODE: providerRoleProfile.sandboxMode,
     ORCH_ROLE_INSTRUCTIONS: providerRoleProfile.instructions,
+    ORCH_RUNTIME_CONTEXT_FILE: runtimeContextFile,
+    ORCH_PLAN_EVIDENCE_FILE: planEvidenceFile,
+    ORCH_PLAN_EVIDENCE_INDEX_FILE: planEvidenceIndexFile,
     ORCH_STAGE_INDEX: stageIndex,
     ORCH_STAGE_TOTAL: stageTotal
   });

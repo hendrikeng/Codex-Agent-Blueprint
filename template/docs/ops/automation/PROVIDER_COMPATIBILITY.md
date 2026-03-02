@@ -27,7 +27,7 @@ Every provider command must support:
 
 ## Baseline Command Templates
 
-- Codex: `codex exec --full-auto -m {role_model} {prompt}`
+- Codex: `codex exec --full-auto -c model_reasoning_effort={role_reasoning_effort} -m {role_model} {prompt}`
 - Claude: `claude -p --model {role_model} {prompt}`
 
 These are baseline templates, not universal guarantees across all versions.
@@ -63,4 +63,4 @@ When updating provider commands:
 1. Run `npm run verify:fast`.
 2. Run `npm run verify:full`.
 3. Run `npm run interop:github:export -- --dry-run true`.
-4. Confirm role placeholders remain present (`{prompt}`, `{role_model}`).
+4. Confirm role placeholders remain present (`{prompt}`, `{role_model}`, `{role_reasoning_effort}` for Codex).

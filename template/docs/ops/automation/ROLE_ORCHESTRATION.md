@@ -24,6 +24,7 @@ Each role has a portable execution profile configured in `roleOrchestration.role
 - `reasoningEffort`: expected depth (`low|medium|high`).
 - `sandboxMode`: required tool/file access (`read-only` or `full-access`).
 - `instructions`: role-specific operating instructions appended to executor prompt context.
+- `read-only` role stages may still update the active plan/evidence docs, but must not modify product/source code.
 
 Recommended baseline:
 

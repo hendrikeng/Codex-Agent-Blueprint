@@ -76,6 +76,8 @@ Use the manual path when any of these are true:
   - `--failure-tail-lines <n>` (default `60`)
   - `--heartbeat-seconds <n>` (default `12`)
   - `--stall-warn-seconds <n>` (default `120`)
+  - `--touch-summary true|false` (default `true`)
+  - `--touch-sample-size <n>` (default `3`)
 - Recovery controls:
   - `--retry-failed true|false` (default `true`)
   - `--auto-unblock true|false` (default `true`)
@@ -91,14 +93,14 @@ Use the manual path when any of these are true:
 - Example (`orchestrator.config.json`):
   - `"command": "node ./scripts/automation/executor-wrapper.mjs --plan-id {plan_id} --plan-file {plan_file} --run-id {run_id} --mode {mode} --session {session} --role {role} --effective-risk-tier {effective_risk_tier} --declared-risk-tier {declared_risk_tier} --stage-index {stage_index} --stage-total {stage_total} --result-path {result_path}"`
   - `"provider": "codex"` (override per run with `ORCH_EXECUTOR_PROVIDER=...`)
-  - `"providers.codex.command": "codex exec --full-auto -m {role_model} {prompt}"` (`{prompt}` and `{role_model}` are required)
+  - `"providers.codex.command": "codex exec --full-auto -c model_reasoning_effort={role_reasoning_effort} -m {role_model} {prompt}"` (`{prompt}`, `{role_model}`, and `{role_reasoning_effort}` are required)
   - `"providers.claude.command": "claude -p --model {role_model} {prompt}"` (`{prompt}` and `{role_model}` are required)
   - `"enforceRoleModelSelection": true` requires each role command to include `{role_model}`.
   - `"contextThreshold": 10000`
   - `"requireResultPayload": true`
   - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/agent-runtime-context.md` by default).
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
-  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, and `"logging.stallWarnSeconds": 120` tune operator-facing output noise and liveness signaling.
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, and `"logging.touchSampleSize": 3` tune operator-facing output noise, liveness, and live file-touch visibility.
   - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 3` control automatic retry/unblock behavior for resumable plans.
   - `"parallel.maxPlans"` sets default worker concurrency for `run --parallel-plans`.
   - `"parallel.worktreeRoot"`, `"parallel.branchPrefix"`, `"parallel.baseRef"`, `"parallel.gitRemote"` configure branch/worktree strategy.
@@ -127,7 +129,7 @@ Use the manual path when any of these are true:
     - `{role_reasoning_effort}`
     - `{role_sandbox_mode}`
     - `{role_instructions}`
-  - Each role stage runs as a fresh executor process/session. For strict model switching, include `{role_model}` in every role command template.
+  - Each role stage runs as a fresh executor process/session. For strict profile switching, include `{role_model}` and `{role_reasoning_effort}` in every role command template.
   - Detailed role contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`.
 - Validation lanes:
   - `validation.always`: sandbox-safe checks that should run in every completion gate.
@@ -160,9 +162,11 @@ Use the manual path when any of these are true:
   - `pretty` output adds interactive-style, color-capable lifecycle logs plus a single live heartbeat line for in-flight session/validation activity.
   - `minimal` output prints high-signal lifecycle lines only (plan/session start-end, role transitions, validation state, blockers).
   - `ticker` output prints compact single-line lifecycle events and a single-line run summary.
+  - Live heartbeats include touched-file summaries (`touch=<count>(<category>:<count>,...)`) so long-running sessions still show concrete progress.
+  - File-touch detail lines (`file activity ...`) emit category counts and representative file samples when touched-file sets change.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
-  - `logging.heartbeatSeconds` and `logging.stallWarnSeconds` tune heartbeat cadence and stall-warning threshold (override via CLI flags).
+  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, and `logging.touchSampleSize` tune heartbeat cadence, stall-warning threshold, and file-touch detail level (override via CLI flags).
 - Drift guardrail:
   - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default, runtime-context and stage-reuse policy).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
@@ -238,7 +242,8 @@ Pretty output example:
 16:04:07 | RUN   run started runId=run-20260301160407-k4l9wd mode=guarded output=pretty failureTailLines=60
 16:04:07 / RUN   plan start attendee-search-suggestion-qa-hardening declared=low effective=low score=0
 16:04:07 \ RUN   session 1 start attendee-search-suggestion-qa-hardening role=worker stage=1/1 provider=codex model=gpt-5.3-codex risk=low
-16:04:19 ... RUN  phase=session plan=attendee-search-suggestion-qa-hardening role=worker activity=implementing elapsed=12s idle=12s
+16:04:19 ... RUN  phase=session plan=attendee-search-suggestion-qa-hardening role=worker activity=implementing elapsed=12s idle=3s touch=4(source:3,tests:1)
+16:04:19 - RUN    file activity phase=session plan=attendee-search-suggestion-qa-hardening role=worker touched=4 categories=[source:3, tests:1] sample=[libs/events/backend/src/lib/event-organizer.service.ts, libs/events/backend/src/lib/event-organizer.service.spec.ts, docs/exec-plans/active/evidence/attendee-search-suggestion-qa-hardening.md]
 ```
 
 Parallelism note:

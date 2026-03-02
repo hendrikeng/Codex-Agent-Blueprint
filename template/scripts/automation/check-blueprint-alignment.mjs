@@ -57,9 +57,17 @@ async function readUtf8IfExists(filePath) {
   }
 }
 
-function commandIncludesRoleModel(command) {
+function commandIncludesPromptAndRoleModel(command) {
   const value = String(command ?? '').trim();
   return value.includes('{prompt}') && value.includes('{role_model}');
+}
+
+function codexCommandIncludesRoleReasoning(command) {
+  const value = String(command ?? '').trim();
+  if (!value) {
+    return false;
+  }
+  return value.includes('{role_reasoning_effort}');
 }
 
 function ensureScriptSignatures(orchestratorRaw, wrapperRaw) {
@@ -203,11 +211,34 @@ function ensureConfigPolicy(config, configPath) {
       rel(configPath)
     );
   }
+  const touchSummary = config?.logging?.touchSummary;
+  if (typeof touchSummary !== 'boolean') {
+    addFinding(
+      'INVALID_TOUCH_SUMMARY',
+      'logging.touchSummary must be a boolean.',
+      rel(configPath)
+    );
+  }
+  const touchSampleSize = Number.parseInt(String(config?.logging?.touchSampleSize ?? ''), 10);
+  if (!Number.isFinite(touchSampleSize) || touchSampleSize <= 0) {
+    addFinding(
+      'INVALID_TOUCH_SAMPLE_SIZE',
+      'logging.touchSampleSize must be a positive integer.',
+      rel(configPath)
+    );
+  }
 
-  if (!commandIncludesRoleModel(fallbackProviderCommand)) {
+  if (!commandIncludesPromptAndRoleModel(fallbackProviderCommand)) {
     addFinding(
       'MISSING_ROLE_MODEL_IN_PROVIDER_COMMAND',
       `executor.providers.${provider}.command must include '{prompt}' and '{role_model}'.`,
+      rel(configPath)
+    );
+  }
+  if (provider === 'codex' && !codexCommandIncludesRoleReasoning(fallbackProviderCommand)) {
+    addFinding(
+      'MISSING_ROLE_REASONING_IN_PROVIDER_COMMAND',
+      `executor.providers.${provider}.command must include '{role_reasoning_effort}' so role profiles control reasoning depth.`,
       rel(configPath)
     );
   }
@@ -215,10 +246,17 @@ function ensureConfigPolicy(config, configPath) {
   const pipelineRoles = gatherPipelineRoles(config);
   for (const role of pipelineRoles) {
     const roleCommand = providerRoles?.[role]?.command ?? fallbackProviderCommand;
-    if (!commandIncludesRoleModel(roleCommand)) {
+    if (!commandIncludesPromptAndRoleModel(roleCommand)) {
       addFinding(
         'MISSING_ROLE_MODEL_IN_ROLE_COMMAND',
         `roleOrchestration.providers.${provider}.roles.${role}.command must include '{prompt}' and '{role_model}'.`,
+        rel(configPath)
+      );
+    }
+    if (provider === 'codex' && !codexCommandIncludesRoleReasoning(roleCommand)) {
+      addFinding(
+        'MISSING_ROLE_REASONING_IN_ROLE_COMMAND',
+        `roleOrchestration.providers.${provider}.roles.${role}.command must include '{role_reasoning_effort}' so role profiles control reasoning depth.`,
         rel(configPath)
       );
     }
