@@ -202,7 +202,8 @@
     "touchSummary": true,
     "touchSampleSize": 3,
     "workerFirstTouchDeadlineSeconds": 180,
-    "workerNoTouchRetryLimit": 1
+    "workerNoTouchRetryLimit": 1,
+    "workerStallFailSeconds": 900
   },
   "parallel": {
     "maxPlans": 1,

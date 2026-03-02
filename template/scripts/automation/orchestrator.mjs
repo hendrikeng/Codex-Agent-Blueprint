@@ -46,6 +46,7 @@ const DEFAULT_TOUCH_SUMMARY = true;
 const DEFAULT_TOUCH_SAMPLE_SIZE = 3;
 const DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS = 180;
 const DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT = 1;
+const DEFAULT_WORKER_STALL_FAIL_SECONDS = 900;
 const DEFAULT_CONTACT_PACKS_ENABLED = true;
 const DEFAULT_CONTACT_PACKS_MAX_POLICY_BULLETS = 10;
 const DEFAULT_CONTACT_PACKS_INCLUDE_RECENT_EVIDENCE = true;
@@ -169,6 +170,7 @@ Options:
   --touch-sample-size <n>            Number of touched-file examples in heartbeat details (default: 3)
   --worker-first-touch-deadline-seconds <n> Fail-fast worker sessions that make no edits after n seconds (default: 180, 0 disables)
   --worker-no-touch-retry-limit <n> Retry worker pending-without-edits sessions automatically up to n times (default: 1)
+  --worker-stall-fail-seconds <n>   Fail-fast worker sessions that go idle after making edits (default: 900, 0 disables)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
   --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
   --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 3)
@@ -694,6 +696,10 @@ function didFirstTouchDeadlineTimeout(result) {
   return result?.error?.code === 'ENO_TOUCH_DEADLINE';
 }
 
+function didWorkerStallTimeout(result) {
+  return result?.error?.code === 'EWORKER_STALL';
+}
+
 function roleActivity(role) {
   const normalized = normalizeRoleName(role, ROLE_WORKER);
   if (normalized === ROLE_PLANNER) return 'planning';
@@ -876,6 +882,7 @@ async function runShellMonitored(
   let stderr = '';
   let timedOut = false;
   let firstTouchDeadlineTimedOut = false;
+  let workerStallFailTimedOut = false;
   let processError = null;
   let settled = false;
   let warnEmitted = false;
@@ -897,6 +904,16 @@ async function runShellMonitored(
     normalizeRoleName(context.role, ROLE_WORKER) === ROLE_WORKER &&
     firstTouchDeadlineSeconds > 0;
   const firstTouchDeadlineMs = enforceFirstTouchDeadline ? firstTouchDeadlineSeconds * 1000 : 0;
+  const workerStallFailSeconds = Math.max(
+    0,
+    asInteger(options.workerStallFailSeconds, DEFAULT_WORKER_STALL_FAIL_SECONDS)
+  );
+  const enforceWorkerStallFail =
+    touchBaseline != null &&
+    String(context.phase ?? '').trim().toLowerCase() === 'session' &&
+    normalizeRoleName(context.role, ROLE_WORKER) === ROLE_WORKER &&
+    workerStallFailSeconds > 0;
+  const workerStallFailMs = enforceWorkerStallFail ? workerStallFailSeconds * 1000 : 0;
 
   const child = spawn(command, {
     shell: true,
@@ -988,6 +1005,29 @@ async function runShellMonitored(
         }
       }
     }
+
+    if (enforceWorkerStallFail && !workerStallFailTimedOut) {
+      const touchedCount =
+        typeof touchSummary?.count === 'number' && Number.isFinite(touchSummary.count)
+          ? touchSummary.count
+          : 0;
+      if (touchedCount > 0 && nowMs - effectiveProgressAtMs >= workerStallFailMs) {
+        workerStallFailTimedOut = true;
+        progressLog(
+          options,
+          `worker stall fail-fast phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)} threshold=${workerStallFailSeconds}s`
+        );
+        child.kill('SIGTERM');
+        if (!forceKillTimer) {
+          forceKillTimer = setTimeout(() => {
+            if (pidIsAlive(child.pid)) {
+              child.kill('SIGKILL');
+            }
+          }, 5000);
+          forceKillTimer.unref?.();
+        }
+      }
+    }
   };
 
   if (heartbeatEnabled) {
@@ -1041,7 +1081,13 @@ async function runShellMonitored(
       resolve({
         status,
         signal,
-        error: firstTouchDeadlineTimedOut ? { code: 'ENO_TOUCH_DEADLINE' } : timedOut ? { code: 'ETIMEDOUT' } : processError,
+        error: workerStallFailTimedOut
+          ? { code: 'EWORKER_STALL' }
+          : firstTouchDeadlineTimedOut
+            ? { code: 'ENO_TOUCH_DEADLINE' }
+            : timedOut
+              ? { code: 'ETIMEDOUT' }
+              : processError,
         stdout,
         stderr,
         touchSummary: finalTouchSummary ?? null
@@ -1195,7 +1241,8 @@ async function loadConfig(paths) {
       touchSummary: DEFAULT_TOUCH_SUMMARY,
       touchSampleSize: DEFAULT_TOUCH_SAMPLE_SIZE,
       workerFirstTouchDeadlineSeconds: DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS,
-      workerNoTouchRetryLimit: DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT
+      workerNoTouchRetryLimit: DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT,
+      workerStallFailSeconds: DEFAULT_WORKER_STALL_FAIL_SECONDS
     },
     parallel: {
       maxPlans: DEFAULT_PARALLEL_PLANS,
@@ -1495,6 +1542,15 @@ function resolveRuntimeExecutorOptions(options, config) {
         options['worker-no-touch-retry-limit'] ??
         config.logging?.workerNoTouchRetryLimit,
       DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT
+    )
+  );
+  const workerStallFailSeconds = Math.max(
+    0,
+    asInteger(
+      options.workerStallFailSeconds ??
+        options['worker-stall-fail-seconds'] ??
+        config.logging?.workerStallFailSeconds,
+      DEFAULT_WORKER_STALL_FAIL_SECONDS
     )
   );
   const contactPacks = config.context?.contactPacks ?? {};
@@ -2939,6 +2995,21 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     return withSessionTouchSummary({
       status: 'pending',
       reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without repository edits.`,
+      role,
+      provider: roleProfile.provider,
+      model: roleProfile.model || null,
+      sessionLogPath
+    });
+  }
+
+  if (didWorkerStallTimeout(execution)) {
+    const stallSeconds = Math.max(
+      0,
+      asInteger(options.workerStallFailSeconds, DEFAULT_WORKER_STALL_FAIL_SECONDS)
+    );
+    return withSessionTouchSummary({
+      status: 'pending',
+      reason: `Worker stalled after making edits (idle >= ${stallSeconds}s). Start a fresh worker session to continue safely.`,
       role,
       provider: roleProfile.provider,
       model: roleProfile.model || null,
@@ -6952,7 +7023,9 @@ async function main() {
     workerFirstTouchDeadlineSeconds:
       rawOptions['worker-first-touch-deadline-seconds'] ?? rawOptions.workerFirstTouchDeadlineSeconds,
     workerNoTouchRetryLimit:
-      rawOptions['worker-no-touch-retry-limit'] ?? rawOptions.workerNoTouchRetryLimit
+      rawOptions['worker-no-touch-retry-limit'] ?? rawOptions.workerNoTouchRetryLimit,
+    workerStallFailSeconds:
+      rawOptions['worker-stall-fail-seconds'] ?? rawOptions.workerStallFailSeconds
   };
 
   const rootDir = process.cwd();
