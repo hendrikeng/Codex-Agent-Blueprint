@@ -2686,7 +2686,7 @@ async function promoteFuturePlans(paths, state, options) {
 function executablePlans(activePlans, completedPlanIds, excludedPlanIds = new Set(), recoveredPlanIds = new Set()) {
   return activePlans
     .filter((plan) => ACTIVE_STATUSES.has(plan.status))
-    .filter((plan) => plan.status !== 'completed')
+    .filter((plan) => !(plan.status === 'completed' && completedPlanIds.has(plan.planId)))
     .filter((plan) =>
       plan.status !== 'failed' && plan.status !== 'blocked'
         ? true
@@ -6908,6 +6908,13 @@ async function resumeCommand(paths, options) {
   }
 
   const state = normalizePersistedState(persisted);
+  if (state.inProgress && typeof state.inProgress === 'object') {
+    progressLog(
+      options,
+      `clearing stale in-progress session plan=${safeDisplayToken(state.inProgress.planId, 'unknown')} role=${safeDisplayToken(state.inProgress.role, 'n/a')} startedAt=${safeDisplayToken(state.inProgress.startedAt, 'n/a')}`
+    );
+    state.inProgress = null;
+  }
   state.capabilities = await detectCapabilities();
   if (
     !asBoolean(options.allowDirty, false) &&
