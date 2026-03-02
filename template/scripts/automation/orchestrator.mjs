@@ -700,6 +700,15 @@ function didWorkerStallTimeout(result) {
   return result?.error?.code === 'EWORKER_STALL';
 }
 
+function hasMeaningfulWorkerTouchSummary(summary) {
+  const categories = Array.isArray(summary?.categories) ? summary.categories : [];
+  return categories.some((entry) => {
+    const category = String(entry?.category ?? '').trim().toLowerCase();
+    const count = Number(entry?.count ?? 0);
+    return (category === 'source' || category === 'tests') && Number.isFinite(count) && count > 0;
+  });
+}
+
 function roleActivity(role) {
   const normalized = normalizeRoleName(role, ROLE_WORKER);
   if (normalized === ROLE_PLANNER) return 'planning';
@@ -883,6 +892,8 @@ async function runShellMonitored(
   let timedOut = false;
   let firstTouchDeadlineTimedOut = false;
   let workerStallFailTimedOut = false;
+  let workerFirstMeaningfulTouchObserved = false;
+  let lastMeaningfulTouchAtMs = null;
   let processError = null;
   let settled = false;
   let warnEmitted = false;
@@ -962,6 +973,16 @@ async function runShellMonitored(
     const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
     const effectiveProgressAtMs = Math.max(lastOutputAtMs, lastTouchChangeAtMs);
     const idleSeconds = Math.floor((nowMs - effectiveProgressAtMs) / 1000);
+    const hasMeaningfulWorkerTouch = hasMeaningfulWorkerTouchSummary(touchSummary);
+    if (hasMeaningfulWorkerTouch) {
+      workerFirstMeaningfulTouchObserved = true;
+      lastMeaningfulTouchAtMs = nowMs;
+    }
+    const effectiveWorkerProgressAtMs =
+      workerFirstMeaningfulTouchObserved && lastMeaningfulTouchAtMs != null
+        ? Math.max(lastOutputAtMs, lastMeaningfulTouchAtMs)
+        : effectiveProgressAtMs;
+    const workerIdleSeconds = Math.floor((nowMs - effectiveWorkerProgressAtMs) / 1000);
 
     if (supportsLiveStatusLine(options)) {
       renderLiveStatusLine(
@@ -984,11 +1005,7 @@ async function runShellMonitored(
     }
 
     if (enforceFirstTouchDeadline && !firstTouchDeadlineTimedOut) {
-      const touchedCount =
-        typeof touchSummary?.count === 'number' && Number.isFinite(touchSummary.count)
-          ? touchSummary.count
-          : 0;
-      if (touchedCount <= 0 && nowMs - startedAtMs >= firstTouchDeadlineMs) {
+      if (!workerFirstMeaningfulTouchObserved && nowMs - startedAtMs >= firstTouchDeadlineMs) {
         firstTouchDeadlineTimedOut = true;
         progressLog(
           options,
@@ -1007,15 +1024,11 @@ async function runShellMonitored(
     }
 
     if (enforceWorkerStallFail && !workerStallFailTimedOut) {
-      const touchedCount =
-        typeof touchSummary?.count === 'number' && Number.isFinite(touchSummary.count)
-          ? touchSummary.count
-          : 0;
-      if (touchedCount > 0 && nowMs - effectiveProgressAtMs >= workerStallFailMs) {
+      if (workerFirstMeaningfulTouchObserved && nowMs - effectiveWorkerProgressAtMs >= workerStallFailMs) {
         workerStallFailTimedOut = true;
         progressLog(
           options,
-          `worker stall fail-fast phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)} threshold=${workerStallFailSeconds}s`
+          `worker stall fail-fast phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(workerIdleSeconds)} threshold=${workerStallFailSeconds}s`
         );
         child.kill('SIGTERM');
         if (!forceKillTimer) {
@@ -2994,7 +3007,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     );
     return withSessionTouchSummary({
       status: 'pending',
-      reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without repository edits.`,
+      reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without source/tests edits.`,
       role,
       provider: roleProfile.provider,
       model: roleProfile.model || null,
