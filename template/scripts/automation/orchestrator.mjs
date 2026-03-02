@@ -54,8 +54,8 @@ const DEFAULT_CONTACT_PACKS_INCLUDE_RECENT_EVIDENCE = true;
 const DEFAULT_CONTACT_PACKS_MAX_RECENT_EVIDENCE_ITEMS = 6;
 const DEFAULT_RETRY_FAILED_PLANS = true;
 const DEFAULT_AUTO_UNBLOCK_PLANS = true;
-const DEFAULT_MAX_FAILED_RETRIES = 3;
-const DEFAULT_PARALLEL_PLANS = 1;
+const DEFAULT_MAX_FAILED_RETRIES = 2;
+const DEFAULT_PARALLEL_PLANS = 3;
 const DEFAULT_PARALLEL_WORKTREE_ROOT = 'docs/ops/automation/runtime/worktrees';
 const DEFAULT_PARALLEL_BRANCH_PREFIX = 'orch';
 const DEFAULT_PARALLEL_BASE_REF = 'HEAD';
@@ -148,7 +148,7 @@ function usage() {
 Options:
   --mode guarded|full                Autonomy mode (default: guarded)
   --max-plans <n>                    Maximum plans to process in this run
-  --parallel-plans <n>               Number of plans to execute in parallel (default: 1)
+  --parallel-plans <n>               Number of plans to execute in parallel (default: 3)
   --context-threshold <n>            Trigger rollover when contextRemaining < n
   --require-result-payload true|false Require ORCH_RESULT_PATH payload with contextRemaining (default: true)
   --handoff-token-budget <n>         Metadata field for handoff budget reporting
@@ -174,7 +174,7 @@ Options:
   --worker-stall-fail-seconds <n>   Fail-fast worker sessions that go idle after making edits (default: 900, 0 disables)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
   --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
-  --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 3)
+  --max-failed-retries <n>           Maximum automatic retries per failed plan (default: 2)
 `);
 }
 

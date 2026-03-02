@@ -15,10 +15,10 @@
     "outcomes:report": "node ./scripts/automation/summarize-run-outcomes.mjs",
     "interop:github:export": "node ./scripts/automation/export-github-agent-profiles.mjs",
     "interop:github:export:write": "node ./scripts/automation/export-github-agent-profiles.mjs --write-profiles true",
-    "automation:run": "node ./scripts/automation/orchestrator.mjs run",
-    "automation:run:parallel": "node ./scripts/automation/orchestrator.mjs run-parallel",
-    "automation:resume:parallel": "node ./scripts/automation/orchestrator.mjs resume-parallel",
-    "automation:resume": "node ./scripts/automation/orchestrator.mjs resume",
+    "automation:run": "node ./scripts/automation/orchestrator.mjs run --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty",
+    "automation:run:parallel": "node ./scripts/automation/orchestrator.mjs run-parallel --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty",
+    "automation:resume:parallel": "node ./scripts/automation/orchestrator.mjs resume-parallel --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty",
+    "automation:resume": "node ./scripts/automation/orchestrator.mjs resume --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty",
     "automation:audit": "node ./scripts/automation/orchestrator.mjs audit"
   }
 }

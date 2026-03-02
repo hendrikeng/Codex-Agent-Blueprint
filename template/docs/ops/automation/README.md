@@ -64,8 +64,8 @@ Use the manual path when any of these are true:
 
 ## CLI
 
-- `node ./scripts/automation/orchestrator.mjs run --mode guarded`
-- `node ./scripts/automation/orchestrator.mjs run-parallel --mode guarded --parallel-plans 4`
+- `node ./scripts/automation/orchestrator.mjs run --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty`
+- `node ./scripts/automation/orchestrator.mjs run-parallel --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty`
 - `node ./scripts/automation/orchestrator.mjs resume`
 - `node ./scripts/automation/orchestrator.mjs audit --json true`
 - `node ./scripts/automation/orchestrator.mjs curate-evidence [--scope active|completed|all] [--plan-id <value>]`
@@ -84,7 +84,7 @@ Use the manual path when any of these are true:
 - Recovery controls:
   - `--retry-failed true|false` (default `true`)
   - `--auto-unblock true|false` (default `true`)
-  - `--max-failed-retries <n>` (default `3`)
+  - `--max-failed-retries <n>` (default `2`)
 - Parallel controls:
   - `--parallel-plans <n>` enables dependency-aware parallel branch/worktree execution.
 
@@ -226,20 +226,20 @@ Use the manual path when any of these are true:
 
 Quick run guide:
 
-- Default (low-only): `npm run automation:run -- --mode guarded`
-- Allow medium-risk plans: `ORCH_APPROVED_MEDIUM=1 npm run automation:run -- --mode guarded`
-- Allow high-risk plans: `ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode guarded`
-- Allow medium+high plans: `ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode guarded`
+- Default (low-only): `npm run automation:run`
+- Allow medium-risk plans: `ORCH_APPROVED_MEDIUM=1 npm run automation:run`
+- Allow high-risk plans: `ORCH_APPROVED_HIGH=1 npm run automation:run`
+- Allow medium+high plans: `ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run`
 - Enable full mode (still requires medium/high approvals): `ORCH_ALLOW_FULL_AUTONOMY=1 npm run automation:run -- --mode full`
 - Full mode with medium+high approvals: `ORCH_ALLOW_FULL_AUTONOMY=1 ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode full`
-- Provider override: `ORCH_EXECUTOR_PROVIDER=claude npm run automation:run -- --mode guarded`
+- Provider override: `ORCH_EXECUTOR_PROVIDER=claude npm run automation:run`
 
 Start examples:
 
-- Run with default pretty output: `npm run automation:run -- --mode guarded`
-- Process up to 5 plans in one run: `npm run automation:run -- --mode guarded --max-plans 5`
-- Faster liveness signal in pretty mode: `npm run automation:run -- --mode guarded --heartbeat-seconds 5 --stall-warn-seconds 45`
-- Compact ticker output: `npm run automation:run -- --mode guarded --output ticker`
+- Run with default pretty output + recovery profile: `npm run automation:run`
+- Process up to 5 plans in one run: `npm run automation:run -- --max-plans 5`
+- Faster liveness signal in pretty mode: `npm run automation:run -- --heartbeat-seconds 5 --stall-warn-seconds 45`
+- Compact ticker output: `npm run automation:run -- --output ticker`
 
 Pretty output example:
 
@@ -254,10 +254,10 @@ Pretty output example:
 Parallelism note:
 
 - `--max-plans` is a processing cap.
-- `run` is sequential by default.
+- `run` uses the configured/default concurrency (`--parallel-plans`, default `3` in this template).
 - `run --parallel-plans <n>` (or `run-parallel`) dispatches independent plans into isolated git worktrees/branches.
-- There is no dedicated `resume-parallel` CLI subcommand; continuing parallel execution means invoking `run-parallel` again with desired concurrency.
-- npm convenience alias: `npm run automation:resume:parallel -- --mode guarded --parallel-plans 4` (maps to `run-parallel`).
+- `resume-parallel` is available when you want to continue an existing run with parallel workers.
+- npm convenience alias: `npm run automation:resume:parallel` (maps to `resume-parallel` with template defaults).
 - Dependency gating remains strict: plans only start when all `Dependencies` are satisfied.
 - `parallel.assumeDependencyCompletion` defaults to `false` so dependent plans wait for integration unless explicitly enabled.
 

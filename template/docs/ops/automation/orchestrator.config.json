@@ -56,7 +56,7 @@
   "recovery": {
     "retryFailed": true,
     "autoUnblock": true,
-    "maxFailedRetries": 3
+    "maxFailedRetries": 2
   },
   "evidence": {
     "compaction": {
@@ -206,7 +206,7 @@
     "workerStallFailSeconds": 900
   },
   "parallel": {
-    "maxPlans": 1,
+    "maxPlans": 3,
     "worktreeRoot": "docs/ops/automation/runtime/worktrees",
     "branchPrefix": "orch",
     "baseRef": "HEAD",
