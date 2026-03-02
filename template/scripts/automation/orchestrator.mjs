@@ -2183,6 +2183,26 @@ async function setPlanStatus(planPath, status, dryRun) {
   await fs.writeFile(planPath, updated, 'utf8');
 }
 
+async function snapshotFileState(filePath) {
+  try {
+    const content = await fs.readFile(filePath, 'utf8');
+    return { exists: true, content };
+  } catch {
+    return { exists: false, content: null };
+  }
+}
+
+async function restoreFileState(filePath, snapshot) {
+  if (!snapshot?.exists) {
+    if (await exists(filePath)) {
+      await fs.unlink(filePath);
+    }
+    return;
+  }
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, snapshot.content ?? '', 'utf8');
+}
+
 function replaceExecutorTokens(command, plan, sessionContext) {
   const {
     session,
@@ -4803,6 +4823,37 @@ async function processPlan(plan, paths, state, options, config) {
       }
     }
 
+    const rollbackSnapshots = new Map();
+    const captureRollbackSnapshot = async (targetPath) => {
+      const key = path.resolve(targetPath);
+      if (rollbackSnapshots.has(key)) {
+        return;
+      }
+      rollbackSnapshots.set(key, await snapshotFileState(key));
+    };
+    const rollbackCompletionMutation = async () => {
+      const restoreTargets = [...rollbackSnapshots.keys()].reverse();
+      for (const target of restoreTargets) {
+        await restoreFileState(target, rollbackSnapshots.get(target));
+      }
+    };
+
+    if (shouldCreateAtomicCommit && !options.dryRun) {
+      await captureRollbackSnapshot(plan.filePath);
+      await captureRollbackSnapshot(completedTargetPath);
+      await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, `${plan.planId}.md`));
+      await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, 'README.md'));
+      const specTargets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/current-state.md'];
+      for (const target of specTargets) {
+        try {
+          const resolved = resolveSafeRepoPath(paths.rootDir, target, `Spec target for plan '${plan.planId}'`);
+          await captureRollbackSnapshot(resolved.abs);
+        } catch {
+          // Skip invalid spec targets here; updateProductSpecs already emits explicit skip events.
+        }
+      }
+    }
+
     const completedPath = await finalizeCompletedPlan(
       plan,
       paths,
@@ -4834,9 +4885,12 @@ async function processPlan(plan, paths, state, options, config) {
         commitPolicy
       );
       if (!commitResult.ok) {
+        if (!options.dryRun) {
+          await rollbackCompletionMutation();
+        }
         return {
           outcome: 'failed',
-          reason: commitResult.reason ?? 'atomic commit failed'
+          reason: commitResult.reason ?? 'atomic commit failed; completion mutation rolled back'
         };
       }
       if (commitResult.committed) {
