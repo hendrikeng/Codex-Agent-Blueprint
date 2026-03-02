@@ -5169,6 +5169,16 @@ async function processPlan(plan, paths, state, options, config) {
         typeof sessionResult.touchSummary?.count === 'number' && Number.isFinite(sessionResult.touchSummary.count)
           ? sessionResult.touchSummary.count
           : 0;
+      const pendingTouchCategories = Array.isArray(sessionResult.touchSummary?.categories)
+        ? sessionResult.touchSummary.categories
+        : [];
+      const workerHasMeaningfulTouch = pendingTouchCategories.some((entry) => {
+        const category = String(entry?.category ?? '').trim().toLowerCase();
+        const count = Number(entry?.count ?? 0);
+        return (category === 'source' || category === 'tests') && Number.isFinite(count) && count > 0;
+      });
+      const workerNeedsMeaningfulTouch =
+        currentRole === ROLE_WORKER && nextRole === currentRole && !workerHasMeaningfulTouch;
       const stageBudgetSeconds = Math.max(
         0,
         asInteger(roleConfig.stageBudgetsSeconds?.[currentRole], 0)
@@ -5210,15 +5220,13 @@ async function processPlan(plan, paths, state, options, config) {
         asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)
       );
       if (
-        currentRole === ROLE_WORKER &&
-        nextRole === currentRole &&
-        pendingTouchCount <= 0 &&
+        workerNeedsMeaningfulTouch &&
         workerNoTouchRetryCount < workerNoTouchRetryLimit &&
         session < maxSessionsPerPlan
       ) {
         workerNoTouchRetryCount += 1;
         const retryReason =
-          `Worker returned pending without touching files; retrying worker with edit-first directive ` +
+          `Worker returned pending without touching source/tests files; retrying worker with edit-first directive ` +
           `(${workerNoTouchRetryCount}/${workerNoTouchRetryLimit}). ${pendingReason}`;
         await logEvent(paths, state, 'session_pending_no_touch_retry', {
           planId: plan.planId,
@@ -5235,14 +5243,14 @@ async function processPlan(plan, paths, state, options, config) {
         lastPendingSignal = null;
         continue;
       }
-      if (currentRole === ROLE_WORKER && nextRole === currentRole && pendingTouchCount <= 0) {
+      if (workerNeedsMeaningfulTouch) {
         const retrySummary =
           workerNoTouchRetryLimit > 0
             ? `after ${workerNoTouchRetryCount}/${workerNoTouchRetryLimit} no-touch retries`
             : 'with no-touch retries disabled';
         const failFastReason =
-          `Worker returned pending without touching files ${retrySummary}. ${pendingReason} ` +
-          'Apply at least one concrete repository edit before returning pending.';
+          `Worker returned pending without touching source/tests files ${retrySummary}. ${pendingReason} ` +
+          'Apply at least one concrete source/tests edit before returning pending; docs-only updates are insufficient for worker pending.';
         await logEvent(paths, state, 'session_pending_fail_fast', {
           planId: plan.planId,
           session,
@@ -5259,7 +5267,7 @@ async function processPlan(plan, paths, state, options, config) {
           riskTier: lastAssessment.effectiveRiskTier
         };
       }
-      if (currentRole === ROLE_WORKER && pendingTouchCount > 0) {
+      if (currentRole === ROLE_WORKER && workerHasMeaningfulTouch) {
         workerNoTouchRetryCount = 0;
       } else if (currentRole !== ROLE_WORKER) {
         workerNoTouchRetryCount = 0;
