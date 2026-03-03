@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 
-const MANDATORY_COMMANDS = [
-  'node ./scripts/automation/compile-runtime-context.mjs',
-  'node ./scripts/docs/repair-plan-references.mjs',
-  'node ./scripts/docs/check-governance.mjs',
-  'node ./scripts/automation/check-plan-metadata.mjs'
-];
+function mandatoryCommands() {
+  const ciMode = asBoolean(process.env.CI, false);
+  const repairCommand = ciMode
+    ? 'node ./scripts/docs/repair-plan-references.mjs --dry-run'
+    : 'node ./scripts/docs/repair-plan-references.mjs';
+
+  return [
+    'node ./scripts/automation/compile-runtime-context.mjs',
+    repairCommand,
+    'node ./scripts/docs/check-governance.mjs',
+    'node ./scripts/automation/check-plan-metadata.mjs'
+  ];
+}
 
 function parseArgs(argv) {
   const options = {};
@@ -104,7 +111,7 @@ function anyMatch(files, matcher) {
 }
 
 function buildCommandSet(changedFiles) {
-  const selected = new Set(MANDATORY_COMMANDS);
+  const selected = new Set(mandatoryCommands());
   const changedCount = changedFiles.length;
 
   const changedArchitecture = anyMatch(changedFiles, (file) => (
