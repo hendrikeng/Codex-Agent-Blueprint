@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import {
+  ACTIVE_STATUSES,
+  inferPlanId,
+  metadataValue,
+  normalizeStatus,
+  parseListField,
+  parseMetadata,
+  parsePlanId
+} from './lib/plan-metadata.mjs';
 
 const commandArg = String(process.argv[2] ?? 'run').trim().toLowerCase();
 const firstCommand = commandArg === 'resume' ? 'resume' : 'run';
@@ -12,6 +21,7 @@ const maxCycles = Number.parseInt(process.env.ORCH_GRIND_MAX_CYCLES ?? '120', 10
 const stableLimit = Number.parseInt(process.env.ORCH_GRIND_STABLE_LIMIT ?? '4', 10);
 const rootDir = process.cwd();
 const runStatePath = path.join(rootDir, 'docs/ops/automation/run-state.json');
+const activePlansDir = path.join(rootDir, 'docs/exec-plans/active');
 
 const baseArgs = [
   '--mode', 'guarded',
@@ -47,26 +57,82 @@ function readRunState() {
   }
 }
 
-function stateSignature(state) {
+function readActivePlanRecords() {
+  if (!existsSync(activePlansDir)) {
+    return [];
+  }
+
+  const records = [];
+  for (const fileName of readdirSync(activePlansDir)) {
+    if (!fileName.endsWith('.md') || fileName === 'README.md') {
+      continue;
+    }
+
+    const filePath = path.join(activePlansDir, fileName);
+    const content = readFileSync(filePath, 'utf8');
+    const metadata = parseMetadata(content);
+    const status = normalizeStatus(metadataValue(metadata, 'Status'));
+    const explicitPlanId = metadataValue(metadata, 'Plan-ID');
+    const planId = parsePlanId(explicitPlanId, null) ?? inferPlanId(content, filePath);
+
+    if (!planId) {
+      continue;
+    }
+
+    const dependencies = parseListField(metadataValue(metadata, 'Dependencies'))
+      .map((entry) => parsePlanId(entry, null))
+      .filter(Boolean);
+
+    records.push({ planId, status, dependencies });
+  }
+
+  return records;
+}
+
+function unresolvedActivePlanIds(state, activePlans) {
+  const completed = new Set(Array.isArray(state?.completedPlanIds) ? state.completedPlanIds : []);
+  const blocked = new Set(Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds : []);
+  const failed = new Set(Array.isArray(state?.failedPlanIds) ? state.failedPlanIds : []);
+
+  return activePlans
+    .filter((plan) => ACTIVE_STATUSES.has(plan.status))
+    .map((plan) => plan.planId)
+    .filter((planId) => !completed.has(planId) && !blocked.has(planId) && !failed.has(planId))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function stateSignature(state, unresolvedActivePlanIdsList) {
   const queue = Array.isArray(state?.queue) ? state.queue : [];
   const blocked = Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds : [];
   const failed = Array.isArray(state?.failedPlanIds) ? state.failedPlanIds : [];
   const completedCount = Array.isArray(state?.completedPlanIds) ? state.completedPlanIds.length : 0;
   const inProgressPlan = state?.inProgress?.planId ?? null;
-  return JSON.stringify({ queue, blocked, failed, completedCount, inProgressPlan });
+  return JSON.stringify({
+    queue,
+    blocked,
+    failed,
+    completedCount,
+    inProgressPlan,
+    unresolvedActive: unresolvedActivePlanIdsList
+  });
 }
 
-function queueDrained(state) {
+function queueDrained(state, unresolvedActivePlanIdsList) {
   const queue = Array.isArray(state?.queue) ? state.queue : [];
-  return queue.length === 0 && !state?.inProgress;
+  return queue.length === 0 && !state?.inProgress && unresolvedActivePlanIdsList.length === 0;
 }
 
-function renderSummary(state) {
+function renderSummary(state, unresolvedActivePlanIdsList) {
   const queueCount = Array.isArray(state?.queue) ? state.queue.length : 0;
   const blockedCount = Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds.length : 0;
   const failedCount = Array.isArray(state?.failedPlanIds) ? state.failedPlanIds.length : 0;
   const inProgressPlan = state?.inProgress?.planId ?? 'none';
-  return `queue=${queueCount} blocked=${blockedCount} failed=${failedCount} inProgress=${inProgressPlan}`;
+  const unresolvedCount = unresolvedActivePlanIdsList.length;
+  const unresolvedSample = unresolvedCount > 0 ? unresolvedActivePlanIdsList.slice(0, 3).join(',') : 'none';
+  return (
+    `queue=${queueCount} blocked=${blockedCount} failed=${failedCount} inProgress=${inProgressPlan} ` +
+    `unresolvedActive=${unresolvedCount} sample=${unresolvedSample}`
+  );
 }
 
 for (let cycle = 0; cycle < maxCycles; cycle += 1) {
@@ -79,14 +145,16 @@ for (let cycle = 0; cycle < maxCycles; cycle += 1) {
     process.exit(0);
   }
 
-  console.log(`[grind] state after cycle ${cycle + 1}: ${renderSummary(state)}`);
+  const activePlans = readActivePlanRecords();
+  const unresolvedIds = unresolvedActivePlanIds(state, activePlans);
+  console.log(`[grind] state after cycle ${cycle + 1}: ${renderSummary(state, unresolvedIds)}`);
 
-  if (queueDrained(state)) {
+  if (queueDrained(state, unresolvedIds)) {
     console.log('[grind] queue drained; done.');
     process.exit(0);
   }
 
-  const signature = stateSignature(state);
+  const signature = stateSignature(state, unresolvedIds);
   if (signature === previousSignature) {
     stableCycles += 1;
   } else {
