@@ -31,6 +31,17 @@ const baseArgs = [
   '--output', process.env.ORCH_OUTPUT ?? 'pretty'
 ];
 
+function hasCliFlag(flag) {
+  return passthroughArgs.some((entry) => entry === flag || entry.startsWith(`${flag}=`));
+}
+
+if (!hasCliFlag('--allow-dirty')) {
+  baseArgs.push('--allow-dirty', 'true');
+}
+if (!hasCliFlag('--commit')) {
+  baseArgs.push('--commit', 'false');
+}
+
 let stableCycles = 0;
 let previousSignature = '';
 
