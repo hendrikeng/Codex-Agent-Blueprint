@@ -51,6 +51,7 @@ const DEFAULT_TOUCH_SCAN_BACKOFF_UNCHANGED = 2;
 const DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS = 180;
 const DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS = DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS;
 const DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT = 1;
+const DEFAULT_WORKER_PENDING_STREAK_LIMIT = 4;
 const DEFAULT_WORKER_STALL_FAIL_SECONDS = 900;
 const DEFAULT_CONTACT_PACKS_ENABLED = true;
 const DEFAULT_CONTACT_PACKS_MAX_POLICY_BULLETS = 10;
@@ -185,6 +186,7 @@ Options:
   --worker-first-touch-deadline-seconds <n> Fail-fast worker sessions that make no edits after n seconds (default: 180, 0 disables)
   --worker-retry-first-touch-deadline-seconds <n> Retry-session first-touch deadline for no-touch worker retries (default: inherits worker-first-touch-deadline-seconds)
   --worker-no-touch-retry-limit <n> Retry worker pending-without-edits sessions automatically up to n times (default: 1)
+  --worker-pending-streak-limit <n> Fail-fast when worker returns same-role pending more than n consecutive sessions (default: 4, 0 disables)
   --worker-stall-fail-seconds <n>   Fail-fast worker sessions that go idle after making edits (default: 900, 0 disables)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
   --auto-unblock true|false          Auto-unblock blocked plans when policy gates are now satisfied (default: true)
@@ -1795,6 +1797,15 @@ function resolveRuntimeExecutorOptions(options, config) {
       DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT
     )
   );
+  const workerPendingStreakLimit = Math.max(
+    0,
+    asInteger(
+      options.workerPendingStreakLimit ??
+        options['worker-pending-streak-limit'] ??
+        config.logging?.workerPendingStreakLimit,
+      DEFAULT_WORKER_PENDING_STREAK_LIMIT
+    )
+  );
   const workerStallFailSeconds = Math.max(
     0,
     asInteger(
@@ -1871,6 +1882,7 @@ function resolveRuntimeExecutorOptions(options, config) {
     workerFirstTouchDeadlineSeconds,
     workerRetryFirstTouchDeadlineSeconds,
     workerNoTouchRetryLimit,
+    workerPendingStreakLimit,
     workerStallFailSeconds,
     contactPackEnabled,
     contactPackMaxPolicyBullets,
@@ -4594,17 +4606,48 @@ function replacePathEverywhere(content, fromValue, toValue) {
   };
 }
 
-async function rewriteEvidenceReferencesInPlanDocs(paths, replacements, options) {
+async function collectExecutionPlanMarkdownFiles(paths) {
+  const collected = [];
+  const visited = new Set();
+
+  async function walk(directoryAbs) {
+    const normalizedDir = toPosix(directoryAbs);
+    if (visited.has(normalizedDir)) {
+      return;
+    }
+    visited.add(normalizedDir);
+
+    let entries = [];
+    try {
+      entries = await fs.readdir(directoryAbs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(directoryAbs, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) {
+        continue;
+      }
+      collected.push(entryPath);
+    }
+  }
+
+  await walk(paths.activeDir);
+  await walk(paths.completedDir);
+  return collected.sort((a, b) => a.localeCompare(b));
+}
+
+async function rewriteExecutionDocPathReferences(paths, replacements, options) {
   if (replacements.length === 0) {
     return { filesUpdated: 0, replacementsApplied: 0 };
   }
 
-  const [activeFiles, completedFiles] = await Promise.all([
-    listMarkdownFiles(paths.activeDir),
-    listMarkdownFiles(paths.completedDir)
-  ]);
-  const files = [...activeFiles, ...completedFiles];
-
+  const files = await collectExecutionPlanMarkdownFiles(paths);
   let filesUpdated = 0;
   let replacementsApplied = 0;
 
@@ -4644,6 +4687,21 @@ async function rewriteEvidenceReferencesInPlanDocs(paths, replacements, options)
     filesUpdated,
     replacementsApplied
   };
+}
+
+async function rewriteEvidenceReferencesInPlanDocs(paths, replacements, options) {
+  return rewriteExecutionDocPathReferences(paths, replacements, options);
+}
+
+async function rewritePlanFileReferencesInPlanDocs(paths, fromRel, toRel, options) {
+  if (!fromRel || !toRel || fromRel === toRel) {
+    return { filesUpdated: 0, replacementsApplied: 0 };
+  }
+  return rewriteExecutionDocPathReferences(
+    paths,
+    [{ fromRel: assertSafeRelativePlanPath(fromRel), toRel: assertSafeRelativePlanPath(toRel) }],
+    options
+  );
 }
 
 function evidenceDirectoriesFromContent(content, planRel) {
@@ -5275,6 +5333,17 @@ async function finalizeCompletedPlan(plan, paths, state, validationEvidence, opt
     await fs.unlink(plan.filePath);
   }
 
+  const rewriteSummary = await rewritePlanFileReferencesInPlanDocs(paths, plan.rel, completedRel, options);
+  if (rewriteSummary.filesUpdated > 0 || rewriteSummary.replacementsApplied > 0) {
+    await logEvent(paths, state, 'plan_reference_rewritten', {
+      planId: plan.planId,
+      fromPath: plan.rel,
+      toPath: completedRel,
+      filesUpdated: rewriteSummary.filesUpdated,
+      replacementsApplied: rewriteSummary.replacementsApplied
+    }, options.dryRun);
+  }
+
   return targetPath;
 }
 
@@ -5416,6 +5485,7 @@ async function processPlan(plan, paths, state, options, config) {
   let rollovers = 0;
   let lastPendingSignal = null;
   let workerNoTouchRetryCount = 0;
+  let workerPendingStreak = 0;
   let roleState = ensureRoleState(state, plan, lastAssessment, resolvePipelineStages(lastAssessment, config), config);
   await announceStageReuse(paths, state, plan, roleState, options);
 
@@ -5762,6 +5832,10 @@ async function processPlan(plan, paths, state, options, config) {
         0,
         asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)
       );
+      const workerPendingStreakLimit = Math.max(
+        0,
+        asInteger(options.workerPendingStreakLimit, DEFAULT_WORKER_PENDING_STREAK_LIMIT)
+      );
       if (
         workerNeedsMeaningfulTouch &&
         workerNoTouchRetryCount < workerNoTouchRetryLimit &&
@@ -5784,6 +5858,7 @@ async function processPlan(plan, paths, state, options, config) {
         }, options.dryRun);
         progressLog(options, `session retry ${plan.planId}: ${retryReason}`);
         lastPendingSignal = null;
+        workerPendingStreak = 0;
         continue;
       }
       if (workerNeedsMeaningfulTouch) {
@@ -5814,6 +5889,37 @@ async function processPlan(plan, paths, state, options, config) {
         workerNoTouchRetryCount = 0;
       } else if (currentRole !== ROLE_WORKER) {
         workerNoTouchRetryCount = 0;
+      }
+      if (currentRole === ROLE_WORKER && nextRole === currentRole) {
+        workerPendingStreak += 1;
+      } else {
+        workerPendingStreak = 0;
+      }
+      if (
+        currentRole === ROLE_WORKER &&
+        nextRole === currentRole &&
+        workerPendingStreakLimit > 0 &&
+        workerPendingStreak > workerPendingStreakLimit
+      ) {
+        const failFastReason =
+          `Worker pending streak exceeded (${workerPendingStreak}/${workerPendingStreakLimit}) ` +
+          `without leaving implementation stage. ${pendingReason} Narrow to one implementation slice and resume.`;
+        await logEvent(paths, state, 'session_pending_streak_fail_fast', {
+          planId: plan.planId,
+          session,
+          role: currentRole,
+          nextRole,
+          effectiveRiskTier: lastAssessment.effectiveRiskTier,
+          pendingStreak: workerPendingStreak,
+          pendingStreakLimit: workerPendingStreakLimit,
+          reason: failFastReason
+        }, options.dryRun);
+        progressLog(options, `session fail-fast ${plan.planId}: ${failFastReason}`);
+        return {
+          outcome: 'pending',
+          reason: failFastReason,
+          riskTier: lastAssessment.effectiveRiskTier
+        };
       }
       const signal = pendingSignalSignature(currentRole, nextRole, pendingReason);
       if (nextRole === currentRole && signal === lastPendingSignal) {
@@ -5862,6 +5968,7 @@ async function processPlan(plan, paths, state, options, config) {
 
     lastPendingSignal = null;
     workerNoTouchRetryCount = 0;
+    workerPendingStreak = 0;
 
     advanceRoleState(roleState, currentRole);
     state.roleState[plan.planId] = roleState;
@@ -6587,6 +6694,8 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asInteger(options.workerRetryFirstTouchDeadlineSeconds, DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS)),
     '--worker-no-touch-retry-limit',
     String(asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)),
+    '--worker-pending-streak-limit',
+    String(asInteger(options.workerPendingStreakLimit, DEFAULT_WORKER_PENDING_STREAK_LIMIT)),
     '--worker-stall-fail-seconds',
     String(asInteger(options.workerStallFailSeconds, DEFAULT_WORKER_STALL_FAIL_SECONDS)),
     '--retry-failed',
@@ -7214,6 +7323,7 @@ async function runCommand(paths, options) {
           firstTouchDeadlineSeconds: options.workerFirstTouchDeadlineSeconds,
           retryFirstTouchDeadlineSeconds: options.workerRetryFirstTouchDeadlineSeconds,
           noTouchRetryLimit: options.workerNoTouchRetryLimit,
+          pendingStreakLimit: options.workerPendingStreakLimit,
           stallFailSeconds: options.workerStallFailSeconds
         },
         evidenceSessionMaintenance: {
@@ -7333,6 +7443,7 @@ async function resumeCommand(paths, options) {
           firstTouchDeadlineSeconds: options.workerFirstTouchDeadlineSeconds,
           retryFirstTouchDeadlineSeconds: options.workerRetryFirstTouchDeadlineSeconds,
           noTouchRetryLimit: options.workerNoTouchRetryLimit,
+          pendingStreakLimit: options.workerPendingStreakLimit,
           stallFailSeconds: options.workerStallFailSeconds
         },
         evidenceSessionMaintenance: {
@@ -7551,6 +7662,8 @@ async function main() {
       rawOptions['worker-retry-first-touch-deadline-seconds'] ?? rawOptions.workerRetryFirstTouchDeadlineSeconds,
     workerNoTouchRetryLimit:
       rawOptions['worker-no-touch-retry-limit'] ?? rawOptions.workerNoTouchRetryLimit,
+    workerPendingStreakLimit:
+      rawOptions['worker-pending-streak-limit'] ?? rawOptions.workerPendingStreakLimit,
     workerStallFailSeconds:
       rawOptions['worker-stall-fail-seconds'] ?? rawOptions.workerStallFailSeconds
   };

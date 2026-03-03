@@ -211,6 +211,7 @@
     "workerFirstTouchDeadlineSeconds": 180,
     "workerRetryFirstTouchDeadlineSeconds": 180,
     "workerNoTouchRetryLimit": 1,
+    "workerPendingStreakLimit": 4,
     "workerStallFailSeconds": 900
   },
   "parallel": {

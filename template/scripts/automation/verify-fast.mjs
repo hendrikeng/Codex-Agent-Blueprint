@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 
 const MANDATORY_COMMANDS = [
   'node ./scripts/automation/compile-runtime-context.mjs',
+  'node ./scripts/docs/repair-plan-references.mjs',
   'node ./scripts/docs/check-governance.mjs',
   'node ./scripts/automation/check-plan-metadata.mjs'
 ];

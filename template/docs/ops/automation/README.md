@@ -82,6 +82,7 @@ Use the manual path when any of these are true:
   - `--worker-first-touch-deadline-seconds <n>` (default `180`, `0` disables)
   - `--worker-retry-first-touch-deadline-seconds <n>` (default inherits `--worker-first-touch-deadline-seconds`)
   - `--worker-no-touch-retry-limit <n>` (default `1`)
+  - `--worker-pending-streak-limit <n>` (default `4`, `0` disables)
 - Recovery controls:
   - `--retry-failed true|false` (default `true`)
   - `--auto-unblock true|false` (default `true`)
@@ -106,7 +107,7 @@ Use the manual path when any of these are true:
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
   - `"context.contactPacks"` configures per-task scoped role contact packs (`enabled`, `maxPolicyBullets`, `includeRecentEvidence`, `maxRecentEvidenceItems`, `cacheMode`).
   - `With "context.contactPacks.cacheMode": "run-memory", cache keys include an evidence freshness token (state signature when available, otherwise evidence-index file stat) to avoid stale recent-evidence payloads.`
-  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, `"logging.touchScanMode": "adaptive"`, `"logging.touchScanMinHeartbeats": 1`, `"logging.touchScanMaxHeartbeats": 8`, `"logging.touchScanBackoffUnchanged": 2`, `"logging.workerFirstTouchDeadlineSeconds": 180`, `"logging.workerRetryFirstTouchDeadlineSeconds": 180`, and `"logging.workerNoTouchRetryLimit": 1` tune operator-facing output noise, liveness, live file-touch visibility, touch-scan cadence, and worker no-progress fail-fast behavior (`workerFirstTouchDeadlineSeconds: 0` disables deadline fail-fast; retry sessions inherit the base deadline unless overridden).
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, `"logging.touchScanMode": "adaptive"`, `"logging.touchScanMinHeartbeats": 1`, `"logging.touchScanMaxHeartbeats": 8`, `"logging.touchScanBackoffUnchanged": 2`, `"logging.workerFirstTouchDeadlineSeconds": 180`, `"logging.workerRetryFirstTouchDeadlineSeconds": 180`, `"logging.workerNoTouchRetryLimit": 1`, and `"logging.workerPendingStreakLimit": 4` tune operator-facing output noise, liveness, live file-touch visibility, touch-scan cadence, and worker no-progress fail-fast behavior (`workerFirstTouchDeadlineSeconds: 0` disables deadline fail-fast; retry sessions inherit the base deadline unless overridden; `workerPendingStreakLimit: 0` disables worker same-role pending streak fail-fast).
   - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 3` control automatic retry/unblock behavior for resumable plans.
   - `"parallel.maxPlans"` sets default worker concurrency for `run --parallel-plans`.
   - `"parallel.workerOutputMode": "minimal"` keeps branch workers concise by default.
@@ -176,7 +177,7 @@ Use the manual path when any of these are true:
   - File-touch detail lines (`file activity ...`) emit category counts and representative file samples when touched-file sets change.
   - Raw command output is written to `docs/ops/automation/runtime/<run-id>/` session/validation logs.
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
-  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, `logging.touchSampleSize`, `logging.touchScanMode`, `logging.touchScanMinHeartbeats`, `logging.touchScanMaxHeartbeats`, `logging.touchScanBackoffUnchanged`, `logging.workerFirstTouchDeadlineSeconds`, `logging.workerRetryFirstTouchDeadlineSeconds`, and `logging.workerNoTouchRetryLimit` tune heartbeat cadence, stall-warning threshold, file-touch detail level/cadence, worker first-edit deadline fail-fast (`--worker-first-touch-deadline-seconds`), retry-session first-edit deadline (`--worker-retry-first-touch-deadline-seconds`), and automatic worker no-touch retries (`--worker-no-touch-retry-limit`).
+  - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, `logging.touchSampleSize`, `logging.touchScanMode`, `logging.touchScanMinHeartbeats`, `logging.touchScanMaxHeartbeats`, `logging.touchScanBackoffUnchanged`, `logging.workerFirstTouchDeadlineSeconds`, `logging.workerRetryFirstTouchDeadlineSeconds`, `logging.workerNoTouchRetryLimit`, and `logging.workerPendingStreakLimit` tune heartbeat cadence, stall-warning threshold, file-touch detail level/cadence, worker first-edit deadline fail-fast (`--worker-first-touch-deadline-seconds`), retry-session first-edit deadline (`--worker-retry-first-touch-deadline-seconds`), automatic worker no-touch retries (`--worker-no-touch-retry-limit`), and same-role worker pending streak fail-fast (`--worker-pending-streak-limit`).
 - Drift guardrail:
   - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default, runtime-context and stage-reuse policy).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
@@ -185,6 +186,7 @@ Use the manual path when any of these are true:
 
 - Fast iteration profile: `npm run verify:fast`
   - Runs mandatory safety checks plus scope-selected verifiers.
+  - Runs `node ./scripts/docs/repair-plan-references.mjs` before docs governance checks so stale plan-path links are auto-healed while keeping strict governance enabled.
 - Full merge profile: `npm run verify:full`
   - Runs all required repository gates.
 - Metrics capture:
@@ -288,6 +290,7 @@ Executor commands should use these outcomes:
 - Planner/explorer `pending` with implementation-handoff reasons (for example, read-only constraints or implementation still pending) auto-advances to the next stage to avoid no-op loops.
 - Planner/explorer/reviewer sessions are restricted to execution plan/evidence docs (`docs/exec-plans/**`); touching other paths fails fast as a policy violation.
 - Worker `pending` without touched files auto-retries first (bounded by `--worker-no-touch-retry-limit`, with retry timeout controlled by `--worker-retry-first-touch-deadline-seconds`), then fails fast if still no-progress.
+- Worker same-role `pending` streaks fail fast when they exceed `--worker-pending-streak-limit`, forcing narrower implementation slices instead of long in-run loops.
 - Repeated identical `pending` signals for the same role fail fast in-run so orchestration does not spin on no-progress loops.
 - `blocked` / `failed` / `pending` outcomes print concrete `next steps` guidance with a ready-to-run `automation:resume` command.
 - `blocked` remains reserved for external/manual gates; `failed` remains a validation/execution failure signal.

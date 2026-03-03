@@ -146,6 +146,18 @@ function renderSummary(state, unresolvedActivePlanIdsList) {
   );
 }
 
+function isStuckNoQueueState(state, unresolvedActivePlanIdsList) {
+  const queueCount = Array.isArray(state?.queue) ? state.queue.length : 0;
+  const blockedCount = Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds.length : 0;
+  const failedCount = Array.isArray(state?.failedPlanIds) ? state.failedPlanIds.length : 0;
+  return (
+    queueCount === 0 &&
+    !state?.inProgress &&
+    unresolvedActivePlanIdsList.length > 0 &&
+    (blockedCount > 0 || failedCount > 0)
+  );
+}
+
 for (let cycle = 0; cycle < maxCycles; cycle += 1) {
   const command = cycle === 0 ? firstCommand : 'resume';
   runOrchestrator(command);
@@ -160,12 +172,20 @@ for (let cycle = 0; cycle < maxCycles; cycle += 1) {
   const unresolvedIds = unresolvedActivePlanIds(state, activePlans);
   console.log(`[grind] state after cycle ${cycle + 1}: ${renderSummary(state, unresolvedIds)}`);
 
+  const signature = stateSignature(state, unresolvedIds);
+  if (isStuckNoQueueState(state, unresolvedIds) && signature === previousSignature) {
+    console.error(
+      '[grind] no executable queue remains and unresolved active plans are blocked/failed without state changes. ' +
+      'Stopping for manual review to avoid endless retries.'
+    );
+    process.exit(2);
+  }
+
   if (queueDrained(state, unresolvedIds)) {
     console.log('[grind] queue drained; done.');
     process.exit(0);
   }
 
-  const signature = stateSignature(state, unresolvedIds);
   if (signature === previousSignature) {
     stableCycles += 1;
   } else {
