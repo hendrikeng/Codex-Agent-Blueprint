@@ -19,6 +19,10 @@ const passthroughArgs = process.argv.slice(3);
 
 const maxCycles = Number.parseInt(process.env.ORCH_GRIND_MAX_CYCLES ?? '120', 10);
 const stableLimit = Number.parseInt(process.env.ORCH_GRIND_STABLE_LIMIT ?? '4', 10);
+const maxFailedRetries = Number.parseInt(process.env.ORCH_MAX_FAILED_RETRIES ?? '10', 10);
+const effectiveMaxFailedRetries = Number.isFinite(maxFailedRetries) && maxFailedRetries >= 0
+  ? String(maxFailedRetries)
+  : '10';
 const rootDir = process.cwd();
 const runStatePath = path.join(rootDir, 'docs/ops/automation/run-state.json');
 const activePlansDir = path.join(rootDir, 'docs/exec-plans/active');
@@ -27,7 +31,7 @@ const baseArgs = [
   '--mode', 'guarded',
   '--retry-failed', 'true',
   '--auto-unblock', 'true',
-  '--max-failed-retries', '2',
+  '--max-failed-retries', effectiveMaxFailedRetries,
   '--output', process.env.ORCH_OUTPUT ?? 'pretty'
 ];
 

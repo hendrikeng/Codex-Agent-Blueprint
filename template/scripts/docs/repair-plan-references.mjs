@@ -229,15 +229,27 @@ function collectReferenceTokens(content, sourceFile) {
   return collected;
 }
 
-function replaceAll(content, fromValue, toValue) {
-  if (!fromValue || fromValue === toValue || !content.includes(fromValue)) {
-    return { content, replacements: 0 };
-  }
-  const parts = content.split(fromValue);
-  return {
-    content: parts.join(toValue),
-    replacements: Math.max(0, parts.length - 1)
-  };
+function applyRewrites(content, rewrites) {
+  let replacements = 0;
+  let updated = content.replace(LINK_REGEX, (fullMatch, rawRef) => {
+    const rewritten = rewrites.get(rawRef);
+    if (!rewritten || rewritten === rawRef) {
+      return fullMatch;
+    }
+    replacements += 1;
+    return fullMatch.replace(`(${rawRef})`, `(${rewritten})`);
+  });
+
+  updated = updated.replace(INLINE_CODE_REGEX, (fullMatch, rawRef) => {
+    const rewritten = rewrites.get(rawRef);
+    if (!rewritten || rewritten === rawRef) {
+      return fullMatch;
+    }
+    replacements += 1;
+    return `\`${rewritten}\``;
+  });
+
+  return { content: updated, replacements };
 }
 
 async function main() {
@@ -294,12 +306,9 @@ async function main() {
       continue;
     }
 
-    let updated = original;
-    for (const [fromValue, toValue] of [...rewrites.entries()].sort((a, b) => b[0].length - a[0].length)) {
-      const result = replaceAll(updated, fromValue, toValue);
-      updated = result.content;
-      refsRepaired += result.replacements;
-    }
+    const result = applyRewrites(original, rewrites);
+    const updated = result.content;
+    refsRepaired += result.replacements;
 
     if (updated !== original) {
       filesUpdated += 1;
