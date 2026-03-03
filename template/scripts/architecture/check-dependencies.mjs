@@ -46,20 +46,40 @@ function findBoundaryRule(eslintConfig) {
 }
 
 function runRg(pattern, absDir, globs = ['*.ts', '*.tsx']) {
-  const args = ['-n', '--pcre2'];
+  const args = ['-n', '--pcre2', '--max-count', '200'];
   for (const glob of globs) {
     args.push('--glob', glob);
   }
   args.push(pattern, absDir);
 
-  const result = spawnSync('rg', args, { encoding: 'utf8' });
+  const result = spawnSync('rg', args, {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024 * 16
+  });
 
   if (result.status === 1) {
     return '';
   }
 
+  if (result.error) {
+    const code = typeof result.error.code === 'string' ? result.error.code : 'unknown';
+    if (code === 'ENOENT') {
+      throw new Error('rg binary not found in PATH');
+    }
+    if (code === 'ENOBUFS') {
+      throw new Error('rg output exceeded buffer limit (max-count=200, maxBuffer=16MB)');
+    }
+    throw new Error(result.error.message || `rg failed (${code})`);
+  }
+
   if (result.status !== 0) {
-    throw new Error(result.stderr?.trim() || result.stdout?.trim() || `rg failed with exit code ${result.status}`);
+    throw new Error(
+      result.stderr?.trim() ||
+      result.stdout?.trim() ||
+      (result.signal
+        ? `rg terminated by signal ${result.signal}`
+        : `rg failed with exit code ${result.status}`)
+    );
   }
 
   return result.stdout.trim();
