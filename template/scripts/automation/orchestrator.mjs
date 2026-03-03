@@ -49,7 +49,7 @@ const DEFAULT_TOUCH_SCAN_MIN_HEARTBEATS = 1;
 const DEFAULT_TOUCH_SCAN_MAX_HEARTBEATS = 8;
 const DEFAULT_TOUCH_SCAN_BACKOFF_UNCHANGED = 2;
 const DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS = 180;
-const DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS = 60;
+const DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS = DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS;
 const DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT = 1;
 const DEFAULT_WORKER_STALL_FAIL_SECONDS = 900;
 const DEFAULT_CONTACT_PACKS_ENABLED = true;
@@ -183,6 +183,7 @@ Options:
   --touch-scan-max-heartbeats <n>    Maximum heartbeats between touch scans in adaptive mode (default: 8)
   --touch-scan-backoff-unchanged <n> Adaptive backoff multiplier when scans are unchanged (default: 2)
   --worker-first-touch-deadline-seconds <n> Fail-fast worker sessions that make no edits after n seconds (default: 180, 0 disables)
+  --worker-retry-first-touch-deadline-seconds <n> Retry-session first-touch deadline for no-touch worker retries (default: inherits worker-first-touch-deadline-seconds)
   --worker-no-touch-retry-limit <n> Retry worker pending-without-edits sessions automatically up to n times (default: 1)
   --worker-stall-fail-seconds <n>   Fail-fast worker sessions that go idle after making edits (default: 900, 0 disables)
   --retry-failed true|false          Retry failed plans automatically when policy gates allow (default: true)
@@ -1453,6 +1454,7 @@ async function loadConfig(paths) {
       touchScanMaxHeartbeats: DEFAULT_TOUCH_SCAN_MAX_HEARTBEATS,
       touchScanBackoffUnchanged: DEFAULT_TOUCH_SCAN_BACKOFF_UNCHANGED,
       workerFirstTouchDeadlineSeconds: DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS,
+      workerRetryFirstTouchDeadlineSeconds: DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS,
       workerNoTouchRetryLimit: DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT,
       workerStallFailSeconds: DEFAULT_WORKER_STALL_FAIL_SECONDS
     },
@@ -1774,6 +1776,16 @@ function resolveRuntimeExecutorOptions(options, config) {
       DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS
     )
   );
+  const workerRetryFirstTouchDeadlineSeconds = Math.max(
+    0,
+    asInteger(
+      options.workerRetryFirstTouchDeadlineSeconds ??
+        options['worker-retry-first-touch-deadline-seconds'] ??
+        config.logging?.workerRetryFirstTouchDeadlineSeconds ??
+        workerFirstTouchDeadlineSeconds,
+      workerFirstTouchDeadlineSeconds
+    )
+  );
   const workerNoTouchRetryLimit = Math.max(
     0,
     asInteger(
@@ -1857,6 +1869,7 @@ function resolveRuntimeExecutorOptions(options, config) {
     touchScanMaxHeartbeats,
     touchScanBackoffUnchanged,
     workerFirstTouchDeadlineSeconds,
+    workerRetryFirstTouchDeadlineSeconds,
     workerNoTouchRetryLimit,
     workerStallFailSeconds,
     contactPackEnabled,
@@ -3310,13 +3323,18 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     0,
     asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)
   );
+  const retryWorkerFirstTouchDeadlineSeconds = Math.max(
+    0,
+    asInteger(options.workerRetryFirstTouchDeadlineSeconds, baseWorkerFirstTouchDeadlineSeconds)
+  );
   const effectiveWorkerFirstTouchDeadlineSeconds =
     role === ROLE_WORKER &&
     workerNoTouchRetryCount > 0 &&
-    baseWorkerFirstTouchDeadlineSeconds > 0
+    baseWorkerFirstTouchDeadlineSeconds > 0 &&
+    retryWorkerFirstTouchDeadlineSeconds > 0
       ? Math.min(
           baseWorkerFirstTouchDeadlineSeconds,
-          DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS
+          retryWorkerFirstTouchDeadlineSeconds
         )
       : baseWorkerFirstTouchDeadlineSeconds;
   const sessionExecutionOptions =
@@ -6565,6 +6583,8 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asInteger(options.touchScanBackoffUnchanged, DEFAULT_TOUCH_SCAN_BACKOFF_UNCHANGED)),
     '--worker-first-touch-deadline-seconds',
     String(asInteger(options.workerFirstTouchDeadlineSeconds, DEFAULT_WORKER_FIRST_TOUCH_DEADLINE_SECONDS)),
+    '--worker-retry-first-touch-deadline-seconds',
+    String(asInteger(options.workerRetryFirstTouchDeadlineSeconds, DEFAULT_WORKER_RETRY_FIRST_TOUCH_DEADLINE_SECONDS)),
     '--worker-no-touch-retry-limit',
     String(asInteger(options.workerNoTouchRetryLimit, DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT)),
     '--worker-stall-fail-seconds',
@@ -7190,6 +7210,12 @@ async function runCommand(paths, options) {
           maxHeartbeats: options.touchScanMaxHeartbeats,
           backoffUnchanged: options.touchScanBackoffUnchanged
         },
+        workerProgressGuards: {
+          firstTouchDeadlineSeconds: options.workerFirstTouchDeadlineSeconds,
+          retryFirstTouchDeadlineSeconds: options.workerRetryFirstTouchDeadlineSeconds,
+          noTouchRetryLimit: options.workerNoTouchRetryLimit,
+          stallFailSeconds: options.workerStallFailSeconds
+        },
         evidenceSessionMaintenance: {
           indexRefreshMode: options.evidenceSessionIndexRefreshMode,
           curationMode: options.evidenceSessionCurationMode
@@ -7302,6 +7328,12 @@ async function resumeCommand(paths, options) {
           minHeartbeats: options.touchScanMinHeartbeats,
           maxHeartbeats: options.touchScanMaxHeartbeats,
           backoffUnchanged: options.touchScanBackoffUnchanged
+        },
+        workerProgressGuards: {
+          firstTouchDeadlineSeconds: options.workerFirstTouchDeadlineSeconds,
+          retryFirstTouchDeadlineSeconds: options.workerRetryFirstTouchDeadlineSeconds,
+          noTouchRetryLimit: options.workerNoTouchRetryLimit,
+          stallFailSeconds: options.workerStallFailSeconds
         },
         evidenceSessionMaintenance: {
           indexRefreshMode: options.evidenceSessionIndexRefreshMode,
@@ -7515,6 +7547,8 @@ async function main() {
     touchSampleSize: rawOptions['touch-sample-size'] ?? rawOptions.touchSampleSize,
     workerFirstTouchDeadlineSeconds:
       rawOptions['worker-first-touch-deadline-seconds'] ?? rawOptions.workerFirstTouchDeadlineSeconds,
+    workerRetryFirstTouchDeadlineSeconds:
+      rawOptions['worker-retry-first-touch-deadline-seconds'] ?? rawOptions.workerRetryFirstTouchDeadlineSeconds,
     workerNoTouchRetryLimit:
       rawOptions['worker-no-touch-retry-limit'] ?? rawOptions.workerNoTouchRetryLimit,
     workerStallFailSeconds:

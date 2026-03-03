@@ -209,6 +209,7 @@
     "touchScanMaxHeartbeats": 8,
     "touchScanBackoffUnchanged": 2,
     "workerFirstTouchDeadlineSeconds": 180,
+    "workerRetryFirstTouchDeadlineSeconds": 180,
     "workerNoTouchRetryLimit": 1,
     "workerStallFailSeconds": 900
   },

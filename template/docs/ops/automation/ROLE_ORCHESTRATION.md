@@ -88,7 +88,7 @@ Recommended baseline:
 - `pending` session results do not auto-advance risk pipeline stages; reviewer `pending` is routed back to `worker`.
 - Planner/explorer `pending` entries that clearly indicate implementation handoff (read-only or implementation-incomplete reasons) are auto-advanced to the next stage.
 - Repeated identical `pending` signals for the same role fail fast to prevent no-progress loops.
-- Worker `pending` sessions with no touched files are auto-retried (bounded by `logging.workerNoTouchRetryLimit`) before fail-fast pending.
+- Worker `pending` sessions with no touched files are auto-retried (bounded by `logging.workerNoTouchRetryLimit`, retry timeout controlled by `logging.workerRetryFirstTouchDeadlineSeconds`) before fail-fast pending.
 - Planner/explorer/reviewer `pending` sessions with no touched files fail fast when the role stage budget is exceeded.
 - Worker/reviewer sessions should not run host-bound validation commands (infra/bootstrap, DB migrations, Playwright/E2E); those are executed by the host-validation lane from `validation.hostRequired`.
 - Risk and stage decisions are recorded in `run-events.jsonl`.
