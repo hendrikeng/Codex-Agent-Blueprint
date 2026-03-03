@@ -2801,6 +2801,28 @@ async function readPlanRecordCached(rootDir, filePath, phase) {
   return record;
 }
 
+async function resolveEvidenceFreshnessToken(planId, paths, state) {
+  const normalizedPlanId = String(planId ?? '').trim();
+  if (!normalizedPlanId) {
+    return 'none';
+  }
+
+  const signature = String(state?.evidenceState?.[normalizedPlanId]?.signature ?? '').trim();
+  if (signature) {
+    return `sig:${signature}`;
+  }
+
+  const indexAbs = path.join(paths.evidenceIndexDir, `${normalizedPlanId}.md`);
+  try {
+    const stat = await fs.stat(indexAbs);
+    const mtimeMs = Number.isFinite(stat?.mtimeMs) ? Math.round(stat.mtimeMs) : 0;
+    const size = Number.isFinite(stat?.size) ? stat.size : 0;
+    return `stat:${mtimeMs}:${size}`;
+  } catch {
+    return 'none';
+  }
+}
+
 async function loadPlanRecords(rootDir, directoryPath, phase) {
   const files = await listMarkdownFiles(directoryPath);
   const activeCacheKeys = new Set(files.map((filePath) => `${phase}:${toPosix(path.resolve(filePath))}`));
@@ -3074,10 +3096,12 @@ async function prepareTaskContactPack(plan, paths, state, options, config, sessi
     };
   }
 
+  const evidenceFreshness = await resolveEvidenceFreshnessToken(plan.planId, paths, state);
   const cacheKey = createHash('sha256').update(JSON.stringify({
     runId: state.runId,
     planId: plan.planId,
     planShapeHash: computePlanShapeHash(plan),
+    evidenceFreshness,
     role,
     declaredRiskTier: parseRiskTier(sessionContext.declaredRiskTier, 'low'),
     effectiveRiskTier: parseRiskTier(sessionContext.effectiveRiskTier, 'low'),
