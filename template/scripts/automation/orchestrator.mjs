@@ -1292,6 +1292,7 @@ async function runShellMonitored(
   );
   let stdoutRemainder = '';
   let stderrRemainder = '';
+  let sawJsonEnvelopeOutput = false;
   let latestProviderActivity = null;
   let latestProviderActivityAtMs = null;
   let liveActivityUpdates = 0;
@@ -1406,10 +1407,15 @@ async function runShellMonitored(
     for (const line of parts) {
       const jsonActivity = extractLiveActivityFromJsonLine(line);
       if (jsonActivity) {
+        sawJsonEnvelopeOutput = true;
         maybeRecordLiveActivity(jsonActivity, source, nowMs);
         continue;
       }
       if (looksLikeJsonEnvelope(line)) {
+        sawJsonEnvelopeOutput = true;
+        continue;
+      }
+      if (sawJsonEnvelopeOutput) {
         continue;
       }
       maybeRecordLiveActivity(line, source, nowMs);
