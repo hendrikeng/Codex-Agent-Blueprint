@@ -679,20 +679,38 @@ function parseStructuredLogMessage(message) {
   return { headline: headline || normalized, details };
 }
 
-function printPrettyRunMessage(options, prefix, message) {
+function printPrettyRunMessage(options, prefix, message, level = 'run') {
   const parsed = parseStructuredLogMessage(message);
   if (parsed.details.length === 0) {
-    printIndentedPrettyMessage(prefix, parsed.headline);
+    const headlineText = String(parsed.headline ?? '').trim();
+    if (!headlineText) {
+      printIndentedPrettyMessage(prefix, message);
+      return;
+    }
+    if (headlineText.startsWith('heartbeat') || headlineText.startsWith('file activity')) {
+      printIndentedPrettyMessage(prefix, colorize(options, '32', headlineText));
+      return;
+    }
+    if (level === 'warn') {
+      printIndentedPrettyMessage(prefix, colorize(options, '33', headlineText));
+      return;
+    }
+    printIndentedPrettyMessage(prefix, headlineText);
     return;
   }
 
-  printIndentedPrettyMessage(prefix, parsed.headline);
+  const headlineText = String(parsed.headline ?? '').trim();
+  if (headlineText.startsWith('heartbeat') || headlineText.startsWith('file activity')) {
+    printIndentedPrettyMessage(prefix, colorize(options, '32', headlineText));
+  } else if (level === 'warn') {
+    printIndentedPrettyMessage(prefix, colorize(options, '33', headlineText));
+  } else {
+    printIndentedPrettyMessage(prefix, headlineText);
+  }
   const continuationPrefix = ' '.repeat(Math.max(0, visibleTextLength(prefix)));
   const keyWidth = Math.min(20, Math.max(...parsed.details.map((entry) => entry.key.length)));
   for (const entry of parsed.details) {
-    const keyLabel = colorize(options, '90', `${entry.key.padEnd(keyWidth, ' ')} = `);
-    const valueLabel = colorize(options, '37', entry.value);
-    printIndentedPrettyMessage(`${continuationPrefix}${keyLabel}`, valueLabel);
+    printIndentedPrettyMessage(`${continuationPrefix}${entry.key.padEnd(keyWidth, ' ')} = `, entry.value);
   }
 }
 
@@ -835,8 +853,8 @@ function progressLog(options, message) {
     const spinner = nextPrettySpinner(options);
     const tag = prettyLevelTag(options, level);
     const prefix = `${stamp} ${spinner} ${tag} `;
-    if (level === 'run') {
-      printPrettyRunMessage(options, prefix, message);
+    if (parseStructuredLogMessage(message).details.length > 0) {
+      printPrettyRunMessage(options, prefix, message, level);
       return;
     }
     printIndentedPrettyMessage(prefix, message);
@@ -1260,8 +1278,7 @@ function formatCommandHeartbeatMessage(context, elapsedSeconds, idleSeconds) {
   const elapsed = formatDurationClock(elapsedSeconds);
   const idle = formatDurationClock(idleSeconds);
   return (
-    `heartbeat | plan=${planId} | role=${role} | phase=${phase} | activity=${activity} | ` +
-    `elapsed=${elapsed} | idle=${idle} | ${touchSummary}`
+    `heartbeat plan=${planId} role=${role} phase=${phase} activity=${activity} elapsed=${elapsed} idle=${idle} ${touchSummary}`
   );
 }
 
