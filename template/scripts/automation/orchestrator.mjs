@@ -433,15 +433,11 @@ function eventTypeDeniedForLiveActivity(eventType) {
   return LIVE_ACTIVITY_JSON_TYPE_DENY.some((token) => eventType.includes(token));
 }
 
-function isLikelyTruncatedPreview(value) {
-  const rendered = String(value ?? '').trim();
-  if (!rendered) {
+function eventTypeIsItemEvent(eventType) {
+  if (!eventType) {
     return false;
   }
-  if (rendered.length > 180) {
-    return false;
-  }
-  return rendered.endsWith('…') || rendered.endsWith('...');
+  return eventType.startsWith('item.');
 }
 
 function extractLiveActivityFromJsonLine(line) {
@@ -466,32 +462,45 @@ function extractLiveActivityFromJsonLine(line) {
   }
 
   const nestedItemCandidates = [parsed.item, parsed.event?.item, parsed.data?.item, parsed.payload?.item];
-  for (const item of nestedItemCandidates) {
+  const hasAgentMessageItem = nestedItemCandidates.some((item) => {
     if (!item || typeof item !== 'object') {
-      continue;
+      return false;
     }
-    const itemType = String(item.type ?? '').trim().toLowerCase();
-    if (eventType === 'item.completed' && itemType === 'agent_message') {
+    return String(item.type ?? '').trim().toLowerCase() === 'agent_message';
+  });
+
+  // Codex-style item envelopes: only accept completed agent_message text.
+  if (hasAgentMessageItem) {
+    if (eventType !== 'item.completed') {
+      return null;
+    }
+    for (const item of nestedItemCandidates) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const itemType = String(item.type ?? '').trim().toLowerCase();
+      if (itemType !== 'agent_message') {
+        continue;
+      }
       const preferred = extractStringFromUnknown(item.text ?? item.content ?? item.message);
       if (preferred) {
         return preferred;
       }
     }
+    return null;
   }
 
-  const containers = [
-    parsed.item,
-    parsed.event?.item,
-    parsed.data?.item,
-    parsed.payload?.item,
-    parsed.event,
-    parsed.data,
-    parsed.payload,
-    parsed.details,
-    parsed.message,
-    parsed
-  ];
-  const keys = ['text', 'content', 'activity', 'progress', 'summary', 'reason', 'message'];
+  if (eventTypeIsItemEvent(eventType)) {
+    return null;
+  }
+
+  // For non-item JSON envelopes, only parse when type hints imply activity/progress.
+  if (eventType && !eventTypeHasLiveActivityHint(eventType)) {
+    return null;
+  }
+
+  const containers = [parsed, parsed.event, parsed.data, parsed.payload, parsed.details, parsed.message];
+  const keys = ['activity', 'progress', 'summary', 'reason', 'message', 'text', 'content'];
   for (const container of containers) {
     if (!container || typeof container !== 'object') {
       continue;
@@ -502,9 +511,6 @@ function extractLiveActivityFromJsonLine(line) {
       }
       const extracted = extractStringFromUnknown(container[key]);
       if (extracted) {
-        if (eventType !== 'item.completed' && isLikelyTruncatedPreview(extracted)) {
-          continue;
-        }
         return extracted;
       }
     }
@@ -513,9 +519,6 @@ function extractLiveActivityFromJsonLine(line) {
   if (eventTypeHasLiveActivityHint(eventType)) {
     const fallback = extractStringFromUnknown(parsed);
     if (fallback) {
-      if (eventType !== 'item.completed' && isLikelyTruncatedPreview(fallback)) {
-        return null;
-      }
       return fallback;
     }
   }
