@@ -210,7 +210,7 @@
     "touchScanBackoffUnchanged": 2,
     "liveActivity": {
       "mode": "best-effort",
-      "maxChars": 120,
+      "maxChars": 0,
       "sampleSeconds": 2,
       "emitEventLines": false,
       "redactPatterns": [
