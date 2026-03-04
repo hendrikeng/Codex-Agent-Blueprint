@@ -40,7 +40,7 @@ const DEFAULT_OUTPUT_MODE = 'pretty';
 const DEFAULT_FAILURE_TAIL_LINES = 60;
 const PRETTY_SPINNER_FRAMES = ['|', '/', '-', '\\'];
 const PRETTY_LIVE_DOT_FRAMES = ['...', '.. ', '.  ', ' ..'];
-const DEFAULT_HEARTBEAT_SECONDS = 12;
+const DEFAULT_HEARTBEAT_SECONDS = 120;
 const DEFAULT_STALL_WARN_SECONDS = 120;
 const DEFAULT_TOUCH_SUMMARY = true;
 const DEFAULT_TOUCH_SAMPLE_SIZE = 3;
@@ -542,6 +542,28 @@ function isGenericLiveActivityToken(value) {
   return /^[a-z_][a-z0-9_-]*$/.test(rendered) && rendered.length <= 24;
 }
 
+function condenseVerboseLiveActivity(rendered) {
+  const value = String(rendered ?? '').trim();
+  if (!value) {
+    return value;
+  }
+  const looksMarkdownHeavy =
+    value.includes('**') ||
+    value.includes('](') ||
+    value.includes('`') ||
+    value.includes(' - ') ||
+    value.includes('• ');
+  if (!looksMarkdownHeavy || value.length <= 260) {
+    return value;
+  }
+
+  const sentenceMatch = value.match(/^(.{1,360}?[.!?])(?:\s|$)/);
+  if (sentenceMatch && sentenceMatch[1]) {
+    return sentenceMatch[1].trim();
+  }
+  return value.slice(0, 220).trimEnd();
+}
+
 function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
   let rendered = stripAnsiControl(line).replace(/\s+/g, ' ').trim();
   if (!rendered) {
@@ -564,6 +586,7 @@ function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
     return null;
   }
 
+  rendered = condenseVerboseLiveActivity(rendered);
 
   return rendered || null;
 }
@@ -2058,7 +2081,7 @@ async function loadConfig(paths) {
           reasoningEffort: 'high',
           sandboxMode: 'full-access',
           instructions:
-            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Start with a concrete repository edit as soon as feasible, then continue iteratively. Do not defer implementation work back to planner/explorer when a concrete edit can be made now. When sending interim status updates, write complete words and full identifiers; do not shorten with ellipses.'
+            'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Start with a concrete repository edit as soon as feasible, then continue iteratively. Do not defer implementation work back to planner/explorer when a concrete edit can be made now. When sending interim status updates, write complete words and full identifiers; do not shorten with ellipses. Keep interim status updates concise (1-2 short sentences) and plain text; avoid markdown headings, bullet lists, and file links in live updates.'
         },
         planner: {
           model: 'gpt-5.3-codex',
