@@ -54,7 +54,7 @@ const DEFAULT_WORKER_NO_TOUCH_RETRY_LIMIT = 1;
 const DEFAULT_WORKER_PENDING_STREAK_LIMIT = 4;
 const DEFAULT_WORKER_STALL_FAIL_SECONDS = 900;
 const DEFAULT_LIVE_ACTIVITY_MODE = 'best-effort';
-const DEFAULT_LIVE_ACTIVITY_MAX_CHARS = 120;
+const DEFAULT_LIVE_ACTIVITY_MAX_CHARS = 0;
 const DEFAULT_LIVE_ACTIVITY_SAMPLE_SECONDS = 2;
 const DEFAULT_LIVE_ACTIVITY_EMIT_EVENT_LINES = false;
 const DEFAULT_LIVE_ACTIVITY_REDACT_PATTERNS = [
@@ -227,7 +227,7 @@ Options:
   --touch-scan-max-heartbeats <n>    Maximum heartbeats between touch scans in adaptive mode (default: 8)
   --touch-scan-backoff-unchanged <n> Adaptive backoff multiplier when scans are unchanged (default: 2)
   --live-activity-mode off|best-effort Provider text to heartbeat channel (default: best-effort)
-  --live-activity-max-chars <n>      Max provider message chars shown in heartbeat (default: 120)
+  --live-activity-max-chars <n>      Max live activity message chars (default: 0, no truncation)
   --live-activity-sample-seconds <n> Minimum seconds between live message updates (default: 2)
   --live-activity-emit-event-lines true|false Emit provider_activity events to run-events.jsonl (default: false)
   --live-activity-redact-patterns "<regex1>;;<regex2>" Extra redaction regexes for live activity
@@ -527,7 +527,7 @@ function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
     return null;
   }
 
-  if (rendered.length > maxChars) {
+  if (maxChars > 0 && rendered.length > maxChars) {
     rendered = `${rendered.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
   }
 
@@ -1280,7 +1280,7 @@ async function runShellMonitored(
   const liveActivityMode = normalizeLiveActivityMode(options.liveActivityMode, DEFAULT_LIVE_ACTIVITY_MODE);
   const liveActivityEnabled = capture && liveActivityMode === 'best-effort';
   const liveActivityMaxChars = Math.max(
-    24,
+    0,
     asInteger(options.liveActivityMaxChars, DEFAULT_LIVE_ACTIVITY_MAX_CHARS)
   );
   const liveActivitySampleMs = Math.max(
