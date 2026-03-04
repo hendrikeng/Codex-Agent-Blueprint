@@ -168,7 +168,7 @@ function buildCommandSet(changedFiles) {
     file.startsWith('docs/future/')
   ));
   if (changedPlanContracts) {
-    selected.add('node ./scripts/automation/check-plan-metadata.mjs');
+    selected.add(resolvedPlanMetadataCommand());
   }
 
   return {
