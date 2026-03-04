@@ -454,16 +454,33 @@ function extractLiveActivityFromJsonLine(line) {
     return null;
   }
 
+  const nestedItemCandidates = [parsed.item, parsed.event?.item, parsed.data?.item, parsed.payload?.item];
+  for (const item of nestedItemCandidates) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const itemType = String(item.type ?? '').trim().toLowerCase();
+    if (eventType === 'item.completed' && itemType === 'agent_message') {
+      const preferred = extractStringFromUnknown(item.text ?? item.content ?? item.message);
+      if (preferred) {
+        return preferred;
+      }
+    }
+  }
+
   const containers = [
-    parsed,
+    parsed.item,
+    parsed.event?.item,
+    parsed.data?.item,
+    parsed.payload?.item,
     parsed.event,
     parsed.data,
     parsed.payload,
     parsed.details,
-    parsed.item,
-    parsed.message
+    parsed.message,
+    parsed
   ];
-  const keys = ['activity', 'progress', 'summary', 'reason', 'message', 'text', 'content'];
+  const keys = ['text', 'content', 'activity', 'progress', 'summary', 'reason', 'message'];
   for (const container of containers) {
     if (!container || typeof container !== 'object') {
       continue;
@@ -1378,9 +1395,11 @@ async function runShellMonitored(
     }
     if (isPrettyOutput(options)) {
       const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
-      const workingLabel = colorize(options, '36', `• Working (${formatDuration(elapsedSeconds)})`);
+      const stamp = colorize(options, '90', nowIso().slice(11, 19));
+      const spinner = nextPrettySpinner(options);
+      const workingLabel = colorize(options, '36', `WORKING (${formatDuration(elapsedSeconds)})`);
       clearLiveStatusLine();
-      console.log(`${workingLabel} ${sanitized}`);
+      console.log(`${stamp} ${spinner} ${workingLabel} ${sanitized}`);
     }
   }
 
