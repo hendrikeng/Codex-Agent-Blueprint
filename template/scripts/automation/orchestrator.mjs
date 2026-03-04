@@ -568,6 +568,86 @@ function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
   return rendered || null;
 }
 
+function visibleTextLength(value) {
+  return stripAnsiControl(value).length;
+}
+
+function wrapTextForConsole(text, maxWidth) {
+  const rendered = String(text ?? '').trim();
+  if (!rendered) {
+    return [''];
+  }
+  if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
+    return [rendered];
+  }
+
+  const words = rendered.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = '';
+
+  const splitLongToken = (token) => {
+    let remaining = token;
+    while (remaining.length > maxWidth) {
+      lines.push(remaining.slice(0, maxWidth));
+      remaining = remaining.slice(maxWidth);
+    }
+    return remaining;
+  };
+
+  for (const word of words) {
+    if (!current) {
+      if (word.length <= maxWidth) {
+        current = word;
+      } else {
+        current = splitLongToken(word);
+      }
+      continue;
+    }
+
+    if (current.length + 1 + word.length <= maxWidth) {
+      current = `${current} ${word}`;
+      continue;
+    }
+
+    lines.push(current);
+    if (word.length <= maxWidth) {
+      current = word;
+    } else {
+      current = splitLongToken(word);
+    }
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines.length > 0 ? lines : [rendered];
+}
+
+function printIndentedPrettyMessage(prefix, message) {
+  const renderedPrefix = String(prefix ?? '');
+  const renderedMessage = String(message ?? '').trim();
+  if (!renderedMessage) {
+    console.log(renderedPrefix.trimEnd());
+    return;
+  }
+
+  const visiblePrefixLength = visibleTextLength(renderedPrefix);
+  const consoleWidth =
+    process.stdout.isTTY && Number.isFinite(process.stdout.columns) ? Number(process.stdout.columns) : 0;
+  const maxWidth = consoleWidth > visiblePrefixLength + 12 ? consoleWidth - visiblePrefixLength : 0;
+  const lines = wrapTextForConsole(renderedMessage, maxWidth);
+
+  console.log(`${renderedPrefix}${lines[0] ?? ""}`);
+  if (lines.length <= 1) {
+    return;
+  }
+
+  const continuationPrefix = ' '.repeat(Math.max(0, visiblePrefixLength));
+  for (const line of lines.slice(1)) {
+    console.log(`${continuationPrefix}${line}`);
+  }
+}
 function shouldCaptureCommandOutput(options) {
   return normalizeOutputMode(options?.outputMode, DEFAULT_OUTPUT_MODE) !== 'verbose';
 }
@@ -1416,7 +1496,7 @@ async function runShellMonitored(
       const spinner = nextPrettySpinner(options);
       const workingLabel = colorize(options, '36', `WORKING (${formatDuration(elapsedSeconds)})`);
       clearLiveStatusLine();
-      console.log(`${stamp} ${spinner} ${workingLabel} ${sanitized}`);
+      printIndentedPrettyMessage(`${stamp} ${spinner} ${workingLabel} `, sanitized);
     }
   }
 
