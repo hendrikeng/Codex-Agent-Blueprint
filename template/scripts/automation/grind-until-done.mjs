@@ -183,13 +183,15 @@ function renderSummary(state, unresolvedActivePlanIdsList) {
 
 function isStuckNoQueueState(state, unresolvedActivePlanIdsList) {
   const queueCount = Array.isArray(state?.queue) ? state.queue.length : 0;
-  const blockedCount = Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds.length : 0;
-  const failedCount = Array.isArray(state?.failedPlanIds) ? state.failedPlanIds.length : 0;
+  const blocked = Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds : [];
+  const failed = Array.isArray(state?.failedPlanIds) ? state.failedPlanIds : [];
+  const blockedOrFailed = new Set([...blocked, ...failed]);
+  const unresolvedBlockedOrFailed = unresolvedActivePlanIdsList.filter((planId) => blockedOrFailed.has(planId));
   return (
     queueCount === 0 &&
     !state?.inProgress &&
     unresolvedActivePlanIdsList.length > 0 &&
-    (blockedCount > 0 || failedCount > 0)
+    unresolvedBlockedOrFailed.length === unresolvedActivePlanIdsList.length
   );
 }
 
