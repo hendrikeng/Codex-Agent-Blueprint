@@ -690,8 +690,9 @@ function printPrettyRunMessage(options, prefix, message) {
   const continuationPrefix = ' '.repeat(Math.max(0, visibleTextLength(prefix)));
   const keyWidth = Math.min(20, Math.max(...parsed.details.map((entry) => entry.key.length)));
   for (const entry of parsed.details) {
-    const detailLine = `${entry.key.padEnd(keyWidth, ' ')} = ${entry.value}`;
-    printIndentedPrettyMessage(continuationPrefix, detailLine);
+    const keyLabel = colorize(options, '90', `${entry.key.padEnd(keyWidth, ' ')} = `);
+    const valueLabel = colorize(options, '37', entry.value);
+    printIndentedPrettyMessage(`${continuationPrefix}${keyLabel}`, valueLabel);
   }
 }
 
@@ -1250,10 +1251,7 @@ function compactDisplayToken(value, fallback = 'n/a', maxLength = 24) {
   return `${rendered.slice(0, head)}…${rendered.slice(rendered.length - tail)}`;
 }
 
-function formatCommandHeartbeatLine(options, context, elapsedSeconds, idleSeconds) {
-  const stamp = colorize(options, '90', nowIso().slice(11, 19));
-  const dots = nextPrettyLiveDots(options);
-  const tag = prettyLevelTag(options, idleSeconds >= options.stallWarnSeconds ? 'warn' : 'run');
+function formatCommandHeartbeatMessage(context, elapsedSeconds, idleSeconds) {
   const phase = compactDisplayToken(context.phase, 'session', 10);
   const planId = compactDisplayToken(context.planId, 'run', 26);
   const role = compactDisplayToken(context.role, 'n/a', 10);
@@ -1262,7 +1260,7 @@ function formatCommandHeartbeatLine(options, context, elapsedSeconds, idleSecond
   const elapsed = formatDurationClock(elapsedSeconds);
   const idle = formatDurationClock(idleSeconds);
   return (
-    `${stamp} ${dots} ${tag} heartbeat | plan=${planId} | role=${role} | phase=${phase} | activity=${activity} | ` +
+    `heartbeat | plan=${planId} | role=${role} | phase=${phase} | activity=${activity} | ` +
     `elapsed=${elapsed} | idle=${idle} | ${touchSummary}`
   );
 }
@@ -1712,22 +1710,10 @@ async function runShellMonitored(
         : effectiveProgressAtMs;
     const workerIdleSeconds = Math.floor((nowMs - effectiveWorkerProgressAtMs) / 1000);
 
-    if (supportsLiveStatusLine(options)) {
-      renderLiveStatusLine(
-        options,
-        formatCommandHeartbeatLine(
-          options,
-          { ...context, touchSummary },
-          elapsedSeconds,
-          idleSeconds
-        )
-      );
-    } else {
-      progressLog(
-        options,
-        `heartbeat phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} activity=${safeDisplayToken(context.activity, safeDisplayToken(context.phase, 'session'))} elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`
-      );
-    }
+    progressLog(
+      options,
+      formatCommandHeartbeatMessage({ ...context, touchSummary }, elapsedSeconds, idleSeconds)
+    );
 
     if (idleSeconds * 1000 >= stallWarnMs && !warnEmitted) {
       warnEmitted = true;
