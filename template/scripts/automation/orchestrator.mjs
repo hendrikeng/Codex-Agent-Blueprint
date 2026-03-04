@@ -83,6 +83,19 @@ const LIVE_ACTIVITY_JSON_TYPE_DENY = [
   'token',
   'metrics'
 ];
+const LIVE_ACTIVITY_GENERIC_TOKENS = new Set([
+  'in_progress',
+  'in-progress',
+  'progress',
+  'pending',
+  'started',
+  'starting',
+  'running',
+  'completed',
+  'complete',
+  'ok',
+  'done'
+]);
 const DEFAULT_CONTACT_PACKS_ENABLED = true;
 const DEFAULT_CONTACT_PACKS_MAX_POLICY_BULLETS = 10;
 const DEFAULT_CONTACT_PACKS_INCLUDE_RECENT_EVIDENCE = true;
@@ -451,7 +464,7 @@ function extractLiveActivityFromJsonLine(line) {
     parsed.item,
     parsed.message
   ];
-  const keys = ['activity', 'progress', 'status', 'summary', 'reason', 'message', 'text', 'content'];
+  const keys = ['activity', 'progress', 'summary', 'reason', 'message', 'text', 'content'];
   for (const container of containers) {
     if (!container || typeof container !== 'object') {
       continue;
@@ -482,6 +495,17 @@ function looksLikeJsonEnvelope(line) {
   return rendered.startsWith('{') && rendered.endsWith('}');
 }
 
+function isGenericLiveActivityToken(value) {
+  const rendered = String(value ?? '').trim().toLowerCase();
+  if (!rendered) {
+    return true;
+  }
+  if (LIVE_ACTIVITY_GENERIC_TOKENS.has(rendered)) {
+    return true;
+  }
+  return /^[a-z_][a-z0-9_-]*$/.test(rendered) && rendered.length <= 24;
+}
+
 function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
   let rendered = stripAnsiControl(line).replace(/\s+/g, ' ').trim();
   if (!rendered) {
@@ -498,6 +522,9 @@ function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
 
   const lower = rendered.toLowerCase();
   if (LIVE_ACTIVITY_PROVIDER_NAME_TOKENS.has(lower)) {
+    return null;
+  }
+  if (isGenericLiveActivityToken(lower)) {
     return null;
   }
 
