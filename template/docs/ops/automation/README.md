@@ -162,6 +162,8 @@ Use the manual path when any of these are true:
   - `validation.host.ci.command`: optional command that performs CI-dispatched host validation.
   - `validation.timeoutSeconds` / `validation.host.timeoutSeconds` / `validation.host.ci.timeoutSeconds` define hard command timeouts (default 1800s).
   - `validation.host.local.command`: optional local host-validation command override.
+  - Recommended baseline: set `validation.host.local.command` to `npm run verify:full` so host-lane behavior is explicit and reproducible.
+  - If host validation fails with command output (for example architecture/dependency checks), treat it as a real repository-gate failure and fix the code/docs; host configuration is already functioning.
 - Evidence compaction:
   - `evidence.compaction.mode: "compact-index"` writes canonical per-plan index files in `docs/exec-plans/evidence-index/`.
   - `evidence.compaction.maxReferences` controls how many most-recent evidence links are retained in the canonical index.

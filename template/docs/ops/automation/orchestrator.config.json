@@ -54,7 +54,7 @@
         "timeoutSeconds": 1800
       },
       "local": {
-        "command": ""
+        "command": "npm run verify:full"
       }
     }
   },
