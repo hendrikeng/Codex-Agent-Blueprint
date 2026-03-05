@@ -164,6 +164,8 @@ function eventContainsAtomicDeadlockText(event) {
     haystack.includes('atomic commit preflight failed') ||
     haystack.includes('atomic commit failed') ||
     haystack.includes('atomic commit refused') ||
+    haystack.includes('atomic root policy violation') ||
+    haystack.includes('paths outside allowed roots') ||
     haystack.includes('refusing --allow-dirty true with --commit true') ||
     haystack.includes('refusing to start with a dirty git worktree') ||
     haystack.includes('refusing to resume with a dirty git worktree') ||
