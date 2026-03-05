@@ -29,21 +29,70 @@ const stableLimit = Number.parseInt(process.env.ORCH_SUPERVISOR_STABLE_LIMIT ?? 
 const maxConsecutiveErrors = Number.parseInt(process.env.ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS ?? '2', 10);
 const continueOnError = String(process.env.ORCH_SUPERVISOR_CONTINUE_ON_ERROR ?? '1').trim() !== '0';
 const allowDirtyRecovery = String(process.env.ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY ?? '0').trim() === '1';
+const enforceBudgetGuards = String(process.env.ORCH_SUPERVISOR_ENFORCE_BUDGET_GUARDS ?? '1').trim() !== '0';
+const stopOnSessionBudgetExhaustion =
+  String(process.env.ORCH_SUPERVISOR_STOP_ON_SESSION_BUDGET_EXHAUSTION ?? '1').trim() !== '0';
+const guardedMaxSessionsPerPlan = Number.parseInt(process.env.ORCH_SUPERVISOR_MAX_SESSIONS_PER_PLAN ?? '6', 10);
+const guardedWorkerPendingStreakLimit = Number.parseInt(
+  process.env.ORCH_SUPERVISOR_WORKER_PENDING_STREAK_LIMIT ?? '2',
+  10
+);
 
 const rootDir = process.cwd();
 const runStatePath = path.join(rootDir, 'docs/ops/automation/run-state.json');
 const runEventsPath = path.join(rootDir, 'docs/ops/automation/run-events.jsonl');
 const activePlansDir = path.join(rootDir, 'docs/exec-plans/active');
+const TRANSIENT_AUTOMATION_FILES = new Set([
+  'docs/ops/automation/run-state.json',
+  'docs/ops/automation/run-events.jsonl'
+]);
+const TRANSIENT_AUTOMATION_DIR_PREFIXES = [
+  'docs/ops/automation/runtime/',
+  'docs/ops/automation/handoffs/'
+];
 
 let stableCycles = 0;
 let consecutiveErrors = 0;
 let previousSignature = '';
 let dirtyRecoveryMode = false;
 
+function normalizePathValue(value) {
+  return String(value ?? '').trim().replaceAll('\\', '/').replace(/^\.\/+/, '');
+}
+
+function isTransientAutomationPath(relPath) {
+  const normalized = normalizePathValue(relPath);
+  if (!normalized) {
+    return false;
+  }
+  if (TRANSIENT_AUTOMATION_FILES.has(normalized)) {
+    return true;
+  }
+  return TRANSIENT_AUTOMATION_DIR_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function hasCliOption(optionName) {
+  return passthroughArgs.some((arg) => arg === optionName || arg.startsWith(`${optionName}=`));
+}
+
+function appendDefaultOption(args, optionName, rawValue) {
+  if (hasCliOption(optionName)) {
+    return;
+  }
+  const value = Number.parseInt(String(rawValue ?? ''), 10);
+  if (Number.isFinite(value) && value > 0) {
+    args.push(optionName, String(value));
+  }
+}
+
 function withOrchestratorArgs(command) {
   const base = ['./scripts/automation/orchestrator.mjs', command, ...passthroughArgs];
   if (dirtyRecoveryMode) {
     base.push('--allow-dirty', 'true', '--commit', 'false');
+  }
+  if (enforceBudgetGuards) {
+    appendDefaultOption(base, '--max-sessions-per-plan', guardedMaxSessionsPerPlan);
+    appendDefaultOption(base, '--worker-pending-streak-limit', guardedWorkerPendingStreakLimit);
   }
   return base;
 }
@@ -146,16 +195,34 @@ function renderSummary(state, unresolvedIds) {
   );
 }
 
-function worktreeIsDirty() {
-  const result = spawnSync('git', ['status', '--porcelain'], {
+function listRepoPaths(args) {
+  const result = spawnSync('git', args, {
     cwd: rootDir,
     env: process.env,
     stdio: ['ignore', 'pipe', 'ignore']
   });
   if (result.status !== 0) {
-    return false;
+    return null;
   }
-  return String(result.stdout ?? '').trim().length > 0;
+  return String(result.stdout ?? '')
+    .split('\0')
+    .map((entry) => normalizePathValue(entry))
+    .filter(Boolean);
+}
+
+function worktreeHasNonTransientChanges() {
+  const buckets = [
+    listRepoPaths(['diff', '--name-only', '-z']),
+    listRepoPaths(['diff', '--cached', '--name-only', '-z']),
+    listRepoPaths(['ls-files', '--others', '--exclude-standard', '-z'])
+  ];
+  if (buckets.some((bucket) => bucket == null)) {
+    // Fail-safe: if git inspection fails, prefer safe dirty-recovery mode.
+    return true;
+  }
+  return buckets
+    .flat()
+    .some((entry) => !isTransientAutomationPath(entry));
 }
 
 function eventContainsAtomicDeadlockText(event) {
@@ -171,6 +238,16 @@ function eventContainsAtomicDeadlockText(event) {
     haystack.includes('refusing to resume with a dirty git worktree') ||
     haystack.includes('refusing parallel execution with dirty git worktree') ||
     haystack.includes('refusing parallel resume with dirty git worktree')
+  );
+}
+
+function eventContainsSessionBudgetExhaustionText(event) {
+  const haystack = `${event?.type ?? ''} ${JSON.stringify(event?.details ?? {})}`.toLowerCase();
+  return (
+    haystack.includes('maximum sessions reached without completion') ||
+    haystack.includes('worker pending streak exceeded') ||
+    haystack.includes('repeated pending signal without progress') ||
+    haystack.includes('narrow to one implementation slice and resume')
   );
 }
 
@@ -204,6 +281,36 @@ function hasAtomicDeadlockSignalInCurrentRun() {
   return false;
 }
 
+function hasSessionBudgetExhaustionSignalInCurrentRun() {
+  if (!existsSync(runEventsPath)) {
+    return false;
+  }
+  const state = readRunState();
+  const runId = state?.runId ? String(state.runId) : '';
+  try {
+    const raw = readFileSync(runEventsPath, 'utf8');
+    const window = raw.length > 512_000 ? raw.slice(-512_000) : raw;
+    const lines = window.split(/\r?\n/).filter(Boolean).reverse();
+    for (const line of lines) {
+      let event = null;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (runId && String(event?.runId ?? '') !== runId) {
+        continue;
+      }
+      if (eventContainsSessionBudgetExhaustionText(event)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function main() {
   let nextCommand = firstCommand;
 
@@ -215,7 +322,7 @@ function main() {
       consecutiveErrors = 0;
     } else {
       if (allowDirtyRecovery && !dirtyRecoveryMode) {
-        const dirtyWorktree = worktreeIsDirty();
+        const dirtyWorktree = worktreeHasNonTransientChanges();
         const startupDirtyDeadlock = command === firstCommand && dirtyWorktree;
         const followupDirtyDeadlock = command !== firstCommand && dirtyWorktree;
         const atomicDeadlockSignal = hasAtomicDeadlockSignalInCurrentRun();
@@ -255,7 +362,7 @@ function main() {
     const unresolvedIds = unresolvedActivePlanIds(state, activePlans);
     console.log(`[supervisor] state after cycle ${cycle + 1}: ${renderSummary(state, unresolvedIds)}`);
 
-    if (allowDirtyRecovery && !dirtyRecoveryMode && unresolvedIds.length > 0 && worktreeIsDirty()) {
+    if (allowDirtyRecovery && !dirtyRecoveryMode && unresolvedIds.length > 0 && worktreeHasNonTransientChanges()) {
       dirtyRecoveryMode = true;
       console.error(
         '[supervisor] enabling dirty recovery mode for follow-up cycles ' +
@@ -266,6 +373,19 @@ function main() {
     if (queueDrained(state, unresolvedIds)) {
       console.log('[supervisor] queue drained; done.');
       process.exit(0);
+    }
+
+    if (
+      stopOnSessionBudgetExhaustion &&
+      unresolvedIds.length > 0 &&
+      hasSessionBudgetExhaustionSignalInCurrentRun()
+    ) {
+      console.error(
+        '[supervisor] stopping auto-resume to protect token budget: detected repeated pending/session-budget ' +
+        'exhaustion in this run. Narrow to one implementation slice, then resume manually with ' +
+        '--max-plans 1 --allow-dirty true --commit false.'
+      );
+      process.exit(2);
     }
 
     const signature = stateSignature(state, unresolvedIds);
