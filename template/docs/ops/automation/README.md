@@ -245,12 +245,13 @@ Use the manual path when any of these are true:
 
 Quick run guide:
 
-- Default (low-only): `npm run automation:run`
-- Allow medium-risk plans: `ORCH_APPROVED_MEDIUM=1 npm run automation:run`
-- Allow high-risk plans: `ORCH_APPROVED_HIGH=1 npm run automation:run`
-- Allow medium+high plans: `ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run`
-- Enable full mode (still requires medium/high approvals): `ORCH_ALLOW_FULL_AUTONOMY=1 npm run automation:run -- --mode full`
-- Full mode with medium+high approvals: `ORCH_ALLOW_FULL_AUTONOMY=1 ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 npm run automation:run -- --mode full`
+- Default (low-only baseline, clean + atomic): `npm run automation:run`
+- Enable medium-risk plans (low+medium): `npm run automation:run:medium`
+- Enable high-risk plans (low+medium+high): `npm run automation:run:high`
+- Parallel default (low-only baseline, clean + atomic): `npm run automation:run:parallel`
+- Parallel with medium-risk plans enabled (low+medium): `npm run automation:run:parallel:medium`
+- Parallel with high-risk plans enabled (low+medium+high): `npm run automation:run:parallel:high`
+- Enable full mode: `ORCH_ALLOW_FULL_AUTONOMY=1 npm run automation:run -- --mode full`
 - Provider override: `ORCH_EXECUTOR_PROVIDER=claude npm run automation:run`
 
 Start examples:
@@ -259,7 +260,10 @@ Start examples:
 - Process up to 5 plans in one run: `npm run automation:run -- --max-plans 5`
 - Faster liveness signal in pretty mode: `npm run automation:run -- --heartbeat-seconds 5 --stall-warn-seconds 45`
 - Compact ticker output: `npm run automation:run -- --output ticker`
-- Approved parallel grind (clean + atomic, anchored to current branch): `npm run automation:run:approved:parallel`
+- Supervised overnight loop (run + repeated resume): `npm run automation:run:grind`
+- Supervised resume loop: `npm run automation:resume:grind`
+- Supervised parallel loop: `npm run automation:run:parallel:grind`
+- Resume quick non-atomic escape hatch: `npm run automation:resume:quick:non-atomic`
 
 Pretty output example:
 
@@ -281,6 +285,13 @@ Parallelism note:
 - npm convenience alias: `npm run automation:resume:parallel` (maps to `resume-parallel` with template defaults).
 - Dependency gating remains strict: plans only start when all `Dependencies` are satisfied.
 - `parallel.assumeDependencyCompletion` defaults to `false` so dependent plans wait for integration unless explicitly enabled.
+- Supervisor loop controls:
+  - `ORCH_SUPERVISOR_MAX_CYCLES` (default `120`)
+  - `ORCH_SUPERVISOR_STABLE_LIMIT` (default `4`)
+  - `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` (default `2`)
+  - `ORCH_SUPERVISOR_CONTINUE_ON_ERROR` (default `1`)
+  - `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY` (default `0`; when set to `1`, supervisor can continue with `--allow-dirty true --commit false` after atomic deadlocks)
+- Grind aliases (`automation:*:grind*`) set `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1` and increase `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` to `8` for overnight continuity.
 
 ## Exit Conventions
 

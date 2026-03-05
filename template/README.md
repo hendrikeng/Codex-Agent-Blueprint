@@ -119,15 +119,31 @@ Start with:
 
 ## Automation Conveyor Commands
 
-- Start run (guarded, sequential, recovery defaults): `npm run automation:run`
-- Start approved grind loop (medium/high approved): `npm run automation:run:approved`
-- Start approved parallel grind loop (clean + atomic): `npm run automation:run:approved:parallel`
-- Start parallel run (same defaults, explicit command): `npm run automation:run:parallel`
-- Resume parallel execution (same defaults): `npm run automation:resume:parallel`
-- Resume run: `npm run automation:resume`
-- Resume approved grind loop (medium/high approved): `npm run automation:resume:approved`
-- Resume approved parallel grind loop: `npm run automation:resume:approved:parallel`
-- Resume quick single-plan approved run: `npm run automation:resume:quick`
+- Start run (guarded, low-only baseline, clean + atomic defaults): `npm run automation:run`
+- Start run with medium enabled: `npm run automation:run:medium`
+- Start run with medium+high enabled: `npm run automation:run:high`
+- Start supervised run loop (auto `run` + repeated `resume` until drained/stable): `npm run automation:run:grind`
+- Start supervised run loop with medium enabled: `npm run automation:run:grind:medium`
+- Start supervised run loop with medium+high enabled: `npm run automation:run:grind:high`
+- Start parallel run (same baseline, anchored to current branch): `npm run automation:run:parallel`
+- Start parallel run with medium enabled: `npm run automation:run:parallel:medium`
+- Start parallel run with medium+high enabled: `npm run automation:run:parallel:high`
+- Start supervised parallel run loop: `npm run automation:run:parallel:grind`
+- Start supervised parallel run loop with medium enabled: `npm run automation:run:parallel:grind:medium`
+- Start supervised parallel run loop with medium+high enabled: `npm run automation:run:parallel:grind:high`
+- Resume run (same baseline): `npm run automation:resume`
+- Resume run with medium enabled: `npm run automation:resume:medium`
+- Resume run with medium+high enabled: `npm run automation:resume:high`
+- Resume supervised run loop: `npm run automation:resume:grind`
+- Resume supervised run loop with medium enabled: `npm run automation:resume:grind:medium`
+- Resume supervised run loop with medium+high enabled: `npm run automation:resume:grind:high`
+- Resume parallel execution (same baseline): `npm run automation:resume:parallel`
+- Resume parallel execution with medium enabled: `npm run automation:resume:parallel:medium`
+- Resume parallel execution with medium+high enabled: `npm run automation:resume:parallel:high`
+- Resume supervised parallel loop: `npm run automation:resume:parallel:grind`
+- Resume supervised parallel loop with medium enabled: `npm run automation:resume:parallel:grind:medium`
+- Resume supervised parallel loop with medium+high enabled: `npm run automation:resume:parallel:grind:high`
+- Resume quick non-atomic escape hatch (explicit override): `npm run automation:resume:quick:non-atomic`
 - Audit runs: `npm run automation:audit`
 - Outcomes summary (optional): `npm run outcomes:report`
 - GitHub interop export scaffold (optional): `npm run interop:github:export`
@@ -135,6 +151,9 @@ Start with:
 - Lean output defaults to interactive pretty lifecycle lines; use `--output ticker` for ultra-compact logs, `--output minimal` for expanded high-signal lines, or `--output verbose` for full streamed command output.
 - `pretty` output keeps one live in-place heartbeat line (phase/plan/role/activity/agent/elapsed/idle) so you can tell running vs stuck without log spam.
 - `guarded` is gate-based (non-interactive): medium/high plans require `ORCH_APPROVED_MEDIUM=1` / `ORCH_APPROVED_HIGH=1`.
+- Tiering model is cumulative: baseline allows low only, `:medium` allows low+medium, and `:high` allows low+medium+high.
+- Supervisor loop controls: `ORCH_SUPERVISOR_MAX_CYCLES` (default `120`), `ORCH_SUPERVISOR_STABLE_LIMIT` (default `4`), `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` (default `2`, grind aliases set `8`), `ORCH_SUPERVISOR_CONTINUE_ON_ERROR` (`1` default).
+- Overnight grind aliases default to recovery-first: they try atomic commits first, then auto-switch to non-atomic continuation on atomic deadlocks (`ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1`).
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
 - Provider selection is adapter-based (`executor.provider` or `ORCH_EXECUTOR_PROVIDER`) so Codex and Claude Code can share the same orchestration contract.
 - Default session safety policy is proactive rollover at `contextRemaining <= 10000` with required structured `ORCH_RESULT_PATH` payloads.
