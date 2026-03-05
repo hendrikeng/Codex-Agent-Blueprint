@@ -111,7 +111,9 @@ function unresolvedActivePlanIds(state, activePlans) {
   const failed = new Set(Array.isArray(state?.failedPlanIds) ? state.failedPlanIds : []);
 
   return activePlans
-    .filter((plan) => ACTIVE_STATUSES.has(plan.status))
+    // Treat validation-only plans as externally gated so supervisor can drain
+    // instead of spinning resume cycles with no in-run progress.
+    .filter((plan) => ACTIVE_STATUSES.has(plan.status) && plan.status !== 'validation')
     .map((plan) => plan.planId)
     .filter((planId) => !completed.has(planId) && !blocked.has(planId) && !failed.has(planId))
     .sort((a, b) => a.localeCompare(b));

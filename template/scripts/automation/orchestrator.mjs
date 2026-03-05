@@ -591,6 +591,14 @@ function sanitizeLiveActivityLine(line, redactionPatterns, maxChars) {
 
   rendered = condenseVerboseLiveActivity(rendered);
 
+  const maxCharsLimit = Number.isFinite(maxChars) ? Math.max(0, Math.floor(maxChars)) : 0;
+  if (maxCharsLimit > 0 && rendered.length > maxCharsLimit) {
+    rendered =
+      maxCharsLimit === 1
+        ? '…'
+        : `${rendered.slice(0, Math.max(1, maxCharsLimit - 1)).trimEnd()}…`;
+  }
+
   return rendered || null;
 }
 
@@ -2494,7 +2502,7 @@ function resolveRuntimeExecutorOptions(options, config) {
     DEFAULT_LIVE_ACTIVITY_MODE
   );
   const liveActivityMaxChars = Math.max(
-    24,
+    0,
     asInteger(
       options.liveActivityMaxChars ?? options['live-activity-max-chars'] ?? liveActivity.maxChars,
       DEFAULT_LIVE_ACTIVITY_MAX_CHARS
@@ -3106,7 +3114,10 @@ function approvalEnvPrefixForRiskTier(riskTier) {
 
 function suggestedResumeCommand(state, riskTier) {
   const mode = String(state?.effectiveMode ?? 'guarded').trim() || 'guarded';
-  return `${approvalEnvPrefixForRiskTier(riskTier)}npm run automation:resume -- --mode ${mode} --retry-failed true --auto-unblock true --max-plans 1 --allow-dirty true`;
+  return (
+    `${approvalEnvPrefixForRiskTier(riskTier)}node ./scripts/automation/orchestrator.mjs ` +
+    `resume --mode ${mode} --retry-failed true --auto-unblock true --max-plans 1 --allow-dirty true --commit false`
+  );
 }
 
 function deriveOutcomeNextSteps(plan, outcome, state, config, riskTier) {

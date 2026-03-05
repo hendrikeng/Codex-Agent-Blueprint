@@ -75,12 +75,12 @@ Use the manual path when any of these are true:
 - Output controls:
   - `--output minimal|ticker|pretty|verbose` (default `pretty`)
   - `--failure-tail-lines <n>` (default `60`)
-  - `--heartbeat-seconds <n>` (default `12`)
+  - `--heartbeat-seconds <n>` (default `120`)
   - `--stall-warn-seconds <n>` (default `120`)
   - `--touch-summary true|false` (default `true`)
   - `--touch-sample-size <n>` (default `3`)
   - `--live-activity-mode off|best-effort` (default `best-effort`)
-  - `--live-activity-max-chars <n>` (default `120`)
+  - `--live-activity-max-chars <n>` (default `0`, no truncation)
   - `--live-activity-sample-seconds <n>` (default `2`)
   - `--live-activity-emit-event-lines true|false` (default `false`)
   - `--live-activity-redact-patterns "<regex1>;;<regex2>"` (optional)
@@ -113,8 +113,8 @@ Use the manual path when any of these are true:
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
   - `"context.contactPacks"` configures per-task scoped role contact packs (`enabled`, `maxPolicyBullets`, `includeRecentEvidence`, `maxRecentEvidenceItems`, `cacheMode`).
   - `With "context.contactPacks.cacheMode": "run-memory", cache keys include an evidence freshness token (state signature when available, otherwise evidence-index file stat) to avoid stale recent-evidence payloads.`
-  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 12`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, `"logging.touchScanMode": "adaptive"`, `"logging.touchScanMinHeartbeats": 1`, `"logging.touchScanMaxHeartbeats": 8`, `"logging.touchScanBackoffUnchanged": 2`, `"logging.liveActivity": {"mode": "best-effort", "maxChars": 120, "sampleSeconds": 2, "emitEventLines": false, "redactPatterns": [...]}`, `"logging.workerFirstTouchDeadlineSeconds": 180`, `"logging.workerRetryFirstTouchDeadlineSeconds": 180`, `"logging.workerNoTouchRetryLimit": 1`, and `"logging.workerPendingStreakLimit": 4` tune operator-facing output noise, liveness, live file-touch visibility, provider live-message surfacing, touch-scan cadence, and worker no-progress fail-fast behavior (`workerFirstTouchDeadlineSeconds: 0` disables deadline fail-fast; retry sessions inherit the base deadline unless overridden; `workerPendingStreakLimit: 0` disables worker same-role pending streak fail-fast).
-  - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 3` control automatic retry/unblock behavior for resumable plans.
+  - `"logging.output": "pretty"` (`minimal` | `ticker` | `pretty` | `verbose`), `"logging.failureTailLines": 60`, `"logging.heartbeatSeconds": 120`, `"logging.stallWarnSeconds": 120`, `"logging.touchSummary": true`, `"logging.touchSampleSize": 3`, `"logging.touchScanMode": "adaptive"`, `"logging.touchScanMinHeartbeats": 1`, `"logging.touchScanMaxHeartbeats": 8`, `"logging.touchScanBackoffUnchanged": 2`, `"logging.liveActivity": {"mode": "best-effort", "maxChars": 0, "sampleSeconds": 2, "emitEventLines": false, "redactPatterns": [...]}`, `"logging.workerFirstTouchDeadlineSeconds": 180`, `"logging.workerRetryFirstTouchDeadlineSeconds": 180`, `"logging.workerNoTouchRetryLimit": 1`, and `"logging.workerPendingStreakLimit": 4` tune operator-facing output noise, liveness, live file-touch visibility, provider live-message surfacing, touch-scan cadence, and worker no-progress fail-fast behavior (`workerFirstTouchDeadlineSeconds: 0` disables deadline fail-fast; retry sessions inherit the base deadline unless overridden; `workerPendingStreakLimit: 0` disables worker same-role pending streak fail-fast).
+  - `"recovery.retryFailed": true`, `"recovery.autoUnblock": true`, and `"recovery.maxFailedRetries": 2` control automatic retry/unblock behavior for resumable plans.
   - `"parallel.maxPlans"` sets default worker concurrency for `run --parallel-plans`.
   - `"parallel.workerOutputMode": "minimal"` keeps branch workers concise by default.
   - `"parallel.worktreeRoot"`, `"parallel.branchPrefix"`, `"parallel.baseRef"`, `"parallel.gitRemote"` configure branch/worktree strategy.
@@ -292,6 +292,7 @@ Parallelism note:
   - `ORCH_SUPERVISOR_CONTINUE_ON_ERROR` (default `1`)
   - `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY` (default `0`; when set to `1`, supervisor can continue with `--allow-dirty true --commit false` after atomic deadlocks)
 - Grind aliases (`automation:*:grind*`) set `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1` and increase `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` to `8` for overnight continuity.
+- Supervisor treats `Status: validation` plans as externally gated for drain detection, so grind loops stop once executable queues are empty instead of repeatedly re-running no-progress validation-only resumes.
 
 ## Exit Conventions
 
