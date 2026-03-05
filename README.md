@@ -119,21 +119,7 @@ Start with `Lite` by default, then scale up only when risk or workload demands i
 
 For full command contracts, flags, and policy behavior, use `template/docs/ops/automation/README.md`.
 
-- `context:compile`
-- `docs:verify`, `conformance:verify`, `architecture:verify`, `agent:verify`, `eval:verify`, `plans:verify`, `blueprint:verify`
-- `plans:verify` auto-aligns top-level `Status:` with metadata `- Status` in local runs; disable with `ORCH_PLAN_METADATA_AUTO_HEAL_STATUS=0` (CI defaults to disabled)
-- `verify:fast`, `verify:full`
-- `perf:baseline`, `perf:after`
-- `outcomes:report`, `interop:github:export`, `interop:github:export:write`
-- Risk tiers are cumulative in command aliases: baseline `automation:*` allows low only, `*:medium` allows low+medium, and `*:high` allows low+medium+high.
-- `automation:run`, `automation:run:medium`, `automation:run:high`, `automation:run:parallel`, `automation:run:parallel:medium`, `automation:run:parallel:high`
-- `automation:run:grind`, `automation:run:grind:medium`, `automation:run:grind:high`, `automation:run:parallel:grind`, `automation:run:parallel:grind:medium`, `automation:run:parallel:grind:high`
-- `automation:resume`, `automation:resume:medium`, `automation:resume:high`, `automation:resume:parallel`, `automation:resume:parallel:medium`, `automation:resume:parallel:high`, `automation:resume:quick:non-atomic`
-- `automation:resume:grind`, `automation:resume:grind:medium`, `automation:resume:grind:high`, `automation:resume:parallel:grind`, `automation:resume:parallel:grind:medium`, `automation:resume:parallel:grind:high`
-- `automation:audit`
-
-Canonical command contracts and policies:
-- `template/docs/ops/automation/README.md`
+Canonical policy and lifecycle docs:
 - `template/docs/ops/automation/LITE_QUICKSTART.md`
 - `template/docs/ops/automation/OUTCOMES.md`
 - `template/docs/ops/automation/INTEROP_GITHUB.md`
