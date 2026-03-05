@@ -13,6 +13,7 @@ const LINK_REGEX = /\[[^\]]*\]\(([^)]+)\)/g;
 const INLINE_CODE_REGEX = /`([^`]+)`/g;
 const PLAN_PATH_REGEX = /^docs\/exec-plans\/(?:active|completed)\/.+\.md$/;
 const RUNTIME_CONTACT_PATH_REGEX = /^docs\/ops\/automation\/runtime\/contacts\/run-[^/]+\/.+\.md$/;
+const RUNTIME_ARTIFACT_PATH_REGEX = /^docs\/ops\/automation\/runtime\/run-[^/]+\/.+$/;
 const RUNTIME_CONTACT_FALLBACK_PATH = 'docs/ops/automation/README.md';
 
 function toPosix(value) {
@@ -155,6 +156,9 @@ function classifyRepairableReference(normalizedRef) {
   if (RUNTIME_CONTACT_PATH_REGEX.test(normalizedRef)) {
     return 'runtime-contact';
   }
+  if (RUNTIME_ARTIFACT_PATH_REGEX.test(normalizedRef)) {
+    return 'runtime-artifact';
+  }
   return null;
 }
 
@@ -251,6 +255,7 @@ function applyRewrites(content, rewrites) {
   let replacements = 0;
   let planReplacements = 0;
   let runtimeContactReplacements = 0;
+  let runtimeArtifactReplacements = 0;
   let updated = content.replace(LINK_REGEX, (fullMatch, rawRef) => {
     const rewrite = rewrites.get(rawRef);
     if (!rewrite || rewrite.target === rawRef) {
@@ -261,6 +266,8 @@ function applyRewrites(content, rewrites) {
       planReplacements += 1;
     } else if (rewrite.kind === 'runtime-contact') {
       runtimeContactReplacements += 1;
+    } else if (rewrite.kind === 'runtime-artifact') {
+      runtimeArtifactReplacements += 1;
     }
     return fullMatch.replace(`(${rawRef})`, `(${rewrite.target})`);
   });
@@ -275,6 +282,8 @@ function applyRewrites(content, rewrites) {
       planReplacements += 1;
     } else if (rewrite.kind === 'runtime-contact') {
       runtimeContactReplacements += 1;
+    } else if (rewrite.kind === 'runtime-artifact') {
+      runtimeArtifactReplacements += 1;
     }
     return `\`${rewrite.target}\``;
   });
@@ -283,7 +292,8 @@ function applyRewrites(content, rewrites) {
     content: updated,
     replacements,
     planReplacements,
-    runtimeContactReplacements
+    runtimeContactReplacements,
+    runtimeArtifactReplacements
   };
 }
 
@@ -306,11 +316,14 @@ async function main() {
 
   let staleRefsFound = 0;
   let staleRuntimeContactRefsFound = 0;
+  let staleRuntimeArtifactRefsFound = 0;
   let refsRepaired = 0;
   let planRefsRepaired = 0;
   let runtimeContactRefsRepaired = 0;
+  let runtimeArtifactRefsRepaired = 0;
   let unresolvedRefs = 0;
   let unresolvedRuntimeContactRefs = 0;
+  let unresolvedRuntimeArtifactRefs = 0;
   let filesUpdated = 0;
   const refExistsCache = new Map();
   const runtimeContactFallbackExists = await exists(path.join(rootDir, RUNTIME_CONTACT_FALLBACK_PATH));
@@ -348,14 +361,22 @@ async function main() {
           unresolvedRefs += 1;
           continue;
         }
-      } else if (ref.kind === 'runtime-contact') {
+      } else if (ref.kind === 'runtime-contact' || ref.kind === 'runtime-artifact') {
         if (await refExistsInRepo(ref.normalized)) {
           continue;
         }
 
-        staleRuntimeContactRefsFound += 1;
+        if (ref.kind === 'runtime-contact') {
+          staleRuntimeContactRefsFound += 1;
+        } else {
+          staleRuntimeArtifactRefsFound += 1;
+        }
         if (!runtimeContactFallbackExists) {
-          unresolvedRuntimeContactRefs += 1;
+          if (ref.kind === 'runtime-contact') {
+            unresolvedRuntimeContactRefs += 1;
+          } else {
+            unresolvedRuntimeArtifactRefs += 1;
+          }
           continue;
         }
         targetRef = RUNTIME_CONTACT_FALLBACK_PATH;
@@ -378,6 +399,7 @@ async function main() {
     refsRepaired += result.replacements;
     planRefsRepaired += result.planReplacements;
     runtimeContactRefsRepaired += result.runtimeContactReplacements;
+    runtimeArtifactRefsRepaired += result.runtimeArtifactReplacements;
 
     if (updated !== original) {
       filesUpdated += 1;
@@ -390,11 +412,14 @@ async function main() {
   console.log('[plan-ref-repair] scanned markdown files:', markdownFiles.length);
   console.log('[plan-ref-repair] stale plan refs found:', staleRefsFound);
   console.log('[plan-ref-repair] stale runtime contact refs found:', staleRuntimeContactRefsFound);
+  console.log('[plan-ref-repair] stale runtime artifact refs found:', staleRuntimeArtifactRefsFound);
   console.log('[plan-ref-repair] stale plan refs repaired:', planRefsRepaired);
   console.log('[plan-ref-repair] stale runtime contact refs repaired:', runtimeContactRefsRepaired);
+  console.log('[plan-ref-repair] stale runtime artifact refs repaired:', runtimeArtifactRefsRepaired);
   console.log('[plan-ref-repair] stale refs repaired total:', refsRepaired);
   console.log('[plan-ref-repair] unresolved stale refs:', unresolvedRefs);
   console.log('[plan-ref-repair] unresolved stale runtime contact refs:', unresolvedRuntimeContactRefs);
+  console.log('[plan-ref-repair] unresolved stale runtime artifact refs:', unresolvedRuntimeArtifactRefs);
   console.log('[plan-ref-repair] files updated:', filesUpdated);
   if (options.dryRun) {
     console.log('[plan-ref-repair] dry-run mode; no files were written.');
