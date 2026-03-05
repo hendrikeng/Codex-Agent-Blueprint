@@ -50,33 +50,15 @@ function withOrchestratorArgs(command) {
 function runOrchestrator(command) {
   const args = withOrchestratorArgs(command);
   console.log(`[supervisor] cycle command=${command}${dirtyRecoveryMode ? ' (dirty-recovery non-atomic)' : ''}`);
-  const result = spawnSync('node', args, { stdio: 'pipe', env: process.env });
-  const stdout = String(result.stdout ?? '');
-  const stderr = String(result.stderr ?? '');
-  if (stdout.trim()) {
-    process.stdout.write(stdout);
-  }
-  if (stderr.trim()) {
-    process.stderr.write(stderr);
-  }
+  const result = spawnSync('node', args, {
+    env: process.env,
+    stdio: 'inherit'
+  });
   const exitCode = result.status ?? 1;
   if (exitCode !== 0) {
     console.error(`[supervisor] orchestrator exited with code ${exitCode}`);
   }
-  return { exitCode, output: `${stdout}\n${stderr}`.toLowerCase() };
-}
-
-function outputIndicatesDirtyWorktreeFailure(text) {
-  return (
-    text.includes('refusing to start with a dirty git worktree') ||
-    text.includes('refusing to resume with a dirty git worktree') ||
-    text.includes('refusing parallel execution with dirty git worktree') ||
-    text.includes('refusing parallel resume with dirty git worktree') ||
-    text.includes('refusing --allow-dirty true with --commit true') ||
-    text.includes('atomic commit preflight failed') ||
-    text.includes('atomic commit failed') ||
-    text.includes('atomic commit refused')
-  );
+  return exitCode;
 }
 
 function readRunState() {
@@ -161,66 +143,79 @@ function renderSummary(state, unresolvedIds) {
   );
 }
 
-for (let cycle = 0; cycle < maxCycles; cycle += 1) {
-  const command = cycle === 0 ? firstCommand : resumeCommand;
-  const { exitCode, output } = runOrchestrator(command);
-  if (exitCode === 0) {
-    consecutiveErrors = 0;
-  } else {
-    if (outputIndicatesDirtyWorktreeFailure(output)) {
+function main() {
+  let nextCommand = firstCommand;
+
+  for (let cycle = 0; cycle < maxCycles; cycle += 1) {
+    const command = nextCommand;
+    const hadRunStateBefore = existsSync(runStatePath);
+    const exitCode = runOrchestrator(command);
+    if (exitCode === 0) {
+      consecutiveErrors = 0;
+    } else {
       if (allowDirtyRecovery && !dirtyRecoveryMode) {
-        dirtyRecoveryMode = true;
-        consecutiveErrors = 0;
+        const hasRunStateAfter = existsSync(runStatePath);
+        const likelyAtomicStartupDeadlock = command === firstCommand || hadRunStateBefore || hasRunStateAfter;
+        if (likelyAtomicStartupDeadlock) {
+          dirtyRecoveryMode = true;
+          consecutiveErrors = 0;
+          nextCommand = command;
+          console.error(
+            '[supervisor] enabling dirty recovery mode after orchestrator failure ' +
+            '(--allow-dirty true --commit false) because ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1.'
+          );
+          continue;
+        }
+      }
+      consecutiveErrors += 1;
+      if (!continueOnError || consecutiveErrors > maxConsecutiveErrors) {
+        process.exit(exitCode);
+      }
+    }
+
+    const state = readRunState();
+    if (!state) {
+      if (command === firstCommand && continueOnError && consecutiveErrors <= maxConsecutiveErrors) {
         console.error(
-          '[supervisor] detected dirty-worktree atomic deadlock; enabling dirty recovery mode ' +
-          '(--allow-dirty true --commit false) because ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1.'
+          '[supervisor] run-state not found after initial run attempt; retrying initial run command.'
         );
+        nextCommand = firstCommand;
         continue;
       }
+      console.log('[supervisor] run-state not found; stopping.');
+      process.exit(exitCode === 0 ? 0 : exitCode);
+    }
+
+    nextCommand = resumeCommand;
+
+    const activePlans = readActivePlanRecords();
+    const unresolvedIds = unresolvedActivePlanIds(state, activePlans);
+    console.log(`[supervisor] state after cycle ${cycle + 1}: ${renderSummary(state, unresolvedIds)}`);
+
+    if (queueDrained(state, unresolvedIds)) {
+      console.log('[supervisor] queue drained; done.');
+      process.exit(0);
+    }
+
+    const signature = stateSignature(state, unresolvedIds);
+    if (signature === previousSignature) {
+      stableCycles += 1;
+    } else {
+      stableCycles = 0;
+    }
+    previousSignature = signature;
+
+    if (stableCycles >= stableLimit) {
       console.error(
-        '[supervisor] detected dirty-worktree atomic deadlock. Stopping to preserve atomic guarantees. ' +
-        'Resolve workspace state, then run resume again; or explicitly set ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1 ' +
-        'to continue non-atomically.'
+        `[supervisor] no queue progress for ${stableCycles + 1} consecutive cycles. ` +
+        'Stopping for manual review.'
       );
       process.exit(2);
     }
-    consecutiveErrors += 1;
-    if (!continueOnError || consecutiveErrors > maxConsecutiveErrors) {
-      process.exit(exitCode);
-    }
   }
 
-  const state = readRunState();
-  if (!state) {
-    console.log('[supervisor] run-state not found; stopping.');
-    process.exit(exitCode === 0 ? 0 : exitCode);
-  }
-
-  const activePlans = readActivePlanRecords();
-  const unresolvedIds = unresolvedActivePlanIds(state, activePlans);
-  console.log(`[supervisor] state after cycle ${cycle + 1}: ${renderSummary(state, unresolvedIds)}`);
-
-  if (queueDrained(state, unresolvedIds)) {
-    console.log('[supervisor] queue drained; done.');
-    process.exit(0);
-  }
-
-  const signature = stateSignature(state, unresolvedIds);
-  if (signature === previousSignature) {
-    stableCycles += 1;
-  } else {
-    stableCycles = 0;
-  }
-  previousSignature = signature;
-
-  if (stableCycles >= stableLimit) {
-    console.error(
-      `[supervisor] no queue progress for ${stableCycles + 1} consecutive cycles. ` +
-      'Stopping for manual review.'
-    );
-    process.exit(2);
-  }
+  console.error(`[supervisor] reached ORCH_SUPERVISOR_MAX_CYCLES=${maxCycles}. Stopping.`);
+  process.exit(2);
 }
 
-console.error(`[supervisor] reached ORCH_SUPERVISOR_MAX_CYCLES=${maxCycles}. Stopping.`);
-process.exit(2);
+main();
