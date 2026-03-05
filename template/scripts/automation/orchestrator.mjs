@@ -6601,6 +6601,7 @@ async function runValidationAndFinalize(plan, paths, state, options, config, ass
       { requireDirty: false }
     );
     if (!preflight.ok) {
+      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
       return {
         outcome: 'failed',
         reason: preflight.reason ?? 'atomic commit preflight failed'
@@ -6635,6 +6636,7 @@ async function runValidationAndFinalize(plan, paths, state, options, config, ass
       { requireDirty: false }
     );
     if (!preflight.ok) {
+      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
       return {
         outcome: 'failed',
         reason: preflight.reason ?? 'atomic commit preflight failed'
@@ -6710,6 +6712,7 @@ async function runValidationAndFinalize(plan, paths, state, options, config, ass
       if (!options.dryRun) {
         await rollbackCompletionMutation();
       }
+      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
       return {
         outcome: 'failed',
         reason: commitResult.reason ?? 'atomic commit failed; completion mutation rolled back'

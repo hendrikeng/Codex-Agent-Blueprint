@@ -15,6 +15,15 @@ If instructions conflict, this file is the behavioral priority entrypoint.
 - Agents execute scoped tasks using repository-local docs, code, and checks.
 - Continuous docs hygiene is required through repository checks.
 
+## Intent Precedence
+
+- Explicit user intent is binding.
+- In normal/direct Codex sessions (outside orchestrator `run`/`resume`), follow user intent immediately.
+- If the session is switched to plan mode, treat it as planning-only unless the user explicitly asks to implement.
+- If a user asks for planning-only work (for example: "plan", "outline", "prepare for promotion", "no implementation yet"), do not modify source or test files.
+- For planning-only requests, work in `docs/future/`, keep metadata complete, and set `Status: ready-for-promotion` when the plan is decision-complete.
+- Start implementation only when the user explicitly asks to implement or promote/execute the plan.
+
 ## Core Map
 
 Start here, then follow linked source-of-truth docs:

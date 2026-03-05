@@ -40,6 +40,16 @@ Examples:
 
 Orchestration is the default execution driver. Manual execution is valid only if it preserves status transitions, metadata integrity, and evidence/index curation behavior.
 
+## Plan-Only Requests
+
+When the user asks for planning only (no implementation yet):
+
+1. Update or create the blueprint in `docs/future/`.
+2. Do not edit source/test/runtime files.
+3. Set `Status: ready-for-promotion` when the plan is implementation-ready.
+
+This also applies when the agent/session is explicitly set to plan mode: default to `docs/future` planning outputs until implementation is explicitly requested.
+
 ## Structure
 
 - `docs/exec-plans/README.md`
