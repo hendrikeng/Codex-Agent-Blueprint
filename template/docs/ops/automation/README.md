@@ -290,7 +290,7 @@ Parallelism note:
   - `ORCH_SUPERVISOR_STABLE_LIMIT` (default `4`)
   - `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` (default `2`)
   - `ORCH_SUPERVISOR_CONTINUE_ON_ERROR` (default `1`)
-  - `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY` (default `0`; when set to `1`, supervisor can continue with `--allow-dirty true --commit false` after atomic deadlocks)
+  - `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY` (default `0`; when set to `1`, supervisor can continue with `--allow-dirty true --commit false` after atomic deadlocks, including follow-up `resume` cycles on dirty worktrees)
 - Grind aliases (`automation:*:grind*`) set `ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1` and increase `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` to `8` for overnight continuity.
 - Supervisor treats `Status: validation` plans as externally gated for drain detection, so grind loops stop once executable queues are empty instead of repeatedly re-running no-progress validation-only resumes.
 

@@ -215,9 +215,11 @@ function main() {
       consecutiveErrors = 0;
     } else {
       if (allowDirtyRecovery && !dirtyRecoveryMode) {
-        const startupDirtyDeadlock = command === firstCommand && worktreeIsDirty();
+        const dirtyWorktree = worktreeIsDirty();
+        const startupDirtyDeadlock = command === firstCommand && dirtyWorktree;
+        const followupDirtyDeadlock = command !== firstCommand && dirtyWorktree;
         const atomicDeadlockSignal = hasAtomicDeadlockSignalInCurrentRun();
-        if (startupDirtyDeadlock || atomicDeadlockSignal) {
+        if (startupDirtyDeadlock || followupDirtyDeadlock || atomicDeadlockSignal) {
           dirtyRecoveryMode = true;
           consecutiveErrors = 0;
           nextCommand = command;
@@ -252,6 +254,14 @@ function main() {
     const activePlans = readActivePlanRecords();
     const unresolvedIds = unresolvedActivePlanIds(state, activePlans);
     console.log(`[supervisor] state after cycle ${cycle + 1}: ${renderSummary(state, unresolvedIds)}`);
+
+    if (allowDirtyRecovery && !dirtyRecoveryMode && unresolvedIds.length > 0 && worktreeIsDirty()) {
+      dirtyRecoveryMode = true;
+      console.error(
+        '[supervisor] enabling dirty recovery mode for follow-up cycles ' +
+        '(--allow-dirty true --commit false) because unresolved work remains on a dirty workspace.'
+      );
+    }
 
     if (queueDrained(state, unresolvedIds)) {
       console.log('[supervisor] queue drained; done.');

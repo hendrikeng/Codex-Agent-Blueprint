@@ -153,7 +153,7 @@ Start with:
 - `guarded` is gate-based (non-interactive): medium/high plans require `ORCH_APPROVED_MEDIUM=1` / `ORCH_APPROVED_HIGH=1`.
 - Tiering model is cumulative: baseline allows low only, `:medium` allows low+medium, and `:high` allows low+medium+high.
 - Supervisor loop controls: `ORCH_SUPERVISOR_MAX_CYCLES` (default `120`), `ORCH_SUPERVISOR_STABLE_LIMIT` (default `4`), `ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS` (default `2`, grind aliases set `8`), `ORCH_SUPERVISOR_CONTINUE_ON_ERROR` (`1` default).
-- Overnight grind aliases default to recovery-first: they try atomic commits first, then auto-switch to non-atomic continuation on atomic deadlocks (`ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1`).
+- Overnight grind aliases default to recovery-first: they try atomic commits first, then auto-switch to non-atomic continuation on atomic deadlocks (including follow-up resume cycles on dirty worktrees) (`ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1`).
 - Executor is required and loaded from `docs/ops/automation/orchestrator.config.json` (`executor.command`).
 - Provider selection is adapter-based (`executor.provider` or `ORCH_EXECUTOR_PROVIDER`) so Codex and Claude Code can share the same orchestration contract.
 - Default session safety policy is proactive rollover at `contextRemaining <= 10000` with required structured `ORCH_RESULT_PATH` payloads.
