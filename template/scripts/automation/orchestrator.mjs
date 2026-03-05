@@ -4512,8 +4512,22 @@ function updateSimpleMetadataField(content, field, value) {
 }
 
 function documentStatusValue(content) {
+  const metadata = parseMetadata(content);
+  const metadataStatus = normalizeStatus(metadataValue(metadata, 'Status'));
+  if (metadataStatus) {
+    return metadataStatus;
+  }
   const match = content.match(/^Status:\s*(.+)$/m);
   return normalizeStatus(match?.[1] ?? '');
+}
+
+function documentValidationReadyValue(content) {
+  const metadata = parseMetadata(content);
+  const value = normalizeStatus(metadataValue(metadata, 'Validation-Ready'));
+  if (value === 'yes' || value === 'host-required-only' || value === 'no') {
+    return value;
+  }
+  return '';
 }
 
 function completionGateReadyForValidation(documentStatus) {
@@ -4605,6 +4619,21 @@ async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResu
   const status = documentStatusValue(content);
   if (completionGateReadyForValidation(status)) {
     return { promoted: false, reason: null };
+  }
+
+  const validationReady = documentValidationReadyValue(content);
+  if (validationReady === 'no') {
+    return { promoted: false, reason: null };
+  }
+  if (validationReady === 'yes' || validationReady === 'host-required-only') {
+    await setPlanStatus(planPath, 'validation', options.dryRun);
+    return {
+      promoted: true,
+      reason:
+        validationReady === 'host-required-only'
+          ? "Plan metadata 'Validation-Ready: host-required-only' indicates host validation is the sole gate."
+          : "Plan metadata 'Validation-Ready: yes' indicates implementation is complete for validation."
+    };
   }
 
   const checklistHostOnly = nextStepChecklistIsHostValidationOnly(nextStepChecklistLines(content));
@@ -6378,6 +6407,329 @@ async function announceStageReuse(paths, state, plan, roleState, options) {
   progressLog(options, `role stage reuse ${plan.planId}: skipped ${roleState.reusedPrefixStages.join(' -> ')}`);
 }
 
+async function runValidationAndFinalize(plan, paths, state, options, config, assessment, roleState, executionContext = {}) {
+  const session = asInteger(executionContext.session, 0);
+  const planStartedAt = executionContext.planStartedAt ?? nowIso();
+  const sessionsExecuted = asInteger(executionContext.sessionsExecuted, session);
+  const rollovers = asInteger(executionContext.rollovers, 0);
+
+  const approvalRequired = requiresSecurityApproval(plan, assessment, config);
+  const securityApprovalField =
+    resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
+  const securityApprovalValue = parseSecurityApproval(
+    metadataValue(plan.metadata, securityApprovalField),
+    plan.securityApproval
+  );
+  plan.securityApproval = securityApprovalValue;
+
+  if (approvalRequired && securityApprovalValue !== SECURITY_APPROVAL_APPROVED) {
+    await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
+    if (!options.dryRun && securityApprovalValue === SECURITY_APPROVAL_NOT_REQUIRED) {
+      const rawPlan = await fs.readFile(plan.filePath, 'utf8');
+      const updatedPlan = setMetadataFields(rawPlan, {
+        [securityApprovalField]: SECURITY_APPROVAL_PENDING
+      });
+      await fs.writeFile(plan.filePath, updatedPlan, 'utf8');
+    }
+    const reason = `Security approval required: set '${securityApprovalField}' to '${SECURITY_APPROVAL_APPROVED}' for ${assessment.effectiveRiskTier}-risk completion.`;
+    await logEvent(paths, state, 'security_approval_pending', {
+      planId: plan.planId,
+      riskTier: assessment.effectiveRiskTier,
+      securityApprovalField,
+      securityApproval: securityApprovalValue,
+      sensitive: assessment.sensitive,
+      reason
+    }, options.dryRun);
+    progressLog(options, `security approval pending for ${plan.planId}: ${reason}`);
+    return {
+      outcome: 'blocked',
+      reason,
+      riskTier: assessment.effectiveRiskTier
+    };
+  }
+
+  await setPlanStatus(plan.filePath, 'validation', options.dryRun);
+  progressLog(options, `validation start ${plan.planId} lane=always`);
+  const alwaysValidation = await runAlwaysValidation(paths, options, config, state, plan);
+  if (!alwaysValidation.ok) {
+    state.stats.validationFailures += 1;
+    updatePlanValidationState(state, plan.planId, {
+      always: 'failed',
+      reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`
+    });
+    await setPlanStatus(plan.filePath, 'failed', options.dryRun);
+    await logEvent(paths, state, 'validation_failed', {
+      planId: plan.planId,
+      command: alwaysValidation.failedCommand,
+      reason: alwaysValidation.reason ?? null,
+      outputLogPath: alwaysValidation.outputLogPath ?? null
+    }, options.dryRun);
+    progressLog(options, `validation failed ${plan.planId}: ${alwaysValidation.reason ?? alwaysValidation.failedCommand}`);
+    if (alwaysValidation.outputLogPath) {
+      progressLog(options, `validation log: ${alwaysValidation.outputLogPath}`);
+    }
+    if (alwaysValidation.failureTail && !isTickerOutput(options)) {
+      progressLog(options, `validation failure tail:\n${alwaysValidation.failureTail}`);
+    }
+
+    return {
+      outcome: 'failed',
+      reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`,
+      riskTier: assessment.effectiveRiskTier
+    };
+  }
+
+  updatePlanValidationState(state, plan.planId, {
+    always: 'passed',
+    reason: null
+  });
+  progressLog(options, `validation passed ${plan.planId} lane=always`);
+
+  await logEvent(paths, state, 'host_validation_requested', {
+    planId: plan.planId,
+    mode: resolveHostValidationMode(config),
+    commands: resolveHostRequiredValidationCommands(config)
+  }, options.dryRun);
+  progressLog(options, `validation start ${plan.planId} lane=host mode=${resolveHostValidationMode(config)}`);
+
+  const hostValidation = await runHostValidation(paths, state, plan, options, config);
+  if (hostValidation.status === 'failed') {
+    state.stats.validationFailures += 1;
+    updatePlanValidationState(state, plan.planId, {
+      host: 'failed',
+      provider: hostValidation.provider ?? null,
+      reason: hostValidation.reason ?? 'Host validation failed.'
+    });
+    await setPlanStatus(plan.filePath, 'failed', options.dryRun);
+    await logEvent(paths, state, 'host_validation_failed', {
+      planId: plan.planId,
+      provider: hostValidation.provider ?? null,
+      reason: hostValidation.reason ?? 'Host validation failed.',
+      outputLogPath: hostValidation.outputLogPath ?? null
+    }, options.dryRun);
+    progressLog(options, `host validation failed ${plan.planId}: ${hostValidation.reason ?? 'Host validation failed.'}`);
+    if (hostValidation.outputLogPath) {
+      progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
+    }
+    if (hostValidation.failureTail && !isTickerOutput(options)) {
+      progressLog(options, `host validation failure tail:\n${hostValidation.failureTail}`);
+    }
+
+    return {
+      outcome: 'failed',
+      reason: hostValidation.reason ?? 'Host validation failed.',
+      riskTier: assessment.effectiveRiskTier
+    };
+  }
+
+  if (hostValidation.status === 'pending') {
+    updatePlanValidationState(state, plan.planId, {
+      host: 'pending',
+      provider: hostValidation.provider ?? null,
+      reason: hostValidation.reason ?? 'Host validation pending.'
+    });
+    await setPlanStatus(plan.filePath, 'validation', options.dryRun);
+    await setHostValidationSection(
+      plan.filePath,
+      'pending',
+      hostValidation.provider ?? 'unknown',
+      hostValidation.reason ?? 'Host validation pending.',
+      options.dryRun
+    );
+    await logEvent(paths, state, 'host_validation_blocked', {
+      planId: plan.planId,
+      provider: hostValidation.provider ?? null,
+      reason: hostValidation.reason ?? 'Host validation pending.',
+      outputLogPath: hostValidation.outputLogPath ?? null
+    }, options.dryRun);
+    progressLog(options, `host validation pending ${plan.planId}: ${hostValidation.reason ?? 'Host validation pending.'}`);
+    if (hostValidation.outputLogPath) {
+      progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
+    }
+    if (hostValidation.failureTail && !isTickerOutput(options)) {
+      progressLog(options, `host validation tail:\n${hostValidation.failureTail}`);
+    }
+
+    return {
+      outcome: 'pending',
+      reason: hostValidation.reason ?? 'Host validation pending.',
+      riskTier: assessment.effectiveRiskTier
+    };
+  }
+
+  updatePlanValidationState(state, plan.planId, {
+    host: 'passed',
+    provider: hostValidation.provider ?? null,
+    reason: null
+  });
+  await setHostValidationSection(
+    plan.filePath,
+    'passed',
+    hostValidation.provider ?? 'unknown',
+    'Host-required validations passed.',
+    options.dryRun
+  );
+  await logEvent(paths, state, 'host_validation_passed', {
+    planId: plan.planId,
+    provider: hostValidation.provider ?? null
+  }, options.dryRun);
+  progressLog(options, `host validation passed ${plan.planId} provider=${hostValidation.provider ?? 'n/a'}`);
+
+  const mergedValidationEvidence = [
+    ...alwaysValidation.evidence,
+    ...(Array.isArray(hostValidation.evidence) ? hostValidation.evidence : [])
+  ];
+  const shouldCreateAtomicCommit = asBoolean(options.commit, config.git.atomicCommits !== false);
+  const completedTargetPath = await resolveCompletedPlanTargetPath(plan.filePath, paths.completedDir);
+  const completedTargetRel = toPosix(path.relative(paths.rootDir, completedTargetPath));
+  const commitPolicy = {
+    enforceRoots: asBoolean(config.git?.atomicCommitRoots?.enforce, true),
+    allowedRoots: resolveAtomicCommitRoots(
+      plan,
+      config,
+      paths,
+      { completedRel: completedTargetRel }
+    )
+  };
+
+  if (shouldCreateAtomicCommit && !options.dryRun) {
+    const preflight = evaluateAtomicCommitReadiness(
+      paths.rootDir,
+      plan.planId,
+      options.allowDirty,
+      commitPolicy,
+      { requireDirty: false }
+    );
+    if (!preflight.ok) {
+      return {
+        outcome: 'failed',
+        reason: preflight.reason ?? 'atomic commit preflight failed'
+      };
+    }
+  }
+
+  const lifecycle = resolveEvidenceLifecycleConfig(config);
+  if (lifecycle.pruneOnComplete) {
+    const completionCuration = await curateEvidenceForPlan(plan, paths, options, config);
+    if (completionCuration.filesPruned > 0 || completionCuration.filesUpdated > 0) {
+      await logEvent(paths, state, 'evidence_curated', {
+        planId: plan.planId,
+        stage: 'completion',
+        session,
+        directoriesVisited: completionCuration.directoriesVisited,
+        filesPruned: completionCuration.filesPruned,
+        filesKept: completionCuration.filesKept,
+        filesUpdated: completionCuration.filesUpdated,
+        replacementsApplied: completionCuration.replacementsApplied
+      }, options.dryRun);
+      await refreshEvidenceIndex(plan, paths, state, options, config);
+    }
+  }
+
+  if (shouldCreateAtomicCommit && !options.dryRun) {
+    const preflight = evaluateAtomicCommitReadiness(
+      paths.rootDir,
+      plan.planId,
+      options.allowDirty,
+      commitPolicy,
+      { requireDirty: false }
+    );
+    if (!preflight.ok) {
+      return {
+        outcome: 'failed',
+        reason: preflight.reason ?? 'atomic commit preflight failed'
+      };
+    }
+  }
+
+  const rollbackSnapshots = new Map();
+  const captureRollbackSnapshot = async (targetPath) => {
+    const key = path.resolve(targetPath);
+    if (rollbackSnapshots.has(key)) {
+      return;
+    }
+    rollbackSnapshots.set(key, await snapshotFileState(key));
+  };
+  const rollbackCompletionMutation = async () => {
+    const restoreTargets = [...rollbackSnapshots.keys()].reverse();
+    for (const target of restoreTargets) {
+      await restoreFileState(target, rollbackSnapshots.get(target));
+    }
+  };
+
+  if (shouldCreateAtomicCommit && !options.dryRun) {
+    await captureRollbackSnapshot(plan.filePath);
+    await captureRollbackSnapshot(completedTargetPath);
+    await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, `${plan.planId}.md`));
+    await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, 'README.md'));
+    const specTargets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/current-state.md'];
+    for (const target of specTargets) {
+      try {
+        const resolved = resolveSafeRepoPath(paths.rootDir, target, `Spec target for plan '${plan.planId}'`);
+        await captureRollbackSnapshot(resolved.abs);
+      } catch {
+        // Skip invalid spec targets here; updateProductSpecs already emits explicit skip events.
+      }
+    }
+  }
+
+  const completedPath = await finalizeCompletedPlan(
+    plan,
+    paths,
+    state,
+    mergedValidationEvidence,
+    options,
+    config,
+    {
+      planStartedAt,
+      sessionsExecuted,
+      rollovers,
+      hostValidationProvider: hostValidation.provider ?? 'none',
+      effectiveRiskTier: assessment.effectiveRiskTier,
+      declaredRiskTier: assessment.declaredRiskTier,
+      rolePipeline:
+        Array.isArray(roleState?.stages) && roleState.stages.length > 0
+          ? roleState.stages.join(' -> ')
+          : ROLE_WORKER,
+      targetPath: completedTargetPath
+    }
+  );
+
+  await updateProductSpecs(plan, completedPath, paths, state, options);
+
+  let commitResult = { ok: true, committed: false, commitHash: null };
+  if (shouldCreateAtomicCommit) {
+    commitResult = createAtomicCommit(
+      paths.rootDir,
+      plan.planId,
+      options.dryRun,
+      options.allowDirty,
+      commitPolicy
+    );
+    if (!commitResult.ok) {
+      if (!options.dryRun) {
+        await rollbackCompletionMutation();
+      }
+      return {
+        outcome: 'failed',
+        reason: commitResult.reason ?? 'atomic commit failed; completion mutation rolled back'
+      };
+    }
+    if (commitResult.committed) {
+      state.stats.commits += 1;
+    }
+  }
+
+  return {
+    outcome: 'completed',
+    reason: 'completed',
+    completedPath: toPosix(path.relative(paths.rootDir, completedPath)),
+    commitHash: commitResult.commitHash,
+    validationEvidence: mergedValidationEvidence,
+    riskTier: assessment.effectiveRiskTier
+  };
+}
+
 async function processPlan(plan, paths, state, options, config) {
   let lastAssessment = computeRiskAssessment(plan, state, config);
   const gate = evaluatePolicyGate(
@@ -6396,7 +6748,10 @@ async function processPlan(plan, paths, state, options, config) {
     };
   }
 
-  await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
+  const initialCompletionGate = await evaluateCompletionGate(plan.filePath);
+  if (!initialCompletionGate.ready) {
+    await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
+  }
 
   const maxRollovers = asInteger(options.maxRollovers, DEFAULT_MAX_ROLLOVERS);
   const maxSessionsPerPlan = asInteger(options.maxSessionsPerPlan, DEFAULT_MAX_SESSIONS_PER_PLAN);
@@ -6435,6 +6790,19 @@ async function processPlan(plan, paths, state, options, config) {
     const stageIndex = roleIndex + 1;
     const currentRole = normalizeRoleName(roleState.stages[roleIndex], ROLE_WORKER);
     const currentRoleProfile = resolveRoleExecutionProfile(config, currentRole);
+    const completionGateBeforeSession = await evaluateCompletionGate(plan.filePath);
+    if (completionGateBeforeSession.ready) {
+      progressLog(
+        options,
+        `validation fast-path ${plan.planId}: status gate already open, skipping role=${currentRole}`
+      );
+      return runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
+        session,
+        sessionsExecuted: Math.max(0, session - 1),
+        planStartedAt,
+        rollovers
+      });
+    }
 
     state.inProgress = {
       planId: plan.planId,
@@ -6994,318 +7362,12 @@ async function processPlan(plan, paths, state, options, config) {
       continue;
     }
 
-    const approvalRequired = requiresSecurityApproval(plan, lastAssessment, config);
-    const securityApprovalField =
-      resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
-    const securityApprovalValue = parseSecurityApproval(
-      metadataValue(plan.metadata, securityApprovalField),
-      plan.securityApproval
-    );
-    plan.securityApproval = securityApprovalValue;
-
-    if (approvalRequired && securityApprovalValue !== SECURITY_APPROVAL_APPROVED) {
-      await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
-      if (!options.dryRun && securityApprovalValue === SECURITY_APPROVAL_NOT_REQUIRED) {
-        const rawPlan = await fs.readFile(plan.filePath, 'utf8');
-        const updatedPlan = setMetadataFields(rawPlan, {
-          [securityApprovalField]: SECURITY_APPROVAL_PENDING
-        });
-        await fs.writeFile(plan.filePath, updatedPlan, 'utf8');
-      }
-      const reason = `Security approval required: set '${securityApprovalField}' to '${SECURITY_APPROVAL_APPROVED}' for ${lastAssessment.effectiveRiskTier}-risk completion.`;
-      await logEvent(paths, state, 'security_approval_pending', {
-        planId: plan.planId,
-        riskTier: lastAssessment.effectiveRiskTier,
-        securityApprovalField,
-        securityApproval: securityApprovalValue,
-        sensitive: lastAssessment.sensitive,
-        reason
-      }, options.dryRun);
-      progressLog(options, `security approval pending for ${plan.planId}: ${reason}`);
-      return {
-        outcome: 'blocked',
-        reason,
-        riskTier: lastAssessment.effectiveRiskTier
-      };
-    }
-
-    await setPlanStatus(plan.filePath, 'validation', options.dryRun);
-    progressLog(options, `validation start ${plan.planId} lane=always`);
-    const alwaysValidation = await runAlwaysValidation(paths, options, config, state, plan);
-    if (!alwaysValidation.ok) {
-      state.stats.validationFailures += 1;
-      updatePlanValidationState(state, plan.planId, {
-        always: 'failed',
-        reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`
-      });
-      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      await logEvent(paths, state, 'validation_failed', {
-        planId: plan.planId,
-        command: alwaysValidation.failedCommand,
-        reason: alwaysValidation.reason ?? null,
-        outputLogPath: alwaysValidation.outputLogPath ?? null
-      }, options.dryRun);
-      progressLog(options, `validation failed ${plan.planId}: ${alwaysValidation.reason ?? alwaysValidation.failedCommand}`);
-      if (alwaysValidation.outputLogPath) {
-        progressLog(options, `validation log: ${alwaysValidation.outputLogPath}`);
-      }
-      if (alwaysValidation.failureTail && !isTickerOutput(options)) {
-        progressLog(options, `validation failure tail:\n${alwaysValidation.failureTail}`);
-      }
-
-      return {
-        outcome: 'failed',
-        reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`,
-        riskTier: lastAssessment.effectiveRiskTier
-      };
-    }
-
-    updatePlanValidationState(state, plan.planId, {
-      always: 'passed',
-      reason: null
+    return runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
+      session,
+      sessionsExecuted: session,
+      planStartedAt,
+      rollovers
     });
-    progressLog(options, `validation passed ${plan.planId} lane=always`);
-
-    await logEvent(paths, state, 'host_validation_requested', {
-      planId: plan.planId,
-      mode: resolveHostValidationMode(config),
-      commands: resolveHostRequiredValidationCommands(config)
-    }, options.dryRun);
-    progressLog(options, `validation start ${plan.planId} lane=host mode=${resolveHostValidationMode(config)}`);
-
-    const hostValidation = await runHostValidation(paths, state, plan, options, config);
-    if (hostValidation.status === 'failed') {
-      state.stats.validationFailures += 1;
-      updatePlanValidationState(state, plan.planId, {
-        host: 'failed',
-        provider: hostValidation.provider ?? null,
-        reason: hostValidation.reason ?? 'Host validation failed.'
-      });
-      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      await logEvent(paths, state, 'host_validation_failed', {
-        planId: plan.planId,
-        provider: hostValidation.provider ?? null,
-        reason: hostValidation.reason ?? 'Host validation failed.',
-        outputLogPath: hostValidation.outputLogPath ?? null
-      }, options.dryRun);
-      progressLog(options, `host validation failed ${plan.planId}: ${hostValidation.reason ?? 'Host validation failed.'}`);
-      if (hostValidation.outputLogPath) {
-        progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
-      }
-      if (hostValidation.failureTail && !isTickerOutput(options)) {
-        progressLog(options, `host validation failure tail:\n${hostValidation.failureTail}`);
-      }
-
-      return {
-        outcome: 'failed',
-        reason: hostValidation.reason ?? 'Host validation failed.',
-        riskTier: lastAssessment.effectiveRiskTier
-      };
-    }
-
-    if (hostValidation.status === 'pending') {
-      updatePlanValidationState(state, plan.planId, {
-        host: 'pending',
-        provider: hostValidation.provider ?? null,
-        reason: hostValidation.reason ?? 'Host validation pending.'
-      });
-      await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
-      await setHostValidationSection(
-        plan.filePath,
-        'pending',
-        hostValidation.provider ?? 'unknown',
-        hostValidation.reason ?? 'Host validation pending.',
-        options.dryRun
-      );
-      await logEvent(paths, state, 'host_validation_blocked', {
-        planId: plan.planId,
-        provider: hostValidation.provider ?? null,
-        reason: hostValidation.reason ?? 'Host validation pending.',
-        outputLogPath: hostValidation.outputLogPath ?? null
-      }, options.dryRun);
-      progressLog(options, `host validation pending ${plan.planId}: ${hostValidation.reason ?? 'Host validation pending.'}`);
-      if (hostValidation.outputLogPath) {
-        progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
-      }
-      if (hostValidation.failureTail && !isTickerOutput(options)) {
-        progressLog(options, `host validation tail:\n${hostValidation.failureTail}`);
-      }
-
-      return {
-        outcome: 'pending',
-        reason: hostValidation.reason ?? 'Host validation pending.',
-        riskTier: lastAssessment.effectiveRiskTier
-      };
-    }
-
-    updatePlanValidationState(state, plan.planId, {
-      host: 'passed',
-      provider: hostValidation.provider ?? null,
-      reason: null
-    });
-    await setHostValidationSection(
-      plan.filePath,
-      'passed',
-      hostValidation.provider ?? 'unknown',
-      'Host-required validations passed.',
-      options.dryRun
-    );
-    await logEvent(paths, state, 'host_validation_passed', {
-      planId: plan.planId,
-      provider: hostValidation.provider ?? null
-    }, options.dryRun);
-    progressLog(options, `host validation passed ${plan.planId} provider=${hostValidation.provider ?? 'n/a'}`);
-
-    const mergedValidationEvidence = [
-      ...alwaysValidation.evidence,
-      ...(Array.isArray(hostValidation.evidence) ? hostValidation.evidence : [])
-    ];
-    const shouldCreateAtomicCommit = asBoolean(options.commit, config.git.atomicCommits !== false);
-    const completedTargetPath = await resolveCompletedPlanTargetPath(plan.filePath, paths.completedDir);
-    const completedTargetRel = toPosix(path.relative(paths.rootDir, completedTargetPath));
-    const commitPolicy = {
-      enforceRoots: asBoolean(config.git?.atomicCommitRoots?.enforce, true),
-      allowedRoots: resolveAtomicCommitRoots(
-        plan,
-        config,
-        paths,
-        { completedRel: completedTargetRel }
-      )
-    };
-
-    if (shouldCreateAtomicCommit && !options.dryRun) {
-      const preflight = evaluateAtomicCommitReadiness(
-        paths.rootDir,
-        plan.planId,
-        options.allowDirty,
-        commitPolicy,
-        { requireDirty: false }
-      );
-      if (!preflight.ok) {
-        return {
-          outcome: 'failed',
-          reason: preflight.reason ?? 'atomic commit preflight failed'
-        };
-      }
-    }
-
-    const lifecycle = resolveEvidenceLifecycleConfig(config);
-    if (lifecycle.pruneOnComplete) {
-      const completionCuration = await curateEvidenceForPlan(plan, paths, options, config);
-      if (completionCuration.filesPruned > 0 || completionCuration.filesUpdated > 0) {
-        await logEvent(paths, state, 'evidence_curated', {
-          planId: plan.planId,
-          stage: 'completion',
-          session,
-          directoriesVisited: completionCuration.directoriesVisited,
-          filesPruned: completionCuration.filesPruned,
-          filesKept: completionCuration.filesKept,
-          filesUpdated: completionCuration.filesUpdated,
-          replacementsApplied: completionCuration.replacementsApplied
-        }, options.dryRun);
-        await refreshEvidenceIndex(plan, paths, state, options, config);
-      }
-    }
-
-    if (shouldCreateAtomicCommit && !options.dryRun) {
-      const preflight = evaluateAtomicCommitReadiness(
-        paths.rootDir,
-        plan.planId,
-        options.allowDirty,
-        commitPolicy,
-        { requireDirty: false }
-      );
-      if (!preflight.ok) {
-        return {
-          outcome: 'failed',
-          reason: preflight.reason ?? 'atomic commit preflight failed'
-        };
-      }
-    }
-
-    const rollbackSnapshots = new Map();
-    const captureRollbackSnapshot = async (targetPath) => {
-      const key = path.resolve(targetPath);
-      if (rollbackSnapshots.has(key)) {
-        return;
-      }
-      rollbackSnapshots.set(key, await snapshotFileState(key));
-    };
-    const rollbackCompletionMutation = async () => {
-      const restoreTargets = [...rollbackSnapshots.keys()].reverse();
-      for (const target of restoreTargets) {
-        await restoreFileState(target, rollbackSnapshots.get(target));
-      }
-    };
-
-    if (shouldCreateAtomicCommit && !options.dryRun) {
-      await captureRollbackSnapshot(plan.filePath);
-      await captureRollbackSnapshot(completedTargetPath);
-      await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, `${plan.planId}.md`));
-      await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, 'README.md'));
-      const specTargets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/current-state.md'];
-      for (const target of specTargets) {
-        try {
-          const resolved = resolveSafeRepoPath(paths.rootDir, target, `Spec target for plan '${plan.planId}'`);
-          await captureRollbackSnapshot(resolved.abs);
-        } catch {
-          // Skip invalid spec targets here; updateProductSpecs already emits explicit skip events.
-        }
-      }
-    }
-
-    const completedPath = await finalizeCompletedPlan(
-      plan,
-      paths,
-      state,
-      mergedValidationEvidence,
-      options,
-      config,
-      {
-        planStartedAt,
-        sessionsExecuted: session,
-        rollovers,
-        hostValidationProvider: hostValidation.provider ?? 'none',
-        effectiveRiskTier: lastAssessment.effectiveRiskTier,
-        declaredRiskTier: lastAssessment.declaredRiskTier,
-        rolePipeline: roleState.stages.join(' -> '),
-        targetPath: completedTargetPath
-      }
-    );
-
-    await updateProductSpecs(plan, completedPath, paths, state, options);
-
-    let commitResult = { ok: true, committed: false, commitHash: null };
-    if (shouldCreateAtomicCommit) {
-      commitResult = createAtomicCommit(
-        paths.rootDir,
-        plan.planId,
-        options.dryRun,
-        options.allowDirty,
-        commitPolicy
-      );
-      if (!commitResult.ok) {
-        if (!options.dryRun) {
-          await rollbackCompletionMutation();
-        }
-        return {
-          outcome: 'failed',
-          reason: commitResult.reason ?? 'atomic commit failed; completion mutation rolled back'
-        };
-      }
-      if (commitResult.committed) {
-        state.stats.commits += 1;
-      }
-    }
-
-    return {
-      outcome: 'completed',
-      reason: 'completed',
-      completedPath: toPosix(path.relative(paths.rootDir, completedPath)),
-      commitHash: commitResult.commitHash,
-      validationEvidence: mergedValidationEvidence,
-      riskTier: lastAssessment.effectiveRiskTier
-    };
   }
 
   return {

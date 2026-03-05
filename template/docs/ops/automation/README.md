@@ -290,13 +290,14 @@ Executor commands should use these outcomes:
 - Exit code `75`: request session rollover/handoff.
 - Non-zero other than `75`: fail execution.
 - A plan is auto-moved to `docs/exec-plans/completed/` only when its top-level `Status:` line is `completed`.
-- If the top-level `Status:` is not `completed`, orchestration starts another executor session for the same plan in the same run (up to `--max-sessions-per-plan`), then leaves it in `active/` for later `resume` if still incomplete.
+- If the top-level `Status:` is `validation` (or `completed`), orchestration skips role sessions and runs validation lanes directly.
+- If the top-level `Status:` is neither `validation` nor `completed`, orchestration starts another executor session for the same plan in the same run (up to `--max-sessions-per-plan`), then leaves it in `active/` for later `resume` if still incomplete.
 - Session boundaries are strict: each planner/explorer/worker/reviewer stage starts a new executor process and can use a role-specific model profile.
 - Each session gets a task-scoped contact pack (`{contact_pack_file}`) and should use it as primary context before expanding scope.
 - Executor sessions must always emit a structured result payload (`ORCH_RESULT_PATH`) with a numeric `contextRemaining`.
 - Default context rollover policy is proactive: a new session is forced when `contextRemaining <= 10000` (override with `--context-threshold` or `executor.contextThreshold`).
 - If an executor exits `0` without payload (or without numeric `contextRemaining`), orchestrator forces an immediate handoff/rollover to protect coding accuracy.
-- If host-required validations cannot run in the current environment, orchestration keeps the plan `in-progress`, records a host-validation pending reason, and continues with other executable plans.
+- If host-required validations cannot run in the current environment, orchestration keeps the plan `validation`, records a host-validation pending reason, and continues with other executable plans.
 - If validation lanes are required but unconfigured, `run`/`resume` fail immediately (fail-closed).
 - Failed plans are automatically re-queued on `resume` when policy/security/dependency gates are now satisfied (up to `--max-failed-retries`).
 - Blocked plans are automatically re-queued on `resume` when their blocking gates are now satisfied (for example, approvals provided).
@@ -317,6 +318,7 @@ Executor commands should use these outcomes:
 - `medium`: `planner -> worker -> reviewer`
 - `high`: `planner -> explorer -> worker -> reviewer`
 - Completion gate opens when top-level plan `Status` is `validation` (preferred) or `completed`.
+- Optional metadata `Validation-Ready: host-required-only` (or `yes`) allows deterministic reviewer closeout promotion to validation without relying only on free-text phrasing.
 - If final completion criteria are not yet met after reviewer/worker, orchestrator resets stage progression to `worker` and continues until completion gates pass.
 - Reviewer sessions that clearly indicate host validation is the only remaining gate are auto-promoted to `Status: validation` to avoid worker/reviewer churn.
 - The active role is passed to executors via `ORCH_ROLE` and `--role {role}`.
