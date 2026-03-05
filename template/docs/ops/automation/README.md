@@ -316,7 +316,9 @@ Executor commands should use these outcomes:
 - `low`: `worker`
 - `medium`: `planner -> worker -> reviewer`
 - `high`: `planner -> explorer -> worker -> reviewer`
+- Completion gate opens when top-level plan `Status` is `validation` (preferred) or `completed`.
 - If final completion criteria are not yet met after reviewer/worker, orchestrator resets stage progression to `worker` and continues until completion gates pass.
+- Reviewer sessions that clearly indicate host validation is the only remaining gate are auto-promoted to `Status: validation` to avoid worker/reviewer churn.
 - The active role is passed to executors via `ORCH_ROLE` and `--role {role}`.
 
 ## Security Approval Field

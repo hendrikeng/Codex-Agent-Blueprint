@@ -84,7 +84,9 @@ Recommended baseline:
 
 ## Operational Notes
 
+- Completion gate opens when the top-level plan `Status` is `validation` or `completed`.
 - If completion gates are not yet satisfied, orchestration restarts at `worker` stage and reruns required review.
+- Reviewer sessions that clearly indicate host validation is the only remaining gate are auto-promoted to `Status: validation` to prevent worker/reviewer churn.
 - `pending` session results do not auto-advance risk pipeline stages; reviewer `pending` is routed back to `worker`.
 - Planner/explorer `pending` entries that clearly indicate implementation handoff (read-only or implementation-incomplete reasons) are auto-advanced to the next stage.
 - Repeated identical `pending` signals for the same role fail fast to prevent no-progress loops.

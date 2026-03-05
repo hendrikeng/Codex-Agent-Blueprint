@@ -4516,17 +4516,124 @@ function documentStatusValue(content) {
   return normalizeStatus(match?.[1] ?? '');
 }
 
+function completionGateReadyForValidation(documentStatus) {
+  return documentStatus === 'completed' || documentStatus === 'validation';
+}
+
+function nextStepChecklistLines(content) {
+  const body = sectionBody(content, 'Next-Step Checklist');
+  if (!body) {
+    return [];
+  }
+
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => /^\d+\.\s+/.test(line) || line.startsWith('- '));
+}
+
+function nextStepChecklistIsHostValidationOnly(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return false;
+  }
+
+  return lines.every((line) => {
+    const lower = line.toLowerCase();
+    const referencesHostValidation =
+      lower.includes('host validation') ||
+      lower.includes('host-required') ||
+      lower.includes('host required') ||
+      lower.includes('host lane') ||
+      lower.includes('validation lane');
+    const closeAfterHost =
+      lower.includes('status: completed') ||
+      lower.includes('status `completed`') ||
+      lower.includes('set plan') ||
+      lower.includes('reviewer closeout');
+    const mentionsOpenImplementation =
+      lower.includes('worker follow-up') ||
+      lower.includes('worker remediation') ||
+      lower.includes('reviewer follow-up') ||
+      lower.includes('reviewer re-check') ||
+      lower.includes('implementation') ||
+      lower.includes('code edit') ||
+      lower.includes('source edit') ||
+      lower.includes('test edit');
+
+    if (mentionsOpenImplementation) {
+      return false;
+    }
+    if (referencesHostValidation) {
+      return true;
+    }
+    return closeAfterHost && lower.includes('host');
+  });
+}
+
+function sessionSignalsHostValidationOnly(sessionResult) {
+  const text = `${sessionResult?.summary ?? ''}\n${sessionResult?.reason ?? ''}`.toLowerCase();
+  if (!text.trim()) {
+    return false;
+  }
+
+  const mentionsHostValidation =
+    text.includes('host validation') || text.includes('host-required') || text.includes('host required');
+  const saysOnlyGate =
+    text.includes('only remaining') ||
+    text.includes('only closeout gate') ||
+    text.includes('only remaining completion gate') ||
+    text.includes('sole gate') ||
+    (text.includes('remaining') && text.includes('host') && text.includes('only'));
+  const mentionsFurtherImplementation =
+    text.includes('worker follow-up') ||
+    text.includes('worker remediation') ||
+    text.includes('reviewer follow-up') ||
+    text.includes('implementation remains') ||
+    text.includes('another worker session') ||
+    text.includes('pending implementation');
+
+  return mentionsHostValidation && saysOnlyGate && !mentionsFurtherImplementation;
+}
+
+async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResult, options) {
+  if (normalizeRoleName(currentRole, ROLE_WORKER) !== ROLE_REVIEWER) {
+    return { promoted: false, reason: null };
+  }
+
+  const content = await fs.readFile(planPath, 'utf8');
+  const status = documentStatusValue(content);
+  if (completionGateReadyForValidation(status)) {
+    return { promoted: false, reason: null };
+  }
+
+  const checklistHostOnly = nextStepChecklistIsHostValidationOnly(nextStepChecklistLines(content));
+  const sessionHostOnly = sessionSignalsHostValidationOnly(sessionResult);
+  if (!checklistHostOnly && !sessionHostOnly) {
+    return { promoted: false, reason: null };
+  }
+
+  await setPlanStatus(planPath, 'validation', options.dryRun);
+  return {
+    promoted: true,
+    reason: checklistHostOnly
+      ? 'Next-step checklist indicates host validation is the only remaining gate.'
+      : 'Reviewer session result indicates host validation is the only remaining gate.'
+  };
+}
+
 async function evaluateCompletionGate(planPath) {
   const content = await fs.readFile(planPath, 'utf8');
   const documentStatus = documentStatusValue(content);
 
-  if (documentStatus === 'completed') {
+  if (completionGateReadyForValidation(documentStatus)) {
     return { ready: true, reason: null };
   }
 
   return {
     ready: false,
-    reason: 'Plan is not marked complete. Set top-level `Status: completed` in the plan document when ready.'
+    reason:
+      'Plan is not ready for validation. Set top-level `Status: validation` (preferred) or `Status: completed` when implementation is done and validation can run.'
   };
 }
 async function findPlanRecordById(paths, planId) {
@@ -6818,7 +6925,30 @@ async function processPlan(plan, paths, state, options, config) {
       continue;
     }
 
-    const completionGate = await evaluateCompletionGate(plan.filePath);
+    let completionGate = await evaluateCompletionGate(plan.filePath);
+    if (!completionGate.ready) {
+      const autoPromotedGate = await maybeAutoPromoteCompletionGate(
+        plan.filePath,
+        currentRole,
+        sessionResult,
+        options
+      );
+      if (autoPromotedGate.promoted) {
+        const refreshedPlan = await findPlanRecordById(paths, plan.planId);
+        syncPlanRecord(plan, refreshedPlan);
+        completionGate = await evaluateCompletionGate(plan.filePath);
+        await logEvent(paths, state, 'completion_gate_auto_promoted_validation', {
+          planId: plan.planId,
+          session,
+          role: currentRole,
+          reason: autoPromotedGate.reason
+        }, options.dryRun);
+        progressLog(
+          options,
+          `completion gate auto-promoted ${plan.planId}: status=validation reason=${autoPromotedGate.reason}`
+        );
+      }
+    }
     if (!completionGate.ready) {
       await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
       updatePlanValidationState(state, plan.planId, {
