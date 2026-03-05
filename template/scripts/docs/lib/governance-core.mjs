@@ -98,6 +98,10 @@ function normalizeRef(rawRef, sourceFile) {
     return toPosix(noHash.slice(1));
   }
 
+  if (/^(?:AGENTS\.md|README\.md|ARCHITECTURE\.md|docs\/)/.test(noHash)) {
+    return toPosix(path.normalize(noHash));
+  }
+
   const sourceDir = path.dirname(sourceFile);
   return toPosix(path.normalize(path.join(sourceDir, noHash)));
 }

@@ -12,6 +12,8 @@ import {
 const LINK_REGEX = /\[[^\]]*\]\(([^)]+)\)/g;
 const INLINE_CODE_REGEX = /`([^`]+)`/g;
 const PLAN_PATH_REGEX = /^docs\/exec-plans\/(?:active|completed)\/.+\.md$/;
+const RUNTIME_CONTACT_PATH_REGEX = /^docs\/ops\/automation\/runtime\/contacts\/run-[^/]+\/.+\.md$/;
+const RUNTIME_CONTACT_FALLBACK_PATH = 'docs/ops/automation/README.md';
 
 function toPosix(value) {
   return String(value ?? '').replace(/\\/g, '/');
@@ -50,6 +52,10 @@ function normalizeRef(rawRef, sourceFile) {
 
   if (noHash.startsWith('/')) {
     return toPosix(noHash.slice(1));
+  }
+
+  if (/^(?:AGENTS\.md|README\.md|ARCHITECTURE\.md|docs\/)/.test(noHash)) {
+    return toPosix(path.posix.normalize(noHash));
   }
 
   const sourceDir = path.posix.dirname(sourceFile);
@@ -142,6 +148,16 @@ function inferPlanIdFromPlanPath(planPath) {
   return parsePlanId(base, null);
 }
 
+function classifyRepairableReference(normalizedRef) {
+  if (PLAN_PATH_REGEX.test(normalizedRef)) {
+    return 'plan';
+  }
+  if (RUNTIME_CONTACT_PATH_REGEX.test(normalizedRef)) {
+    return 'runtime-contact';
+  }
+  return null;
+}
+
 async function loadPlanCatalog(rootDir) {
   const activeDir = path.join(rootDir, 'docs/exec-plans/active');
   const completedDir = path.join(rootDir, 'docs/exec-plans/completed');
@@ -211,19 +227,21 @@ function collectReferenceTokens(content, sourceFile) {
   for (const match of content.matchAll(LINK_REGEX)) {
     const raw = match[1];
     const normalized = normalizeRef(raw, sourceFile);
-    if (!normalized || !PLAN_PATH_REGEX.test(normalized)) {
+    const kind = normalized ? classifyRepairableReference(normalized) : null;
+    if (!normalized || !kind) {
       continue;
     }
-    collected.push({ raw, normalized });
+    collected.push({ raw, normalized, kind });
   }
 
   for (const match of content.matchAll(INLINE_CODE_REGEX)) {
     const raw = match[1];
     const normalized = normalizeRef(raw, sourceFile);
-    if (!normalized || !PLAN_PATH_REGEX.test(normalized)) {
+    const kind = normalized ? classifyRepairableReference(normalized) : null;
+    if (!normalized || !kind) {
       continue;
     }
-    collected.push({ raw, normalized });
+    collected.push({ raw, normalized, kind });
   }
 
   return collected;
@@ -231,25 +249,42 @@ function collectReferenceTokens(content, sourceFile) {
 
 function applyRewrites(content, rewrites) {
   let replacements = 0;
+  let planReplacements = 0;
+  let runtimeContactReplacements = 0;
   let updated = content.replace(LINK_REGEX, (fullMatch, rawRef) => {
-    const rewritten = rewrites.get(rawRef);
-    if (!rewritten || rewritten === rawRef) {
+    const rewrite = rewrites.get(rawRef);
+    if (!rewrite || rewrite.target === rawRef) {
       return fullMatch;
     }
     replacements += 1;
-    return fullMatch.replace(`(${rawRef})`, `(${rewritten})`);
+    if (rewrite.kind === 'plan') {
+      planReplacements += 1;
+    } else if (rewrite.kind === 'runtime-contact') {
+      runtimeContactReplacements += 1;
+    }
+    return fullMatch.replace(`(${rawRef})`, `(${rewrite.target})`);
   });
 
   updated = updated.replace(INLINE_CODE_REGEX, (fullMatch, rawRef) => {
-    const rewritten = rewrites.get(rawRef);
-    if (!rewritten || rewritten === rawRef) {
+    const rewrite = rewrites.get(rawRef);
+    if (!rewrite || rewrite.target === rawRef) {
       return fullMatch;
     }
     replacements += 1;
-    return `\`${rewritten}\``;
+    if (rewrite.kind === 'plan') {
+      planReplacements += 1;
+    } else if (rewrite.kind === 'runtime-contact') {
+      runtimeContactReplacements += 1;
+    }
+    return `\`${rewrite.target}\``;
   });
 
-  return { content: updated, replacements };
+  return {
+    content: updated,
+    replacements,
+    planReplacements,
+    runtimeContactReplacements
+  };
 }
 
 async function main() {
@@ -270,9 +305,24 @@ async function main() {
   const markdownFiles = [...new Set([...existingRootMarkdown, ...docsMarkdown])];
 
   let staleRefsFound = 0;
+  let staleRuntimeContactRefsFound = 0;
   let refsRepaired = 0;
+  let planRefsRepaired = 0;
+  let runtimeContactRefsRepaired = 0;
   let unresolvedRefs = 0;
+  let unresolvedRuntimeContactRefs = 0;
   let filesUpdated = 0;
+  const refExistsCache = new Map();
+  const runtimeContactFallbackExists = await exists(path.join(rootDir, RUNTIME_CONTACT_FALLBACK_PATH));
+
+  async function refExistsInRepo(normalizedRef) {
+    if (refExistsCache.has(normalizedRef)) {
+      return refExistsCache.get(normalizedRef);
+    }
+    const result = await exists(path.join(rootDir, normalizedRef));
+    refExistsCache.set(normalizedRef, result);
+    return result;
+  }
 
   for (const filePath of markdownFiles) {
     const fileRel = toPosix(path.relative(rootDir, filePath));
@@ -284,21 +334,38 @@ async function main() {
 
     const rewrites = new Map();
     for (const ref of refs) {
-      if (existingPaths.has(ref.normalized)) {
-        continue;
-      }
+      let targetRef = null;
 
-      staleRefsFound += 1;
-      const planId = inferPlanIdFromPlanPath(ref.normalized);
-      const targetRef = planId ? planById.get(planId) : null;
-      if (!targetRef || targetRef === ref.normalized) {
-        unresolvedRefs += 1;
+      if (ref.kind === 'plan') {
+        if (existingPaths.has(ref.normalized)) {
+          continue;
+        }
+
+        staleRefsFound += 1;
+        const planId = inferPlanIdFromPlanPath(ref.normalized);
+        targetRef = planId ? planById.get(planId) : null;
+        if (!targetRef || targetRef === ref.normalized) {
+          unresolvedRefs += 1;
+          continue;
+        }
+      } else if (ref.kind === 'runtime-contact') {
+        if (await refExistsInRepo(ref.normalized)) {
+          continue;
+        }
+
+        staleRuntimeContactRefsFound += 1;
+        if (!runtimeContactFallbackExists) {
+          unresolvedRuntimeContactRefs += 1;
+          continue;
+        }
+        targetRef = RUNTIME_CONTACT_FALLBACK_PATH;
+      } else {
         continue;
       }
 
       const rewritten = rewriteRawReference(ref.raw, fileRel, targetRef);
       if (rewritten && rewritten !== ref.raw) {
-        rewrites.set(ref.raw, rewritten);
+        rewrites.set(ref.raw, { target: rewritten, kind: ref.kind });
       }
     }
 
@@ -309,6 +376,8 @@ async function main() {
     const result = applyRewrites(original, rewrites);
     const updated = result.content;
     refsRepaired += result.replacements;
+    planRefsRepaired += result.planReplacements;
+    runtimeContactRefsRepaired += result.runtimeContactReplacements;
 
     if (updated !== original) {
       filesUpdated += 1;
@@ -320,8 +389,12 @@ async function main() {
 
   console.log('[plan-ref-repair] scanned markdown files:', markdownFiles.length);
   console.log('[plan-ref-repair] stale plan refs found:', staleRefsFound);
-  console.log('[plan-ref-repair] stale plan refs repaired:', refsRepaired);
+  console.log('[plan-ref-repair] stale runtime contact refs found:', staleRuntimeContactRefsFound);
+  console.log('[plan-ref-repair] stale plan refs repaired:', planRefsRepaired);
+  console.log('[plan-ref-repair] stale runtime contact refs repaired:', runtimeContactRefsRepaired);
+  console.log('[plan-ref-repair] stale refs repaired total:', refsRepaired);
   console.log('[plan-ref-repair] unresolved stale refs:', unresolvedRefs);
+  console.log('[plan-ref-repair] unresolved stale runtime contact refs:', unresolvedRuntimeContactRefs);
   console.log('[plan-ref-repair] files updated:', filesUpdated);
   if (options.dryRun) {
     console.log('[plan-ref-repair] dry-run mode; no files were written.');

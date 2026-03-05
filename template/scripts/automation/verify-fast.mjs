@@ -2,6 +2,12 @@
 import { spawnSync } from 'node:child_process';
 
 const PLAN_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const READ_ONLY_ORCH_ROLES = new Set(['planner', 'explorer', 'reviewer']);
+
+function orchestratorRole() {
+  const role = String(process.env.ORCH_ROLE ?? '').trim().toLowerCase();
+  return READ_ONLY_ORCH_ROLES.has(role) || role === 'worker' ? role : null;
+}
 
 function resolvedPlanMetadataCommand() {
   const planId = String(process.env.ORCH_PLAN_ID ?? '').trim().toLowerCase();
@@ -13,15 +19,23 @@ function resolvedPlanMetadataCommand() {
 
 function mandatoryCommands() {
   const ciMode = asBoolean(process.env.CI, false);
-  const repairCommand = ciMode
+  const role = orchestratorRole();
+  const roleReadOnlyMode = role != null && role !== 'worker';
+  const repairCommand = (ciMode || roleReadOnlyMode)
     ? 'node ./scripts/docs/repair-plan-references.mjs --dry-run'
     : 'node ./scripts/docs/repair-plan-references.mjs';
+  const runtimeContextCommand = roleReadOnlyMode
+    ? 'node ./scripts/automation/compile-runtime-context.mjs --output /tmp/agent-runtime-context.md'
+    : 'node ./scripts/automation/compile-runtime-context.mjs';
+  const planMetadataCommand = roleReadOnlyMode
+    ? `ORCH_PLAN_METADATA_AUTO_HEAL_STATUS=0 ${resolvedPlanMetadataCommand()}`
+    : resolvedPlanMetadataCommand();
 
   return [
-    'node ./scripts/automation/compile-runtime-context.mjs',
+    runtimeContextCommand,
     repairCommand,
     'node ./scripts/docs/check-governance.mjs',
-    resolvedPlanMetadataCommand()
+    planMetadataCommand
   ];
 }
 
