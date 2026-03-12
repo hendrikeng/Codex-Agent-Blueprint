@@ -3303,6 +3303,76 @@ function requiresSecurityApproval(plan, assessment, config) {
   return false;
 }
 
+function runtimeSecurityApprovalGranted(assessment, config) {
+  if (!requiresSecurityApproval({}, assessment, config)) {
+    return false;
+  }
+
+  const effectiveRiskTier = parseRiskTier(assessment?.effectiveRiskTier, 'low');
+  if (effectiveRiskTier === 'high') {
+    return process.env.ORCH_APPROVED_HIGH === '1';
+  }
+  if (effectiveRiskTier === 'medium') {
+    return process.env.ORCH_APPROVED_MEDIUM === '1';
+  }
+  return false;
+}
+
+function resolvedSecurityApproval(plan, assessment, config) {
+  const securityApprovalField =
+    resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
+  const metadataSecurityApproval = parseSecurityApproval(
+    metadataValue(plan.metadata, securityApprovalField),
+    plan.securityApproval
+  );
+
+  if (!requiresSecurityApproval(plan, assessment, config)) {
+    return {
+      securityApprovalField,
+      securityApprovalValue: metadataSecurityApproval,
+      metadataSecurityApproval,
+      source: 'metadata',
+      runtimeGranted: false
+    };
+  }
+
+  if (metadataSecurityApproval === SECURITY_APPROVAL_APPROVED) {
+    return {
+      securityApprovalField,
+      securityApprovalValue: SECURITY_APPROVAL_APPROVED,
+      metadataSecurityApproval,
+      source: 'metadata',
+      runtimeGranted: true
+    };
+  }
+
+  const runtimeGranted = runtimeSecurityApprovalGranted(assessment, config);
+  return {
+    securityApprovalField,
+    securityApprovalValue: runtimeGranted ? SECURITY_APPROVAL_APPROVED : metadataSecurityApproval,
+    metadataSecurityApproval,
+    source: runtimeGranted ? 'runtime-env' : 'metadata',
+    runtimeGranted
+  };
+}
+
+async function persistSecurityApproval(plan, securityApprovalField, securityApprovalValue, dryRun) {
+  if (dryRun) {
+    return;
+  }
+
+  const rawPlan = await fs.readFile(plan.filePath, 'utf8');
+  const updatedPlan = setMetadataFields(rawPlan, {
+    [securityApprovalField]: securityApprovalValue
+  });
+  await fs.writeFile(plan.filePath, updatedPlan, 'utf8');
+
+  if (plan.metadata instanceof Map) {
+    plan.metadata.set(securityApprovalField, securityApprovalValue);
+  }
+  plan.securityApproval = securityApprovalValue;
+}
+
 function createInitialState(runId, requestedMode, effectiveMode) {
   return {
     version: 2,
@@ -3882,12 +3952,10 @@ function blockedPlans(activePlans, completedPlanIds, excludedPlanIds = new Set()
 }
 
 function securityApprovalSatisfied(plan, assessment, config) {
-  const securityApprovalField =
-    resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
-  const securityApprovalValue = parseSecurityApproval(
-    metadataValue(plan.metadata, securityApprovalField),
-    plan.securityApproval
-  );
+  const {
+    securityApprovalField,
+    securityApprovalValue
+  } = resolvedSecurityApproval(plan, assessment, config);
   if (!requiresSecurityApproval(plan, assessment, config)) {
     return { ok: true, securityApprovalField, securityApprovalValue };
   }
@@ -5298,31 +5366,50 @@ function normalizeEvidenceReference(reference, planRel) {
   if (clean.startsWith('./') || clean.startsWith('../')) {
     return toPosix(path.posix.normalize(path.posix.join(planDir, clean)));
   }
+  if (clean.startsWith('evidence/')) {
+    return toPosix(path.posix.normalize(path.posix.join(planDir, clean)));
+  }
   if (clean.startsWith('docs/')) {
     return toPosix(path.posix.normalize(clean));
   }
   return null;
 }
 
+function isExecutionPlanEvidenceReference(reference) {
+  const normalized = toPosix(String(reference ?? '').trim());
+  if (!normalized.startsWith('docs/exec-plans/')) {
+    return false;
+  }
+  return normalized.includes('/evidence/');
+}
+
 function extractEvidenceReferencesFromContent(content, planRel) {
   const found = new Set();
   const linkRegex = /\[[^\]]+\]\(([^)]+)\)/g;
   const inlineCodeRegex = /`([^`]+)`/g;
+  const barePathRegex =
+    /(^|[\s(:>])((?:\.\.\/|\.\/)?evidence\/[A-Za-z0-9._/-]+|(?:\.\.\/|\.\/)?docs\/exec-plans\/(?:active|completed)\/evidence\/[A-Za-z0-9._/-]+)(?=$|[\s),.:;!?])/gm;
 
-  let linkMatch;
-  while ((linkMatch = linkRegex.exec(content)) != null) {
-    const normalized = normalizeEvidenceReference(linkMatch[1], planRel);
-    if (normalized && normalized.includes('/evidence/')) {
+  function recordEvidenceReference(candidate) {
+    const normalized = normalizeEvidenceReference(candidate, planRel);
+    if (normalized && isExecutionPlanEvidenceReference(normalized)) {
       found.add(normalized);
     }
   }
 
+  let linkMatch;
+  while ((linkMatch = linkRegex.exec(content)) != null) {
+    recordEvidenceReference(linkMatch[1]);
+  }
+
   let codeMatch;
   while ((codeMatch = inlineCodeRegex.exec(content)) != null) {
-    const normalized = normalizeEvidenceReference(codeMatch[1], planRel);
-    if (normalized && normalized.includes('/evidence/')) {
-      found.add(normalized);
-    }
+    recordEvidenceReference(codeMatch[1]);
+  }
+
+  let barePathMatch;
+  while ((barePathMatch = barePathRegex.exec(content)) != null) {
+    recordEvidenceReference(barePathMatch[2]);
   }
 
   return [...found];
@@ -6592,22 +6679,18 @@ async function runValidationAndFinalize(plan, paths, state, options, config, ass
   const rollovers = asInteger(executionContext.rollovers, 0);
 
   const approvalRequired = requiresSecurityApproval(plan, assessment, config);
-  const securityApprovalField =
-    resolveRoleOrchestration(config).approvalGates.securityApprovalMetadataField || 'Security-Approval';
-  const securityApprovalValue = parseSecurityApproval(
-    metadataValue(plan.metadata, securityApprovalField),
-    plan.securityApproval
-  );
+  const {
+    securityApprovalField,
+    securityApprovalValue,
+    metadataSecurityApproval,
+    source: securityApprovalSource
+  } = resolvedSecurityApproval(plan, assessment, config);
   plan.securityApproval = securityApprovalValue;
 
   if (approvalRequired && securityApprovalValue !== SECURITY_APPROVAL_APPROVED) {
     await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
-    if (!options.dryRun && securityApprovalValue === SECURITY_APPROVAL_NOT_REQUIRED) {
-      const rawPlan = await fs.readFile(plan.filePath, 'utf8');
-      const updatedPlan = setMetadataFields(rawPlan, {
-        [securityApprovalField]: SECURITY_APPROVAL_PENDING
-      });
-      await fs.writeFile(plan.filePath, updatedPlan, 'utf8');
+    if (metadataSecurityApproval === SECURITY_APPROVAL_NOT_REQUIRED) {
+      await persistSecurityApproval(plan, securityApprovalField, SECURITY_APPROVAL_PENDING, options.dryRun);
     }
     const reason = `Security approval required: set '${securityApprovalField}' to '${SECURITY_APPROVAL_APPROVED}' for ${assessment.effectiveRiskTier}-risk completion.`;
     await logEvent(paths, state, 'security_approval_pending', {
@@ -6624,6 +6707,20 @@ async function runValidationAndFinalize(plan, paths, state, options, config, ass
       reason,
       riskTier: assessment.effectiveRiskTier
     };
+  }
+
+  if (approvalRequired && metadataSecurityApproval !== SECURITY_APPROVAL_APPROVED) {
+    await persistSecurityApproval(plan, securityApprovalField, SECURITY_APPROVAL_APPROVED, options.dryRun);
+    await logEvent(paths, state, 'security_approval_recorded', {
+      planId: plan.planId,
+      riskTier: assessment.effectiveRiskTier,
+      securityApprovalField,
+      source: securityApprovalSource
+    }, options.dryRun);
+    progressLog(
+      options,
+      `security approval recorded for ${plan.planId}: source=${securityApprovalSource} status=${SECURITY_APPROVAL_APPROVED}`
+    );
   }
 
   await setPlanStatus(plan.filePath, 'validation', options.dryRun);

@@ -50,6 +50,7 @@ Recommended baseline:
   - effective risk is `high`, or
   - effective risk is `medium` and sensitive tags/paths are detected.
 - Required value to complete: `Security-Approval: approved`.
+- When a guarded run is resumed with the matching env approval (`ORCH_APPROVED_MEDIUM=1` or `ORCH_APPROVED_HIGH=1`), orchestration may record `Security-Approval: approved` automatically before validation/final completion so resumed high-risk plans do not dead-end on a redundant manual metadata edit.
 
 ## Executor Contract
 

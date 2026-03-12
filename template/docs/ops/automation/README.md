@@ -168,6 +168,7 @@ Use the manual path when any of these are true:
 - Evidence compaction:
   - `evidence.compaction.mode: "compact-index"` writes canonical per-plan index files in `docs/exec-plans/evidence-index/`.
   - `evidence.compaction.maxReferences` controls how many most-recent evidence links are retained in the canonical index.
+  - Reference extraction accepts markdown links, inline code paths, and plain plan-text evidence paths under `docs/exec-plans/*/evidence/` so canonical indexes do not churn at `0` when the plan already contains compact evidence references.
 - Evidence lifecycle:
   - `evidence.lifecycle.trackMode: "curated"` keeps canonical evidence and rewrites stale references to concise indices/readmes.
   - `evidence.lifecycle.dedupMode: "strict-upsert"` deduplicates noisy rerun artifacts by blocker signature.
@@ -239,6 +240,7 @@ Use the manual path when any of these are true:
 - Medium/high approvals are env-gated in both `guarded` and `full` modes:
   - `ORCH_APPROVED_MEDIUM=1`
   - `ORCH_APPROVED_HIGH=1`
+- When a required security approval is satisfied via these env vars during a resumed run, orchestration records `Security-Approval: approved` before validation/final completion so blocked high-risk plans can continue without a separate manual metadata edit.
 - Atomic commits are blocked when `--allow-dirty true` is set to avoid committing unrelated workspace changes.
 - `git.atomicCommitRoots` can enforce plan-scoped commit boundaries. Plans may extend roots via metadata `Atomic-Roots`.
 - Plans may also define `Concurrency-Locks` metadata to serialize specific shared resources during `run-parallel`.
