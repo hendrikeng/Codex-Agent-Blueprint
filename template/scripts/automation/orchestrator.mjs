@@ -2105,21 +2105,21 @@ async function loadConfig(paths) {
             'You are a fast codebase explorer. Search files, read code, trace dependencies, and answer scoped questions. You may update active plan/evidence docs for this stage, but do not modify product/source code. Record concrete implementation-ready findings in plan/evidence docs before finishing.'
         },
         reviewer: {
-          model: 'gpt-5.3-codex',
+          model: 'gpt-5.4',
           reasoningEffort: 'high',
           sandboxMode: 'read-only',
           instructions:
             'Focus on high-priority issues: security vulnerabilities, correctness bugs, race conditions, test flakiness, and performance problems.'
         },
         worker: {
-          model: 'gpt-5.3-codex',
+          model: 'gpt-5.4',
           reasoningEffort: 'high',
           sandboxMode: 'full-access',
           instructions:
             'You are an execution-focused agent. Implement features, fix bugs, and refactor precisely while following existing patterns. Start with a concrete repository edit as soon as feasible, then continue iteratively. Do not defer implementation work back to planner/explorer when a concrete edit can be made now. When sending interim status updates, write complete words and full identifiers; do not shorten with ellipses. Keep interim status updates concise (1-2 short sentences) and plain text; avoid markdown headings, bullet lists, and file links in live updates.'
         },
         planner: {
-          model: 'gpt-5.3-codex',
+          model: 'gpt-5.4',
           reasoningEffort: 'high',
           sandboxMode: 'read-only',
           instructions:

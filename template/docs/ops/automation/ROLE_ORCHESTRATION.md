@@ -29,9 +29,9 @@ Each role has a portable execution profile configured in `roleOrchestration.role
 Recommended baseline:
 
 - `explorer`: fast model (`gpt-5.3-codex-spark`), `medium`, `read-only`.
-- `reviewer`: `gpt-5.3-codex`, `high`, `read-only`.
-- `planner`: `gpt-5.3-codex`, `high`, `read-only`.
-- `worker`: `gpt-5.3-codex`, `high`, `full-access`.
+- `reviewer`: `gpt-5.4`, `high`, `read-only`.
+- `planner`: `gpt-5.4`, `high`, `read-only`.
+- `worker`: `gpt-5.4`, `high`, `full-access`.
 
 ## Risk Routing
 

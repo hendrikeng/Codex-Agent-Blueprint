@@ -273,7 +273,7 @@ Pretty output example:
 ```text
 16:04:07 | RUN   run started runId=run-20260301160407-k4l9wd mode=guarded output=pretty failureTailLines=60
 16:04:07 / RUN   plan start attendee-search-suggestion-qa-hardening declared=low effective=low score=0
-16:04:07 \ RUN   session 1 start attendee-search-suggestion-qa-hardening role=worker stage=1/1 provider=codex model=gpt-5.3-codex risk=low
+16:04:07 \ RUN   session 1 start attendee-search-suggestion-qa-hardening role=worker stage=1/1 provider=codex model=gpt-5.4 risk=low
 16:04:19 ... RUN  phase=session plan=attendee-search-suggestion-qa-hardening role=worker activity=implementing agent="reviewing organizer service edge cases" elapsed=12s idle=3s touch=4(source:3,tests:1)
 16:04:19 - RUN    file activity phase=session plan=attendee-search-suggestion-qa-hardening role=worker touched=4 categories=[source:3, tests:1] sample=[libs/events/backend/src/lib/event-organizer.service.ts, libs/events/backend/src/lib/event-organizer.service.spec.ts, docs/exec-plans/active/evidence/attendee-search-suggestion-qa-hardening.md]
 ```
