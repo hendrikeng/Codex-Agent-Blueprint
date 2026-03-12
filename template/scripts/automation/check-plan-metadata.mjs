@@ -30,6 +30,8 @@ const autoHeals = [];
 const MUST_LAND_SECTION = 'Must-Land Checklist';
 const DEFERRED_SECTION = 'Deferred Follow-Ons';
 const BASELINE_SECTION = 'Already-True Baseline';
+const PROMOTION_BLOCKERS_SECTION = 'Promotion Blockers';
+const COVERAGE_SECTION_TITLES = ['Master Plan Coverage', 'Capability Coverage Matrix'];
 
 function addFinding(code, message, filePath) {
   findings.push({ code, message, filePath });
@@ -98,6 +100,16 @@ function sectionBody(content, sectionTitle) {
     return '';
   }
   return content.slice(bounds.bodyStart, bounds.end).trim();
+}
+
+function firstSectionBody(content, sectionTitles) {
+  for (const title of sectionTitles) {
+    const body = sectionBody(content, title);
+    if (body) {
+      return { title, body };
+    }
+  }
+  return { title: null, body: '' };
 }
 
 function checkboxLines(sectionContent) {
@@ -217,6 +229,8 @@ async function scanPhase(phase, directoryPath) {
     const mustLandBody = sectionBody(content, MUST_LAND_SECTION);
     const mustLandItems = checkboxLines(mustLandBody);
     const incompleteMustLandItems = uncheckedCheckboxLines(mustLandItems);
+    const promotionBlockersBody = sectionBody(content, PROMOTION_BLOCKERS_SECTION);
+    const coverageSection = firstSectionBody(content, COVERAGE_SECTION_TITLES);
 
     const mustLandRequired = phase === 'future' || phase === 'active';
 
@@ -230,6 +244,22 @@ async function scanPhase(phase, directoryPath) {
       addFinding(
         'EMPTY_MUST_LAND_CHECKLIST',
         `'## ${MUST_LAND_SECTION}' must contain markdown checkbox items`,
+        rel
+      );
+    }
+
+    if (phase === 'future' && !coverageSection.body) {
+      addFinding(
+        'MISSING_CAPABILITY_COVERAGE_SECTION',
+        `Future blueprint must include '## ${COVERAGE_SECTION_TITLES[0]}' or '## ${COVERAGE_SECTION_TITLES[1]}' to reconcile upstream scope explicitly.`,
+        rel
+      );
+    }
+
+    if (phase === 'future' && !promotionBlockersBody) {
+      addFinding(
+        'MISSING_PROMOTION_BLOCKERS_SECTION',
+        `Future blueprint must include '## ${PROMOTION_BLOCKERS_SECTION}' so promotion readiness and unresolved gates are explicit.`,
         rel
       );
     }
@@ -320,6 +350,22 @@ async function scanPhase(phase, directoryPath) {
       addFinding(
         'READY_FUTURE_WITHOUT_OPEN_MUST_LAND',
         `Future blueprint set to 'ready-for-promotion' must keep executable work in '## ${MUST_LAND_SECTION}'`,
+        rel
+      );
+    }
+
+    if (phase === 'future' && status === 'ready-for-promotion' && !coverageSection.body) {
+      addFinding(
+        'READY_FUTURE_WITHOUT_CAPABILITY_COVERAGE',
+        `Future blueprint set to 'ready-for-promotion' must include '## ${COVERAGE_SECTION_TITLES[0]}' or '## ${COVERAGE_SECTION_TITLES[1]}'`,
+        rel
+      );
+    }
+
+    if (phase === 'future' && status === 'ready-for-promotion' && !promotionBlockersBody) {
+      addFinding(
+        'READY_FUTURE_WITHOUT_PROMOTION_BLOCKERS',
+        `Future blueprint set to 'ready-for-promotion' must include '## ${PROMOTION_BLOCKERS_SECTION}'`,
         rel
       );
     }

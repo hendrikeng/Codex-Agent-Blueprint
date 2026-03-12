@@ -26,6 +26,8 @@ Each future blueprint must also include these scoped execution sections:
 - `## Already-True Baseline`
 - `## Must-Land Checklist`
 - `## Deferred Follow-Ons`
+- `## Master Plan Coverage` or `## Capability Coverage Matrix`
+- `## Promotion Blockers`
 
 Optional metadata:
 
@@ -48,6 +50,8 @@ Create or update a future blueprint as `Status: draft` only when these checks pa
 - [ ] `Done-Evidence` is `pending`.
 - [ ] `## Must-Land Checklist` exists and every checkbox item is executable within one promoted plan.
 - [ ] `## Already-True Baseline` and `## Deferred Follow-Ons` keep non-plan scope out of the must-land checklist.
+- [ ] `## Master Plan Coverage` or `## Capability Coverage Matrix` explicitly maps upstream strategy/capabilities into `shipped now`, `this phase`, `later phase`, or `non-goal`.
+- [ ] `## Promotion Blockers` lists the unresolved decisions, approvals, or external gates that still block safe promotion.
 - [ ] `npm run plans:verify` passes.
 
 ## Promotion Gate (`draft` -> `ready-for-promotion`)
@@ -56,6 +60,8 @@ Set `Status: ready-for-promotion` only when these checks pass:
 
 - [ ] At least one executable slice is defined with clear entry and exit criteria.
 - [ ] `## Must-Land Checklist` is the exact completion contract for the promoted plan.
+- [ ] `## Master Plan Coverage` or `## Capability Coverage Matrix` proves nothing from upstream strategy is silently omitted.
+- [ ] `## Promotion Blockers` makes the remaining gating decisions explicit.
 - [ ] Open questions/blockers are either resolved or explicitly listed.
 - [ ] Validation path is clear (`verify:fast` during implementation, `verify:full` before completion).
 - [ ] Owner and responsibility are explicit.

@@ -35,6 +35,7 @@ Examples:
 3. Record decisions and acceptance criteria before implementation.
 4. Split plan text into three explicit scopes before implementation:
    `## Already-True Baseline`, `## Must-Land Checklist`, and `## Deferred Follow-Ons`.
+   Future blueprints must also include `## Master Plan Coverage` or `## Capability Coverage Matrix`, plus `## Promotion Blockers`, so upstream strategy and unresolved gates are explicit.
 5. Implement the smallest safe slice and update tests/docs in the same change.
 6. Validate plan metadata with `npm run plans:verify`.
 7. During implementation, run `npm run verify:fast`.
@@ -50,7 +51,9 @@ When the user asks for planning only (no implementation yet):
 1. Update or create the blueprint in `docs/future/`.
 2. Do not edit source/test/runtime files.
 3. Make `## Must-Land Checklist` the exact executable contract for the future promotion.
-4. Set `Status: ready-for-promotion` when the plan is implementation-ready.
+4. Add `## Master Plan Coverage` or `## Capability Coverage Matrix` so nothing from upstream strategy is silently omitted.
+5. Add `## Promotion Blockers` so the remaining gates to safe promotion are explicit.
+6. Set `Status: ready-for-promotion` when the plan is implementation-ready.
 
 This also applies when the agent/session is explicitly set to plan mode: default to `docs/future` planning outputs until implementation is explicitly requested.
 

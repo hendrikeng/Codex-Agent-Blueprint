@@ -14,7 +14,7 @@ Define deterministic role routing for execution plans so low-risk work stays fas
 - `planner`: turns acceptance criteria into concrete implementation steps, identifies irreversible decisions, and updates sequencing.
 - `explorer`: performs focused repository/dependency reconnaissance for risky areas before implementation.
 - `worker`: executes code and documentation changes.
-- `reviewer`: validates correctness, security, race conditions, flaky-test risk, and performance regressions.
+- `reviewer`: validates correctness, security, race conditions, flaky-test risk, performance regressions, and missing-scope omissions in the plan contract.
 
 ## Role Profiles
 
@@ -89,6 +89,7 @@ Recommended baseline:
 - Completion gate opens when the top-level plan `Status` is `completed`, or when `Status: validation` is paired with explicit `Validation-Ready`.
 - `## Must-Land Checklist` is the executable completion contract; validation/completion is blocked until every checkbox item is checked.
 - If a plan also carries broader vision or target-state language, keep that scope in `## Already-True Baseline` and `## Deferred Follow-Ons` instead of treating it as implicitly complete.
+- Future blueprints should not promote unless `## Master Plan Coverage` or `## Capability Coverage Matrix` explicitly reconciles upstream strategy and `## Promotion Blockers` makes remaining gates explicit.
 - `Status: validation` is only admission-ready when `Validation-Ready` is explicit (`yes` or `host-required-only`); status alone is not enough for validation fast-path.
 - Plans already in `Status: validation` skip planner/explorer/worker/reviewer sessions and run validation lanes directly on `resume` only when `Validation-Ready` is explicit.
 - Optional metadata `Validation-Ready: host-required-only` (or `yes`) enables deterministic reviewer closeout promotion to validation.
