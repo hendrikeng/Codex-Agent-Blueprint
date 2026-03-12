@@ -320,7 +320,7 @@ Executor commands should use these outcomes:
 - `pending` keeps work in the active implementation role instead of auto-advancing the full pipeline; reviewer `pending` routes back to worker for fixes.
 - Planner/explorer `pending` with implementation-handoff reasons (for example, read-only constraints or implementation still pending) auto-advances to the next stage to avoid no-op loops.
 - Planner/explorer/reviewer sessions are restricted to execution plan/evidence docs (`docs/exec-plans/**`); touching other paths fails fast as a policy violation.
-- Worker `pending` without touched files auto-retries first (bounded by `--worker-no-touch-retry-limit`, with retry timeout controlled by `--worker-retry-first-touch-deadline-seconds`), then fails fast if still no-progress.
+- Worker `pending` without repository edits outside `docs/exec-plans/**` auto-retries first (bounded by `--worker-no-touch-retry-limit`, with retry timeout controlled by `--worker-retry-first-touch-deadline-seconds`); plan/evidence-only churn does not count as worker progress.
 - Worker same-role `pending` streaks fail fast when they exceed `--worker-pending-streak-limit`, forcing narrower implementation slices instead of long in-run loops.
 - Read-only same-role `pending` returns fail fast after a bounded streak so plan-doc churn cannot keep planner/explorer/reviewer sessions alive.
 - Repeated identical `pending` signals for the same role fail fast in-run so orchestration does not spin on no-progress loops.

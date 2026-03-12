@@ -252,7 +252,9 @@ function eventContainsSessionBudgetExhaustionText(event) {
     haystack.includes('worker pending streak exceeded') ||
     haystack.includes('repeated pending signal without progress') ||
     haystack.includes('exceeded stage budget') ||
+    haystack.includes('without repository edits outside plan/evidence files') ||
     haystack.includes('without touching source/tests files') ||
+    haystack.includes('plan/evidence-only updates are insufficient for worker pending') ||
     haystack.includes('same-role pending too many times') ||
     haystack.includes('without resolving the role-scoped objective') ||
     haystack.includes('narrow to one implementation slice and resume')
