@@ -4134,6 +4134,9 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   const resultPathRel = toPosix(path.relative(paths.rootDir, resultPathAbs));
   const sessionLogPathAbs = path.join(runSessionDir, `${plan.planId}-${role}-session-${sessionNumber}.executor.log`);
   const sessionLogPathRel = toPosix(path.relative(paths.rootDir, sessionLogPathAbs));
+  const workerDirtyImplementationBaselinePaths =
+    role === ROLE_WORKER ? dirtyImplementationTouchPaths(paths.rootDir, plan) : [];
+  const workerHasDirtyImplementationBaseline = workerDirtyImplementationBaselinePaths.length > 0;
 
   if (!options.dryRun) {
     await fs.mkdir(runSessionDir, { recursive: true });
@@ -4252,15 +4255,18 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     asInteger(options.workerRetryFirstTouchDeadlineSeconds, baseWorkerFirstTouchDeadlineSeconds)
   );
   const effectiveWorkerFirstTouchDeadlineSeconds =
-    role === ROLE_WORKER &&
-    workerNoTouchRetryCount > 0 &&
-    baseWorkerFirstTouchDeadlineSeconds > 0 &&
-    retryWorkerFirstTouchDeadlineSeconds > 0
-      ? Math.min(
-          baseWorkerFirstTouchDeadlineSeconds,
-          retryWorkerFirstTouchDeadlineSeconds
-        )
-      : baseWorkerFirstTouchDeadlineSeconds;
+    role !== ROLE_WORKER
+      ? baseWorkerFirstTouchDeadlineSeconds
+      : workerHasDirtyImplementationBaseline
+        ? 0
+        : workerNoTouchRetryCount > 0 &&
+            baseWorkerFirstTouchDeadlineSeconds > 0 &&
+            retryWorkerFirstTouchDeadlineSeconds > 0
+          ? Math.min(
+              baseWorkerFirstTouchDeadlineSeconds,
+              retryWorkerFirstTouchDeadlineSeconds
+            )
+          : baseWorkerFirstTouchDeadlineSeconds;
   const sessionExecutionOptions =
     effectiveWorkerFirstTouchDeadlineSeconds === baseWorkerFirstTouchDeadlineSeconds
       ? options
