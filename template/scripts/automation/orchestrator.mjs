@@ -4776,11 +4776,24 @@ async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResu
   };
 }
 
-async function evaluateCompletionGate(planPath) {
-  const content = await fs.readFile(planPath, 'utf8');
+async function evaluateCompletionGate(plan, rootDir) {
+  const content = await fs.readFile(plan.filePath, 'utf8');
   const documentStatus = documentStatusValue(content);
 
   if (completionGateReadyForValidation(documentStatus)) {
+    if (requiresImplementationTouch(plan)) {
+      const implementationTouches = dirtyImplementationTouchPaths(rootDir, plan);
+      if (implementationTouches.length === 0) {
+        const targetPreview = implementationSpecTargetRoots(plan).slice(0, 4).join(', ');
+        return {
+          ready: false,
+          reason:
+            `Plan targets implementation paths via Spec-Targets (${targetPreview}) but no current repo edits exist under those roots. ` +
+            'Keep the plan in-progress until structural changes land in the targeted apps/packages/config/scripts paths.'
+        };
+      }
+    }
+
     return { ready: true, reason: null };
   }
 
@@ -6131,6 +6144,40 @@ function pathMatchesRootPrefix(filePath, rootPrefix) {
   return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}/`);
 }
 
+function implementationSpecTargetRoots(plan) {
+  const specTargets = Array.isArray(plan?.specTargets) ? plan.specTargets : [];
+  return [...new Set(
+    specTargets
+      .map((entry) => toPosix(String(entry ?? '').trim()).replace(/^\.?\//, '').replace(/\/+$/, ''))
+      .filter(Boolean)
+      .filter((entry) => {
+        const category = classifyTouchedPath(entry);
+        return (
+          category === 'source' ||
+          category === 'tests' ||
+          category === 'scripts' ||
+          category === 'configs' ||
+          category === 'lockfiles'
+        );
+      })
+  )];
+}
+
+function requiresImplementationTouch(plan) {
+  return implementationSpecTargetRoots(plan).length > 0;
+}
+
+function dirtyImplementationTouchPaths(rootDir, plan) {
+  const implementationRoots = implementationSpecTargetRoots(plan);
+  if (implementationRoots.length === 0) {
+    return [];
+  }
+
+  return dirtyRepoPaths(rootDir, { includeTransient: false }).filter((entry) =>
+    implementationRoots.some((root) => pathMatchesRootPrefix(entry, root))
+  );
+}
+
 function resolveAtomicCommitRoots(plan, config, paths, completionContext = {}) {
   const policy = config?.git?.atomicCommitRoots ?? {};
   const includePlanMetadata = asBoolean(policy.allowPlanMetadata, true);
@@ -6876,7 +6923,7 @@ async function processPlan(plan, paths, state, options, config) {
     };
   }
 
-  const initialCompletionGate = await evaluateCompletionGate(plan.filePath);
+  const initialCompletionGate = await evaluateCompletionGate(plan, paths.rootDir);
   if (!initialCompletionGate.ready) {
     await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
   }
@@ -6919,7 +6966,7 @@ async function processPlan(plan, paths, state, options, config) {
     const stageIndex = roleIndex + 1;
     const currentRole = normalizeRoleName(roleState.stages[roleIndex], ROLE_WORKER);
     const currentRoleProfile = resolveRoleExecutionProfile(config, currentRole, lastAssessment.effectiveRiskTier);
-    const completionGateBeforeSession = await evaluateCompletionGate(plan.filePath);
+    const completionGateBeforeSession = await evaluateCompletionGate(plan, paths.rootDir);
     if (completionGateBeforeSession.ready) {
       progressLog(
         options,
@@ -7123,7 +7170,7 @@ async function processPlan(plan, paths, state, options, config) {
     if (!(await exists(plan.filePath))) {
       const relocatedPlan = await findPlanRecordById(paths, plan.planId);
       if (relocatedPlan?.phase === 'completed') {
-        const completionGateForRelocatedPlan = await evaluateCompletionGate(relocatedPlan.filePath);
+        const completionGateForRelocatedPlan = await evaluateCompletionGate(relocatedPlan, paths.rootDir);
         if (!completionGateForRelocatedPlan.ready) {
           return {
             outcome: 'failed',
@@ -7458,7 +7505,7 @@ async function processPlan(plan, paths, state, options, config) {
       continue;
     }
 
-    let completionGate = await evaluateCompletionGate(plan.filePath);
+    let completionGate = await evaluateCompletionGate(plan, paths.rootDir);
     if (!completionGate.ready) {
       const autoPromotedGate = await maybeAutoPromoteCompletionGate(
         plan.filePath,
@@ -7469,7 +7516,7 @@ async function processPlan(plan, paths, state, options, config) {
       if (autoPromotedGate.promoted) {
         const refreshedPlan = await findPlanRecordById(paths, plan.planId);
         syncPlanRecord(plan, refreshedPlan);
-        completionGate = await evaluateCompletionGate(plan.filePath);
+        completionGate = await evaluateCompletionGate(plan, paths.rootDir);
         await logEvent(paths, state, 'completion_gate_auto_promoted_validation', {
           planId: plan.planId,
           session,
