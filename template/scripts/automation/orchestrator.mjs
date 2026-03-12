@@ -4118,8 +4118,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   assertValidPlanId(plan.planId, plan.rel);
   assertSafeRelativePlanPath(plan.rel);
   const role = normalizeRoleName(sessionContext.role, ROLE_WORKER);
-  const roleProfile = resolveRoleExecutionProfile(config, role, effectiveRiskTier);
   const effectiveRiskTier = parseRiskTier(sessionContext.effectiveRiskTier, 'low');
+  const roleProfile = resolveRoleExecutionProfile(config, role, effectiveRiskTier);
   const declaredRiskTier = parseRiskTier(sessionContext.declaredRiskTier, 'low');
   const stageIndex = asInteger(sessionContext.stageIndex, 1);
   const stageTotal = asInteger(sessionContext.stageTotal, 1);
