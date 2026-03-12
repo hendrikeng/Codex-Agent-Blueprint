@@ -272,6 +272,10 @@ Start examples:
 - Supervised parallel loop: `npm run automation:run:parallel:grind`
 - Resume direct non-atomic high-risk continuation: `npm run automation:resume:high:non-atomic`
 
+Future blueprint promotion quick rule:
+
+- Before setting `Status: ready-for-promotion`, require `## Master Plan Coverage` or `## Capability Coverage Matrix`, require `## Promotion Blockers`, and run `npm run plans:verify`.
+
 Pretty output example:
 
 ```text

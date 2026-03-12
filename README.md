@@ -119,6 +119,9 @@ Start with `Lite` by default, then scale up only when risk or workload demands i
 | `npm run automation:resume:high:non-atomic` | Run one direct medium+high non-atomic continuation when the worktree must stay dirty. |
 | `npm run automation:audit` | Inspect blocked/failed/pending plans and suggested next steps. |
 
+Future blueprint promotion rule:
+- Before setting `Status: ready-for-promotion`, add `## Master Plan Coverage` or `## Capability Coverage Matrix`, add `## Promotion Blockers`, and run `npm run plans:verify`.
+
 For full command contracts, flags, and policy behavior, use `template/docs/ops/automation/README.md`.
 
 Canonical policy and lifecycle docs:
