@@ -144,7 +144,7 @@ Start with:
 - Resume supervised parallel loop: `npm run automation:resume:parallel:grind`
 - Resume supervised parallel loop with medium enabled: `npm run automation:resume:parallel:grind:medium`
 - Resume supervised parallel loop with medium+high enabled: `npm run automation:resume:parallel:grind:high`
-- Resume quick non-atomic escape hatch (explicit override): `npm run automation:resume:quick:non-atomic`
+- Resume direct non-atomic continuation with medium+high enabled: `npm run automation:resume:high:non-atomic`
 - Audit runs: `npm run automation:audit`
 - Outcomes summary (optional): `npm run outcomes:report`
 - GitHub interop export scaffold (optional): `npm run interop:github:export`

@@ -39,7 +39,7 @@
     "automation:resume:grind": "ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1 ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS=8 node ./scripts/automation/supervise-orchestrator.mjs resume --mode guarded --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty --allow-dirty false --commit true",
     "automation:resume:grind:medium": "ORCH_APPROVED_MEDIUM=1 ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1 ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS=8 node ./scripts/automation/supervise-orchestrator.mjs resume --mode guarded --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty --allow-dirty false --commit true",
     "automation:resume:grind:high": "ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY=1 ORCH_SUPERVISOR_MAX_CONSECUTIVE_ERRORS=8 node ./scripts/automation/supervise-orchestrator.mjs resume --mode guarded --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty --allow-dirty false --commit true",
-    "automation:resume:quick:non-atomic": "ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 node ./scripts/automation/orchestrator.mjs resume --mode guarded --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty --allow-dirty true --commit false",
+    "automation:resume:high:non-atomic": "ORCH_APPROVED_MEDIUM=1 ORCH_APPROVED_HIGH=1 node ./scripts/automation/orchestrator.mjs resume --mode guarded --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty --allow-dirty true --commit false",
     "automation:audit": "node ./scripts/automation/orchestrator.mjs audit"
   }
 }

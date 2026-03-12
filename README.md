@@ -114,7 +114,7 @@ Start with `Lite` by default, then scale up only when risk or workload demands i
 | `npm run automation:run:grind:medium` | Same as above, but allow medium risk plans too. |
 | `npm run automation:run:grind:high` | Same as above, but allow medium+high risk plans too. |
 | `npm run automation:resume:grind` | Continue the last run in supervised loop mode. |
-| `npm run automation:resume:quick:non-atomic` | Unblock continuation when atomic commit boundaries are temporarily not feasible. |
+| `npm run automation:resume:high:non-atomic` | Run one direct medium+high non-atomic continuation when the worktree must stay dirty. |
 | `npm run automation:audit` | Inspect blocked/failed/pending plans and suggested next steps. |
 
 For full command contracts, flags, and policy behavior, use `template/docs/ops/automation/README.md`.
@@ -133,7 +133,7 @@ Canonical policy and lifecycle docs:
 
 1. Copy `template/` contents into a new repository root.
 2. Replace placeholders from `PLACEHOLDERS.md`.
-3. Add required scripts to `package.json` (`context:compile`, `docs:verify`, `conformance:verify`, `architecture:verify`, `agent:verify`, `eval:verify`, `blueprint:verify`, `plans:verify`, `verify:fast`, `verify:full`, `perf:baseline`, `perf:after`, `outcomes:report`, `interop:github:export`, `interop:github:export:write`, `automation:run`, `automation:run:medium`, `automation:run:high`, `automation:run:parallel`, `automation:run:parallel:medium`, `automation:run:parallel:high`, `automation:run:grind`, `automation:run:grind:medium`, `automation:run:grind:high`, `automation:run:parallel:grind`, `automation:run:parallel:grind:medium`, `automation:run:parallel:grind:high`, `automation:resume`, `automation:resume:medium`, `automation:resume:high`, `automation:resume:parallel`, `automation:resume:parallel:medium`, `automation:resume:parallel:high`, `automation:resume:grind`, `automation:resume:grind:medium`, `automation:resume:grind:high`, `automation:resume:parallel:grind`, `automation:resume:parallel:grind:medium`, `automation:resume:parallel:grind:high`, `automation:resume:quick:non-atomic`, `automation:audit`).
+3. Add required scripts to `package.json` (`context:compile`, `docs:verify`, `conformance:verify`, `architecture:verify`, `agent:verify`, `eval:verify`, `blueprint:verify`, `plans:verify`, `verify:fast`, `verify:full`, `perf:baseline`, `perf:after`, `outcomes:report`, `interop:github:export`, `interop:github:export:write`, `automation:run`, `automation:run:medium`, `automation:run:high`, `automation:run:parallel`, `automation:run:parallel:medium`, `automation:run:parallel:high`, `automation:run:grind`, `automation:run:grind:medium`, `automation:run:grind:high`, `automation:run:parallel:grind`, `automation:run:parallel:grind:medium`, `automation:run:parallel:grind:high`, `automation:resume`, `automation:resume:medium`, `automation:resume:high`, `automation:resume:high:non-atomic`, `automation:resume:parallel`, `automation:resume:parallel:medium`, `automation:resume:parallel:high`, `automation:resume:grind`, `automation:resume:grind:medium`, `automation:resume:grind:high`, `automation:resume:parallel:grind`, `automation:resume:parallel:grind:medium`, `automation:resume:parallel:grind:high`, `automation:audit`).
 4. Run `./scripts/check-template-placeholders.sh`.
 5. Run `./scripts/bootstrap-verify.sh`.
 

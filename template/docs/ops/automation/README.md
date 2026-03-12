@@ -269,7 +269,7 @@ Start examples:
 - Supervised overnight loop (run + repeated resume): `npm run automation:run:grind`
 - Supervised resume loop: `npm run automation:resume:grind`
 - Supervised parallel loop: `npm run automation:run:parallel:grind`
-- Resume quick non-atomic escape hatch: `npm run automation:resume:quick:non-atomic`
+- Resume direct non-atomic high-risk continuation: `npm run automation:resume:high:non-atomic`
 
 Pretty output example:
 
