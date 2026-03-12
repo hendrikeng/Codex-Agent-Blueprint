@@ -127,6 +127,7 @@ async function scanPhase(phase, directoryPath) {
     }
 
     const status = normalizeStatus(metadataValue(metadata, 'Status'));
+    const validationReady = normalizeStatus(metadataValue(metadata, 'Validation-Ready'));
     if (!status) {
       addFinding('MISSING_STATUS', 'Missing Status metadata value', rel);
     } else {
@@ -139,6 +140,19 @@ async function scanPhase(phase, directoryPath) {
       if (!allowed.has(status)) {
         addFinding('INVALID_STATUS', `Invalid status '${status}' for ${phase} plan`, rel);
       }
+    }
+
+    if (
+      phase === 'active' &&
+      status === 'validation' &&
+      validationReady !== 'yes' &&
+      validationReady !== 'host-required-only'
+    ) {
+      addFinding(
+        'VALIDATION_READY_REQUIRED',
+        "Active plan with Status 'validation' must set `Validation-Ready` to 'yes' or 'host-required-only'",
+        rel
+      );
     }
 
     const normalizedTopLevelStatus = normalizeStatus(content.match(/^Status:\s*(.+)$/m)?.[1] ?? '');

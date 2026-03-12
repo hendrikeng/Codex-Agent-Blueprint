@@ -336,8 +336,9 @@ Executor commands should use these outcomes:
 - `low`: `worker`
 - `medium`: `planner -> worker -> reviewer`
 - `high`: `planner -> explorer -> worker -> reviewer`
-- Completion gate opens when top-level plan `Status` is `validation` (preferred) or `completed`.
+- Completion gate opens when top-level plan `Status` is `completed`, or when `Status: validation` is paired with explicit `Validation-Ready`.
 - Optional metadata `Validation-Ready: host-required-only` (or `yes`) allows deterministic reviewer closeout promotion to validation without relying only on free-text phrasing.
+- `Status: validation` on its own is not enough for validation fast-path; reviewer closeout should set `Validation-Ready` and `Status: validation` together.
 - If final completion criteria are not yet met after reviewer/worker, orchestrator resets stage progression to `worker` and continues until completion gates pass.
 - Reviewer sessions that clearly indicate host validation is the only remaining gate are auto-promoted to `Status: validation` to avoid worker/reviewer churn.
 - The active role is passed to executors via `ORCH_ROLE` and `--role {role}`.

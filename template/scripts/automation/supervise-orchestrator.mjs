@@ -139,6 +139,7 @@ function readActivePlanRecords() {
     const content = readFileSync(filePath, 'utf8');
     const metadata = parseMetadata(content);
     const status = normalizeStatus(metadataValue(metadata, 'Status'));
+    const validationReady = normalizeStatus(metadataValue(metadata, 'Validation-Ready'));
     const explicitPlanId = metadataValue(metadata, 'Plan-ID');
     const planId = parsePlanId(explicitPlanId, null) ?? inferPlanId(content, filePath);
     if (!planId) {
@@ -149,7 +150,7 @@ function readActivePlanRecords() {
       .map((entry) => parsePlanId(entry, null))
       .filter(Boolean);
 
-    records.push({ planId, status, dependencies });
+    records.push({ planId, status, validationReady, dependencies });
   }
   return records;
 }
@@ -160,9 +161,16 @@ function unresolvedActivePlanIds(state, activePlans) {
   const failed = new Set(Array.isArray(state?.failedPlanIds) ? state.failedPlanIds : []);
 
   return activePlans
-    // Treat validation-only plans as externally gated so supervisor can drain
-    // instead of spinning resume cycles with no in-run progress.
-    .filter((plan) => ACTIVE_STATUSES.has(plan.status) && plan.status !== 'validation')
+    .filter((plan) => {
+      if (!ACTIVE_STATUSES.has(plan.status)) {
+        return false;
+      }
+      // Only treat validation plans as externally gated when readiness is explicit.
+      if (plan.status !== 'validation') {
+        return true;
+      }
+      return plan.validationReady !== 'yes' && plan.validationReady !== 'host-required-only';
+    })
     .map((plan) => plan.planId)
     .filter((planId) => !completed.has(planId) && !blocked.has(planId) && !failed.has(planId))
     .sort((a, b) => a.localeCompare(b));

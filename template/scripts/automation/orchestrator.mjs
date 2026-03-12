@@ -4729,8 +4729,14 @@ function documentValidationReadyValue(content) {
   return '';
 }
 
-function completionGateReadyForValidation(documentStatus) {
-  return documentStatus === 'completed' || documentStatus === 'validation';
+function completionGateReadyForValidation(documentStatus, validationReady = '') {
+  if (documentStatus === 'completed') {
+    return true;
+  }
+  if (documentStatus !== 'validation') {
+    return false;
+  }
+  return validationReady === 'yes' || validationReady === 'host-required-only';
 }
 
 function nextStepChecklistLines(content) {
@@ -4816,11 +4822,11 @@ async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResu
 
   const content = await fs.readFile(planPath, 'utf8');
   const status = documentStatusValue(content);
-  if (completionGateReadyForValidation(status)) {
+  const validationReady = documentValidationReadyValue(content);
+  if (completionGateReadyForValidation(status, validationReady)) {
     return { promoted: false, reason: null };
   }
 
-  const validationReady = documentValidationReadyValue(content);
   if (validationReady === 'no') {
     return { promoted: false, reason: null };
   }
@@ -4841,7 +4847,13 @@ async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResu
     return { promoted: false, reason: null };
   }
 
-  await setPlanStatus(planPath, 'validation', options.dryRun);
+  if (!options.dryRun) {
+    const updatedPlan = setMetadataFields(content, {
+      Status: 'validation',
+      'Validation-Ready': 'host-required-only'
+    });
+    await fs.writeFile(planPath, updatedPlan, 'utf8');
+  }
   return {
     promoted: true,
     reason: checklistHostOnly
@@ -4853,8 +4865,9 @@ async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResu
 async function evaluateCompletionGate(plan, rootDir) {
   const content = await fs.readFile(plan.filePath, 'utf8');
   const documentStatus = documentStatusValue(content);
+  const validationReady = documentValidationReadyValue(content);
 
-  if (completionGateReadyForValidation(documentStatus)) {
+  if (completionGateReadyForValidation(documentStatus, validationReady)) {
     if (requiresImplementationTouch(plan)) {
       const implementationTouches = dirtyImplementationTouchPaths(rootDir, plan);
       if (implementationTouches.length === 0) {
@@ -4869,6 +4882,14 @@ async function evaluateCompletionGate(plan, rootDir) {
     }
 
     return { ready: true, reason: null };
+  }
+
+  if (documentStatus === 'validation') {
+    return {
+      ready: false,
+      reason:
+        "Plan status is 'validation' but Validation-Ready is not explicit. Keep the plan in-progress until reviewer closeout sets `Validation-Ready: yes` or `Validation-Ready: host-required-only`."
+    };
   }
 
   return {

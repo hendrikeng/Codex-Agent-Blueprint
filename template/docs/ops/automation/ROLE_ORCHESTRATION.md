@@ -86,9 +86,11 @@ Recommended baseline:
 
 ## Operational Notes
 
-- Completion gate opens when the top-level plan `Status` is `validation` or `completed`.
-- Plans already in `Status: validation` skip planner/explorer/worker/reviewer sessions and run validation lanes directly on `resume`.
+- Completion gate opens when the top-level plan `Status` is `completed`, or when `Status: validation` is paired with explicit `Validation-Ready`.
+- `Status: validation` is only admission-ready when `Validation-Ready` is explicit (`yes` or `host-required-only`); status alone is not enough for validation fast-path.
+- Plans already in `Status: validation` skip planner/explorer/worker/reviewer sessions and run validation lanes directly on `resume` only when `Validation-Ready` is explicit.
 - Optional metadata `Validation-Ready: host-required-only` (or `yes`) enables deterministic reviewer closeout promotion to validation.
+- Reviewer closeout should set `Validation-Ready` and `Status: validation` in the same edit.
 - If completion gates are not yet satisfied, orchestration restarts at `worker` stage and reruns required review.
 - Reviewer sessions that clearly indicate host validation is the only remaining gate are auto-promoted to `Status: validation` to prevent worker/reviewer churn.
 - Host-validation `pending` keeps plans in `Status: validation` so resume runs avoid implementation-role churn while waiting for host lane execution.
