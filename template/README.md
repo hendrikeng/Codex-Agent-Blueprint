@@ -64,6 +64,16 @@ Reference: `docs/ops/automation/LITE_QUICKSTART.md`.
 - Manual path: allowed for interactive work using the same metadata and evidence/index rules, with dual-track lifecycle (`future -> active -> completed` for strategic work, `active -> completed` for quick/manual fixes).
 - Lifecycle and policy details remain canonical in `docs/PLANS.md`, `docs/exec-plans/README.md`, and `docs/ops/automation/README.md`.
 
+## Session Safety and Context Continuity
+
+- Sessions are proactively rolled over before context gets too low (`contextRemaining <= threshold`).
+- Every session must write a structured result payload (`ORCH_RESULT_PATH`) including numeric `contextRemaining`.
+- Non-terminal sessions must also emit structured continuity fields (`currentSubtask`, `nextAction`, `stateDelta`) so orchestration can checkpoint resumable machine state instead of relying on raw transcript history.
+- Continuity is persisted as repo-local runtime state under `docs/ops/automation/runtime/state/<plan-id>/latest.json` and `checkpoints.jsonl`.
+- Handoffs are written as both markdown notes and structured JSON packets, then reused by later same-run rollovers and `resume` runs.
+- Runtime context is recompiled from canonical docs (`docs/generated/agent-runtime-context.md`) to reduce drift and hallucination risk.
+- Contact packs now carry runtime policy, task scope, latest continuity state, recent checkpoints, and capped evidence references.
+
 ## Documentation Navigation
 
 Start with:

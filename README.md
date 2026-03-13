@@ -71,8 +71,11 @@ Start with `Lite` by default, then scale up only when risk or workload demands i
 
 - Sessions are proactively rolled over before context gets too low (`contextRemaining <= threshold`).
 - Every session must write a structured result payload (`ORCH_RESULT_PATH`) including numeric `contextRemaining`.
-- Handoffs are written to disk and reused by the next session, so continuation is explicit and auditable.
+- Non-terminal sessions must also emit structured continuity fields (`currentSubtask`, `nextAction`, `stateDelta`) so orchestration can checkpoint resumable machine state instead of relying on raw transcript history.
+- Continuity is persisted as repo-local runtime state under `docs/ops/automation/runtime/state/<plan-id>/latest.json` and `checkpoints.jsonl`.
+- Handoffs are written as both markdown notes and structured JSON packets, then reused by later same-run rollovers and `resume` runs.
 - Runtime context is recompiled from canonical docs (`docs/generated/agent-runtime-context.md`) to reduce drift and hallucination risk.
+- Contact packs now carry runtime policy, task scope, latest continuity state, recent checkpoints, and capped evidence references.
 
 ## How It Works
 
