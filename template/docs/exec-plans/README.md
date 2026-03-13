@@ -39,6 +39,8 @@ Every executable plan must also include:
 - `## Deferred Follow-Ons`: broader target state or later-phase items that are intentionally not part of this plan's completion gate.
 - `## Prior Completed Plan Reconciliation`: required for future blueprints and strategic active phase plans so overlapping completed plans are classified instead of silently assumed.
 
+Reconciliation lowers omission and stale-scope risk, but it does not replace planner or reviewer judgment.
+
 ## Status Conventions
 
 - Active plan statuses: `queued`, `in-progress`, `blocked`, `validation`, `completed`, `failed`.

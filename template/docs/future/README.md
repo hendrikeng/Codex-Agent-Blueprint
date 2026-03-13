@@ -85,6 +85,10 @@ Use `## Prior Completed Plan Reconciliation` to prevent two failure modes:
 - shipped behavior disappearing because a future blueprint forgot to mention it
 - obsolete behavior returning because an old completed plan was treated as still-current by default
 
+Reconciliation is part of the planning contract. It reduces omission and stale-scope risk, but it does not replace planner or reviewer judgment.
+
+Safe rule: `reconcile -> verify -> promote -> execute`
+
 List only the relevant completed plans, not every historical plan. Classify each one with a short rationale:
 
 - `kept-as-baseline`

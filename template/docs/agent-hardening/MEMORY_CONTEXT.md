@@ -34,6 +34,36 @@ Source of Truth: This document.
 - Checkpoint at every session end, every stage completion, every `pending` or `handoff_required`, and immediately before validation handoff.
 - Summaries are replaceable, not sacred. Durable state must stay small, versioned, and reconstructable from checkpoints plus external artifacts.
 
+## Retrieval Escalation Rule
+
+### Default Rule
+
+- Use repo-local continuity as the default architecture for long work: structured state, checkpoints, explicit handoffs, selective contact packs, externalized logs/evidence, and resumable orchestration.
+- This design is intended to protect low-context work, safe handoff, nothing important getting lost, and reliable grind/resume without moving important memory outside the repo.
+
+### Do Not Change It Yet
+
+- Keep this design while all important information already lives in the repo.
+- Keep this design while plans, evidence, docs, and code remain the source of truth.
+- Keep this design while agents can resume from checkpoints and contact packs without losing important context.
+- Keep this design while grind runs are not repeatedly missing important information.
+- Keep this design while no agent needs memory from Slack, Jira, other repos, or other external systems.
+
+### Consider External Retrieval Later
+
+- agents repeatedly miss important context even though it exists
+- repo-local checkpoints/contact packs stop being enough
+- important memory starts living outside the repo
+- you need one agent to search across many unrelated systems
+- you can point to repeated failures, not just a vague worry
+
+### Prefer Tuning Before Re-Architecture
+
+- better checkpoint contents
+- better contact-pack selection
+- better evidence compaction
+- better validation and observability
+
 ## Provenance and Redaction
 
 - Record provenance for retrieved memory/context used in decisions.
