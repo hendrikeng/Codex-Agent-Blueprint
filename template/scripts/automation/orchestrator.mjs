@@ -26,6 +26,8 @@ import {
 } from './lib/plan-metadata.mjs';
 
 const DEFAULT_CONTEXT_THRESHOLD = 10000;
+const DEFAULT_CONTEXT_SOFT_USED_RATIO = 0.65;
+const DEFAULT_CONTEXT_HARD_USED_RATIO = 0.8;
 const DEFAULT_HANDOFF_TOKEN_BUDGET = 1500;
 const DEFAULT_MAX_ROLLOVERS = 20;
 const DEFAULT_MAX_SESSIONS_PER_PLAN = 12;
@@ -208,7 +210,10 @@ Options:
   --base-ref <ref>                   Base ref for parallel worktrees/PRs (default: CURRENT_BRANCH)
   --branch-prefix <value>            Prefix for generated parallel worker branches
   --git-remote <name>                Remote used for parallel branch push/PR operations
-  --context-threshold <n>            Trigger rollover when contextRemaining < n
+  --context-threshold <n>            Legacy alias for absolute remaining-context floor
+  --context-absolute-floor <n>       Trigger handoff backstop when contextRemaining <= n
+  --context-soft-used-ratio <n>      Soft rollover threshold for context used ratio (0-1 or 0-100)
+  --context-hard-used-ratio <n>      Hard rollover threshold for context used ratio (0-1 or 0-100)
   --require-result-payload true|false Require ORCH_RESULT_PATH payload with contextRemaining (default: true)
   --handoff-token-budget <n>         Metadata field for handoff budget reporting
   --max-rollovers <n>                Maximum rollovers per plan (default: 20)
@@ -285,6 +290,29 @@ function asInteger(value, fallback) {
   if (value == null) return fallback;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asRatio(value, fallback = null) {
+  if (value == null || String(value).trim() === '') return fallback;
+  const parsed = Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  const normalized = parsed > 1 ? parsed / 100 : parsed;
+  if (!Number.isFinite(normalized)) return fallback;
+  return Math.min(1, Math.max(0, normalized));
+}
+
+function deriveContextUsedRatio(contextRemaining, contextWindow) {
+  if (
+    typeof contextRemaining !== 'number' ||
+    !Number.isFinite(contextRemaining) ||
+    typeof contextWindow !== 'number' ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) {
+    return null;
+  }
+  const normalizedRemaining = Math.min(Math.max(contextRemaining, 0), contextWindow);
+  return Math.min(1, Math.max(0, 1 - normalizedRemaining / contextWindow));
 }
 
 function normalizeOutputMode(value, fallback = DEFAULT_OUTPUT_MODE) {
@@ -2523,8 +2551,27 @@ function assertValidationConfigured(options, config, paths) {
 }
 
 function resolveRuntimeExecutorOptions(options, config) {
-  const configContextThreshold = asInteger(config.executor?.contextThreshold, DEFAULT_CONTEXT_THRESHOLD);
-  const contextThreshold = asInteger(options.contextThreshold, configContextThreshold);
+  const configContextAbsoluteFloor = asInteger(
+    config.executor?.contextAbsoluteFloor ?? config.executor?.contextThreshold,
+    DEFAULT_CONTEXT_THRESHOLD
+  );
+  const contextThreshold = asInteger(
+    options.contextAbsoluteFloor ?? options.contextThreshold,
+    configContextAbsoluteFloor
+  );
+  const configContextSoftUsedRatio = asRatio(
+    config.executor?.contextSoftUsedRatio,
+    DEFAULT_CONTEXT_SOFT_USED_RATIO
+  );
+  const contextSoftUsedRatio = asRatio(options.contextSoftUsedRatio, configContextSoftUsedRatio);
+  const configContextHardUsedRatio = asRatio(
+    config.executor?.contextHardUsedRatio,
+    DEFAULT_CONTEXT_HARD_USED_RATIO
+  );
+  const contextHardUsedRatio = Math.max(
+    contextSoftUsedRatio,
+    asRatio(options.contextHardUsedRatio, configContextHardUsedRatio)
+  );
   const configRequireResultPayload = asBoolean(
     config.executor?.requireResultPayload,
     DEFAULT_REQUIRE_RESULT_PAYLOAD
@@ -2728,6 +2775,9 @@ function resolveRuntimeExecutorOptions(options, config) {
   return {
     ...options,
     contextThreshold,
+    contextAbsoluteFloor: contextThreshold,
+    contextSoftUsedRatio,
+    contextHardUsedRatio,
     requireResultPayload,
     executorTimeoutMs: timeoutMsFromSeconds(executorTimeoutSeconds),
     validationTimeoutMs: timeoutMsFromSeconds(validationTimeoutSeconds),
@@ -4309,6 +4359,9 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     ORCH_RESULT_PATH: resultPathRel,
     ORCH_CONTACT_PACK_FILE: contactPackFile,
     ORCH_CONTEXT_THRESHOLD: String(options.contextThreshold),
+    ORCH_CONTEXT_ABSOLUTE_FLOOR: String(options.contextAbsoluteFloor ?? options.contextThreshold),
+    ORCH_CONTEXT_SOFT_USED_RATIO: String(options.contextSoftUsedRatio),
+    ORCH_CONTEXT_HARD_USED_RATIO: String(options.contextHardUsedRatio),
     ORCH_HANDOFF_TOKEN_BUDGET: String(options.handoffTokenBudget),
     ORCH_WORKER_NO_TOUCH_RETRY_COUNT: String(workerNoTouchRetryCount),
     ORCH_WORKER_NO_TOUCH_RETRY_LIMIT: String(workerNoTouchRetryLimit)
@@ -4507,12 +4560,60 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   const hasContextRemaining =
     typeof rawContextRemaining === 'number' && Number.isFinite(rawContextRemaining);
   const contextRemaining = hasContextRemaining ? rawContextRemaining : null;
+  const rawContextWindow = resultPayload.contextWindow;
+  const hasContextWindow =
+    typeof rawContextWindow === 'number' && Number.isFinite(rawContextWindow) && rawContextWindow > 0;
+  const contextWindow = hasContextWindow ? rawContextWindow : null;
+  const reportedContextUsedRatio = asRatio(resultPayload.contextUsedRatio, null);
+  const contextUsedRatio =
+    reportedContextUsedRatio ??
+    (hasContextRemaining && hasContextWindow ? deriveContextUsedRatio(contextRemaining, contextWindow) : null);
 
-  if (normalizedStatus === 'completed' && options.requireResultPayload && !hasContextRemaining) {
+  if (
+    (normalizedStatus === 'completed' || normalizedStatus === 'pending') &&
+    options.requireResultPayload &&
+    !hasContextRemaining
+  ) {
     return withSessionTouchSummary({
       status: 'handoff_required',
       reason:
         'Executor payload is missing numeric contextRemaining. Rolling over immediately to avoid low-context execution.',
+      role,
+      provider: roleProfile.provider,
+      model: roleProfile.model || null,
+      sessionLogPath
+    });
+  }
+
+  const belowContextFloor =
+    typeof contextRemaining === 'number' &&
+    Number.isFinite(contextRemaining) &&
+    contextRemaining <= options.contextThreshold;
+  const aboveHardContextLimit =
+    typeof contextUsedRatio === 'number' &&
+    Number.isFinite(contextUsedRatio) &&
+    contextUsedRatio >= options.contextHardUsedRatio;
+
+  if (normalizedStatus === 'pending' && (belowContextFloor || aboveHardContextLimit)) {
+    const reasonParts = [];
+    if (belowContextFloor) {
+      reasonParts.push(
+        `contextRemaining=${contextRemaining} is at or below the absolute floor ${options.contextThreshold}`
+      );
+    }
+    if (aboveHardContextLimit) {
+      reasonParts.push(
+        `contextUsedRatio=${contextUsedRatio} is at or above the hard limit ${options.contextHardUsedRatio}`
+      );
+    }
+    return withSessionTouchSummary({
+      status: 'handoff_required',
+      reason: `Executor returned pending while low-context guardrails were active (${reasonParts.join('; ')}). Rolling over immediately to preserve same-role context safety.`,
+      summary: resultPayload.summary ?? null,
+      contextRemaining,
+      contextWindow,
+      contextUsedRatio,
+      resultPayloadFound: true,
       role,
       provider: roleProfile.provider,
       model: roleProfile.model || null,
@@ -4525,6 +4626,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     reason: resultPayload.reason ?? null,
     summary: resultPayload.summary ?? null,
     contextRemaining,
+    contextWindow,
+    contextUsedRatio,
     resultPayloadFound: true,
     role,
     provider: roleProfile.provider,
@@ -8057,6 +8160,12 @@ function buildParallelWorkerCommand(plan, state, options, parallelOptions) {
     String(asInteger(options.maxSessionsPerPlan, DEFAULT_MAX_SESSIONS_PER_PLAN)),
     '--context-threshold',
     String(asInteger(options.contextThreshold, DEFAULT_CONTEXT_THRESHOLD)),
+    '--context-absolute-floor',
+    String(asInteger(options.contextAbsoluteFloor, DEFAULT_CONTEXT_THRESHOLD)),
+    '--context-soft-used-ratio',
+    String(asRatio(options.contextSoftUsedRatio, DEFAULT_CONTEXT_SOFT_USED_RATIO)),
+    '--context-hard-used-ratio',
+    String(asRatio(options.contextHardUsedRatio, DEFAULT_CONTEXT_HARD_USED_RATIO)),
     '--require-result-payload',
     String(asBoolean(options.requireResultPayload, DEFAULT_REQUIRE_RESULT_PAYLOAD)),
     '--output',
@@ -8711,9 +8820,12 @@ async function runCommand(paths, options) {
       downgraded: modeResolution.downgraded,
       downgradeReason: modeResolution.reason,
       capabilities: state.capabilities,
-      sessionPolicy: {
-        contextThreshold: options.contextThreshold,
-        requireResultPayload: options.requireResultPayload,
+        sessionPolicy: {
+          contextThreshold: options.contextThreshold,
+          contextAbsoluteFloor: options.contextAbsoluteFloor,
+          contextSoftUsedRatio: options.contextSoftUsedRatio,
+          contextHardUsedRatio: options.contextHardUsedRatio,
+          requireResultPayload: options.requireResultPayload,
         touchScan: {
           mode: options.touchScanMode,
           minHeartbeats: options.touchScanMinHeartbeats,
@@ -8839,6 +8951,9 @@ async function resumeCommand(paths, options) {
       capabilities: state.capabilities,
       sessionPolicy: {
         contextThreshold: options.contextThreshold,
+        contextAbsoluteFloor: options.contextAbsoluteFloor,
+        contextSoftUsedRatio: options.contextSoftUsedRatio,
+        contextHardUsedRatio: options.contextHardUsedRatio,
         requireResultPayload: options.requireResultPayload,
         touchScan: {
           mode: options.touchScanMode,
@@ -9048,7 +9163,28 @@ async function main() {
     baseRef: rawOptions['base-ref'] ?? rawOptions.baseRef,
     branchPrefix: rawOptions['branch-prefix'] ?? rawOptions.branchPrefix,
     gitRemote: rawOptions['git-remote'] ?? rawOptions.gitRemote,
-    contextThreshold: asInteger(rawOptions['context-threshold'] ?? rawOptions.contextThreshold, null),
+    contextThreshold: asInteger(
+      rawOptions['context-threshold'] ??
+        rawOptions.contextThreshold ??
+        rawOptions['context-absolute-floor'] ??
+        rawOptions.contextAbsoluteFloor,
+      null
+    ),
+    contextAbsoluteFloor: asInteger(
+      rawOptions['context-absolute-floor'] ??
+        rawOptions.contextAbsoluteFloor ??
+        rawOptions['context-threshold'] ??
+        rawOptions.contextThreshold,
+      null
+    ),
+    contextSoftUsedRatio: asRatio(
+      rawOptions['context-soft-used-ratio'] ?? rawOptions.contextSoftUsedRatio,
+      null
+    ),
+    contextHardUsedRatio: asRatio(
+      rawOptions['context-hard-used-ratio'] ?? rawOptions.contextHardUsedRatio,
+      null
+    ),
     requireResultPayload: rawOptions['require-result-payload'] ?? rawOptions.requireResultPayload,
     handoffTokenBudget: asInteger(rawOptions['handoff-token-budget'] ?? rawOptions.handoffTokenBudget, DEFAULT_HANDOFF_TOKEN_BUDGET),
     maxRollovers: asInteger(rawOptions['max-rollovers'] ?? rawOptions.maxRollovers, DEFAULT_MAX_ROLLOVERS),

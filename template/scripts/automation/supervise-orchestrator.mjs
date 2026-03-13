@@ -31,10 +31,10 @@ const continueOnError = String(process.env.ORCH_SUPERVISOR_CONTINUE_ON_ERROR ?? 
 const allowDirtyRecovery = String(process.env.ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY ?? '0').trim() === '1';
 const enforceBudgetGuards = String(process.env.ORCH_SUPERVISOR_ENFORCE_BUDGET_GUARDS ?? '1').trim() !== '0';
 const stopOnSessionBudgetExhaustion =
-  String(process.env.ORCH_SUPERVISOR_STOP_ON_SESSION_BUDGET_EXHAUSTION ?? '1').trim() !== '0';
-const guardedMaxSessionsPerPlan = Number.parseInt(process.env.ORCH_SUPERVISOR_MAX_SESSIONS_PER_PLAN ?? '6', 10);
+  String(process.env.ORCH_SUPERVISOR_STOP_ON_SESSION_BUDGET_EXHAUSTION ?? '0').trim() !== '0';
+const guardedMaxSessionsPerPlan = Number.parseInt(process.env.ORCH_SUPERVISOR_MAX_SESSIONS_PER_PLAN ?? '12', 10);
 const guardedWorkerPendingStreakLimit = Number.parseInt(
-  process.env.ORCH_SUPERVISOR_WORKER_PENDING_STREAK_LIMIT ?? '2',
+  process.env.ORCH_SUPERVISOR_WORKER_PENDING_STREAK_LIMIT ?? '6',
   10
 );
 

@@ -48,6 +48,7 @@ These are baseline templates, not universal guarantees across all versions.
 The orchestrator relies on the executor wrapper to enforce structured output:
 
 - Required payload fields: `status`, `summary`, `reason`, `contextRemaining`
+- Recommended payload fields when available: `contextWindow`, `contextUsedRatio`
 - Payload path: `ORCH_RESULT_PATH`
 - Allowed status values: `completed`, `blocked`, `handoff_required`, `pending`
 

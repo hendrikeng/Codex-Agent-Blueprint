@@ -109,7 +109,10 @@ Use the manual path when any of these are true:
   - `"providers.codex.command": "codex exec --json --full-auto -c model_reasoning_effort={role_reasoning_effort} -m {role_model} {prompt}"` (`{prompt}`, `{role_model}`, and `{role_reasoning_effort}` are required)
   - `"providers.claude.command": "claude -p --model {role_model} {prompt}"` (`{prompt}` and `{role_model}` are required)
   - `"enforceRoleModelSelection": true` requires each role command to include `{role_model}`.
-  - `"contextThreshold": 10000`
+  - `"contextThreshold": 10000` (legacy alias for the absolute remaining-context floor)
+  - `"contextAbsoluteFloor": 10000`
+  - `"contextSoftUsedRatio": 0.65`
+  - `"contextHardUsedRatio": 0.8`
   - `"requireResultPayload": true`
   - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/agent-runtime-context.md` by default).
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
@@ -318,9 +321,9 @@ Executor commands should use these outcomes:
 - If the top-level `Status:` is neither `validation` nor `completed`, orchestration starts another executor session for the same plan in the same run (up to `--max-sessions-per-plan`), then leaves it in `active/` for later `resume` if still incomplete.
 - Session boundaries are strict: each planner/explorer/worker/reviewer stage starts a new executor process and can use a role-specific model profile.
 - Each session gets a task-scoped contact pack (`{contact_pack_file}`) and should use it as primary context before expanding scope.
-- Executor sessions must always emit a structured result payload (`ORCH_RESULT_PATH`) with a numeric `contextRemaining`.
-- Default context rollover policy is proactive: a new session is forced when `contextRemaining <= 10000` (override with `--context-threshold` or `executor.contextThreshold`).
-- If an executor exits `0` without payload (or without numeric `contextRemaining`), orchestrator forces an immediate handoff/rollover to protect coding accuracy.
+- Executor sessions must always emit a structured result payload (`ORCH_RESULT_PATH`) with a numeric `contextRemaining`; include numeric `contextWindow` and `contextUsedRatio` whenever the provider/runtime can estimate them reliably.
+- Default context rollover policy is hybrid and proactive: use `contextSoftUsedRatio` to stop widening scope, `contextHardUsedRatio` to force same-role handoff when more work remains, and `contextAbsoluteFloor` as the hard remaining-context backstop (override with `--context-soft-used-ratio`, `--context-hard-used-ratio`, or `--context-absolute-floor`; `--context-threshold` remains a legacy alias for the floor).
+- If an executor exits `0` without payload (or without numeric `contextRemaining` for `completed`/`pending`), orchestrator forces an immediate handoff/rollover to protect coding accuracy.
 - If host-required validations cannot run in the current environment, orchestration keeps the plan `validation`, records a host-validation pending reason, and continues with other executable plans.
 - If validation lanes are required but unconfigured, `run`/`resume` fail immediately (fail-closed).
 - Failed plans are automatically re-queued on `resume` when policy/security/dependency gates are now satisfied (up to `--max-failed-retries`).
@@ -380,6 +383,8 @@ Required result payload (path from `ORCH_RESULT_PATH`):
   "status": "completed",
   "summary": "Implemented acceptance criteria 1 and 2",
   "contextRemaining": 2100,
+  "contextWindow": 128000,
+  "contextUsedRatio": 0.9836,
   "reason": "optional detail",
   "blockerKey": "optional-stable-blocker-id",
   "evidenceAction": "upsert"
