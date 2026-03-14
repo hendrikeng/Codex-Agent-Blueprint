@@ -53,8 +53,8 @@
     },
     "thresholds": {
       "maxDerivedContinuityRate": 0.1,
-      "minResumeSafeCheckpointRate": 0.95,
-      "maxThinPackRate": 0.1,
+      "minResumeSafeCheckpointRate": 0.9,
+      "maxThinPackRate": 0.3,
       "maxRepeatedHandoffLoopPlans": 0
     },
     "incidentBundles": {

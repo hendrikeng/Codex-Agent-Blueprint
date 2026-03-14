@@ -30,7 +30,7 @@ Source of Truth: This document.
 
 - Config source of truth: `docs/agent-hardening/evals.config.json`.
 - Generated report artifact: `docs/generated/evals-report.json`.
-- Continuity detail artifact: `docs/generated/continuity-evals-report.json`.
+- Continuity detail artifact: generated locally by `npm run eval:continuity`.
 - Verifier command: `npm run eval:verify`.
 - Continuity runner command: `npm run eval:continuity`.
 - Required report fields:

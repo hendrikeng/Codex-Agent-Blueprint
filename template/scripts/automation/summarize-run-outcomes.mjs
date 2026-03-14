@@ -273,12 +273,6 @@ async function main() {
         if (details.continuityDerived === true) {
           continuityDerivedSessions += 1;
         }
-        if (details.continuityDegraded === true) {
-          continuityDegradedSessions += 1;
-        }
-        if (details.checkpointResumeSafe === true) {
-          resumeSafeCheckpointSessions += 1;
-        }
         if (String(details.contactPackFile ?? '').trim()) {
           contactPackSessions += 1;
           if (details.contactPackGenerated === true) {
@@ -327,6 +321,14 @@ async function main() {
           timestampMs >= stats.firstSeenMs
         ) {
           stats.firstWorkerEditSeconds = (timestampMs - stats.firstSeenMs) / 1000;
+        }
+      }
+      if (typeLower === 'session_checkpoint_assessed') {
+        if (details.continuityDegraded === true) {
+          continuityDegradedSessions += 1;
+        }
+        if (details.checkpointResumeSafe === true) {
+          resumeSafeCheckpointSessions += 1;
         }
       }
 

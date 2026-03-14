@@ -19,7 +19,7 @@ Source of Truth: This document and linked docs in this folder.
 - `docs/agent-hardening/TOOL_POLICY.md`
 - `docs/agent-hardening/MEMORY_CONTEXT.md`
 - `docs/generated/evals-report.json`
-- `docs/generated/continuity-evals-report.json`
+- continuity eval report generated locally by `npm run eval:continuity`
 
 ## Enforcement
 
