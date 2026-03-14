@@ -1649,19 +1649,59 @@ function didWorkerStallTimeout(result) {
   return result?.error?.code === 'EWORKER_STALL';
 }
 
-function hasMeaningfulWorkerTouchSummary(summary) {
+function hasMeaningfulWorkerTouchSummary(summary, touchPolicy = null) {
+  const touchedPaths = Array.isArray(summary?.touched) ? summary.touched : [];
+  if (touchedPaths.length > 0) {
+    return touchedPaths.some((entry) => isMeaningfulWorkerTouchPath(entry, touchPolicy));
+  }
+
   const categories = Array.isArray(summary?.categories) ? summary.categories : [];
   return categories.some((entry) => {
     const category = String(entry?.category ?? '').trim().toLowerCase();
     const count = Number(entry?.count ?? 0);
-    return isMeaningfulWorkerTouchCategory(category) && Number.isFinite(count) && count > 0;
+    return isMeaningfulWorkerTouchCategory(category, touchPolicy) && Number.isFinite(count) && count > 0;
   });
 }
 
-function isMeaningfulWorkerTouchCategory(category) {
+function isMeaningfulWorkerTouchCategory(category, touchPolicy = null) {
   const normalized = String(category ?? '').trim().toLowerCase();
-  // Only plan/evidence churn is considered non-progress for worker retries.
-  return normalized !== '' && normalized !== 'plan-docs';
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === 'plan-docs') {
+    return touchPolicy?.allowPlanDocsOnlyTouches === true;
+  }
+  return true;
+}
+
+function isMeaningfulWorkerTouchPath(filePath, touchPolicy = null) {
+  return isMeaningfulWorkerTouchCategory(classifyTouchedPath(filePath), touchPolicy);
+}
+
+function buildWorkerTouchPolicy(plan) {
+  const specTargets =
+    Array.isArray(plan?.specTargets) && plan.specTargets.length > 0
+      ? plan.specTargets
+      : ['docs/product-specs/current-state.md'];
+  const docsOnlySpecTargets = specTargets.every((target) => {
+    const category = classifyTouchedPath(target);
+    return category === 'plan-docs' || category === 'docs' || category === 'automation';
+  });
+  const content = typeof plan?.content === 'string' ? plan.content : '';
+  const documentStatus = content ? documentStatusValue(content) : '';
+  const validationReady = content ? documentValidationReadyValue(content) : '';
+  const validationOnlyPlan = completionGateReadyForValidation(documentStatus, validationReady);
+  const allowPlanDocsOnlyTouches = docsOnlySpecTargets;
+  const progressLabel = allowPlanDocsOnlyTouches
+    ? 'repository edits in the plan\'s scoped docs/evidence targets'
+    : 'repository edits outside plan/evidence files';
+
+  return {
+    docsOnlySpecTargets,
+    validationOnlyPlan,
+    allowPlanDocsOnlyTouches,
+    progressLabel
+  };
 }
 
 function roleActivity(role) {
@@ -2027,6 +2067,7 @@ async function runShellMonitored(
     normalizeRoleName(context.role, ROLE_WORKER) === ROLE_WORKER &&
     workerStallFailSeconds > 0;
   const workerStallFailMs = enforceWorkerStallFail ? workerStallFailSeconds * 1000 : 0;
+  const workerTouchPolicy = context?.workerTouchPolicy ?? null;
 
   const child = spawn(command, {
     shell: true,
@@ -2202,7 +2243,7 @@ async function runShellMonitored(
     const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
     const effectiveProgressAtMs = Math.max(lastOutputAtMs, lastTouchChangeAtMs);
     const idleSeconds = Math.floor((nowMs - effectiveProgressAtMs) / 1000);
-    const hasMeaningfulWorkerTouch = hasMeaningfulWorkerTouchSummary(touchSummary);
+    const hasMeaningfulWorkerTouch = hasMeaningfulWorkerTouchSummary(touchSummary, workerTouchPolicy);
     if (hasMeaningfulWorkerTouch) {
       workerFirstMeaningfulTouchObserved = true;
       lastMeaningfulTouchAtMs = nowMs;
@@ -2234,7 +2275,7 @@ async function runShellMonitored(
         firstTouchDeadlineTimedOut = true;
         progressLog(
           options,
-          `first-touch deadline exceeded phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} deadline=${firstTouchDeadlineSeconds}s without repository edits outside plan/evidence files`
+          `first-touch deadline exceeded phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} deadline=${firstTouchDeadlineSeconds}s without ${workerTouchPolicy?.progressLabel ?? 'repository edits outside plan/evidence files'}`
         );
         signalMonitoredProcess(child, 'SIGTERM');
         if (!forceKillTimer) {
@@ -4864,6 +4905,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
               retryWorkerFirstTouchDeadlineSeconds
             )
           : baseWorkerFirstTouchDeadlineSeconds;
+  const workerTouchPolicy = buildWorkerTouchPolicy(plan);
   const sessionExecutionOptions =
     effectiveWorkerFirstTouchDeadlineSeconds === baseWorkerFirstTouchDeadlineSeconds
       ? options
@@ -4882,7 +4924,8 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
       phase: 'session',
       planId: plan.planId,
       role,
-      activity: roleActivity(role)
+      activity: roleActivity(role),
+      workerTouchPolicy
     }
   );
   const commandOutput = captureOutput ? executionOutput(execution) : '';
@@ -4947,7 +4990,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     const deadlineSeconds = effectiveWorkerFirstTouchDeadlineSeconds;
     return withSessionTouchSummary({
       status: 'pending',
-      reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without repository edits outside plan/evidence files.`,
+      reason: `Worker first-touch deadline exceeded (${deadlineSeconds}s) without ${workerTouchPolicy.progressLabel}.`,
       role,
       provider: roleProfile.provider,
       model: roleProfile.model || null,
@@ -8356,6 +8399,7 @@ async function processPlan(plan, paths, state, options, config) {
 
     const refreshedPlan = await readPlanRecord(paths.rootDir, plan.filePath, 'active');
     syncPlanRecord(plan, refreshedPlan);
+    const workerTouchPolicy = buildWorkerTouchPolicy(plan);
     const disallowedWrites = disallowedTouchedPathsForRole(currentRole, sessionResult.touchSummary?.touched ?? []);
     if (disallowedWrites.length > 0) {
       const violationSample = disallowedWrites.slice(0, 3).join(', ');
@@ -8392,11 +8436,13 @@ async function processPlan(plan, paths, state, options, config) {
       const pendingTouchCategories = Array.isArray(sessionResult.touchSummary?.categories)
         ? sessionResult.touchSummary.categories
         : [];
-      const workerHasMeaningfulTouch = pendingTouchCategories.some((entry) => {
-        const category = String(entry?.category ?? '').trim().toLowerCase();
-        const count = Number(entry?.count ?? 0);
-        return isMeaningfulWorkerTouchCategory(category) && Number.isFinite(count) && count > 0;
-      });
+      const workerHasMeaningfulTouch = hasMeaningfulWorkerTouchSummary(
+        {
+          touched: sessionResult.touchSummary?.touched ?? [],
+          categories: pendingTouchCategories
+        },
+        workerTouchPolicy
+      );
       const workerNeedsMeaningfulTouch =
         currentRole === ROLE_WORKER && nextRole === currentRole && !workerHasMeaningfulTouch;
       const stageBudgetSeconds = Math.max(
@@ -8455,7 +8501,7 @@ async function processPlan(plan, paths, state, options, config) {
       ) {
         workerNoTouchRetryCount += 1;
         const retryReason =
-          `Worker returned pending without repository edits outside plan/evidence files; retrying worker with edit-first directive ` +
+          `Worker returned pending without ${workerTouchPolicy.progressLabel}; retrying worker with edit-first directive ` +
           `(${workerNoTouchRetryCount}/${workerNoTouchRetryLimit}). ${pendingReason}`;
         await logEvent(paths, state, 'session_pending_no_touch_retry', {
           planId: plan.planId,
@@ -8481,9 +8527,13 @@ async function processPlan(plan, paths, state, options, config) {
           workerNoTouchRetryLimit > 0
             ? `after ${workerNoTouchRetryCount}/${workerNoTouchRetryLimit} no-touch retries`
             : 'with no-touch retries disabled';
+        const requiredEditGuidance =
+          workerTouchPolicy.allowPlanDocsOnlyTouches
+            ? 'Apply at least one concrete repository edit in the plan\'s scoped docs/evidence targets before returning pending; plan/evidence-only updates outside the declared plan scope are still insufficient.'
+            : 'Apply at least one concrete repository edit outside the active plan/evidence docs before returning pending; plan/evidence-only updates are insufficient for worker pending.';
         const failFastReason =
-          `Worker returned pending without repository edits outside plan/evidence files ${retrySummary}. ${pendingReason} ` +
-          'Apply at least one concrete repository edit outside the active plan/evidence docs before returning pending; plan/evidence-only updates are insufficient for worker pending.';
+          `Worker returned pending without ${workerTouchPolicy.progressLabel} ${retrySummary}. ${pendingReason} ` +
+          requiredEditGuidance;
         await logEvent(paths, state, 'session_pending_fail_fast', {
           planId: plan.planId,
           session,
