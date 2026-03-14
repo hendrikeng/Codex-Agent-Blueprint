@@ -17,6 +17,7 @@ Source of Truth: This document.
 - Environment model: `docs/env/README.md`
 - Product state: `docs/product-specs/current-state.md`
 - Plan workflow: `docs/PLANS.md`
+- Evidence index: `docs/exec-plans/evidence-index/README.md`
 - Ops automation: `docs/ops/automation/README.md`
 - Role orchestration: `docs/ops/automation/ROLE_ORCHESTRATION.md`
 - Lite quickstart: `docs/ops/automation/LITE_QUICKSTART.md`

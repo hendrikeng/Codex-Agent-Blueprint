@@ -8,6 +8,7 @@ Source of Truth: This document.
 ## Directory Layout
 
 - `docs/exec-plans/active/`
+- `docs/exec-plans/active/evidence/`
 - `docs/exec-plans/completed/`
 - `docs/exec-plans/evidence-index/`
 - `docs/exec-plans/tech-debt-tracker.md`
@@ -52,7 +53,8 @@ Reconciliation lowers omission and stale-scope risk, but it does not replace pla
 2. Validate plan metadata with `npm run plans:verify`.
 3. Execute one plan at a time with isolated context/session.
 4. Move completed plans to `completed/` with closure notes and validation evidence.
-5. Point `Done-Evidence` to canonical references under `evidence-index/`.
-6. Keep tech debt references current.
+5. Keep current, high-signal active evidence under `docs/exec-plans/active/evidence/`.
+6. Point `Done-Evidence` to canonical references under `evidence-index/`.
+7. Keep tech debt references current.
 
 Do not use weak acceptance wording such as `at minimum`. If a plan needs staged delivery, keep the current plan's concrete work in `## Must-Land Checklist` and move everything else into `## Deferred Follow-Ons`. For future blueprints and strategic phase plans, classify relevant historical completed plans in `## Prior Completed Plan Reconciliation` before promotion or validation.

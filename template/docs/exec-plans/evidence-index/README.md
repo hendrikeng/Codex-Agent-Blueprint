@@ -1,6 +1,9 @@
 # Evidence Index
 
-Purpose: Canonical, plan-scoped evidence references after curation/completion.
+Status: canonical
+Owner: {{DOC_OWNER}}
+Last Updated: {{LAST_UPDATED_ISO_DATE}}
+Source of Truth: This directory.
 
 ## Usage
 
@@ -15,4 +18,3 @@ Purpose: Canonical, plan-scoped evidence references after curation/completion.
 
 - Evidence is curated to keep useful, non-redundant information.
 - Repeated unchanged blocker reruns are collapsed by strict-upsert policy.
-

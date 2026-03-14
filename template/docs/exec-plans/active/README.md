@@ -22,3 +22,9 @@ Each active plan must include:
 - Move older session detail into a linked archive file (for example `docs/exec-plans/active/evidence/<plan-id>-session-archive.md`).
 - Avoid duplicating long session narratives in both active plan and active evidence files.
 - If a milestone has quantitative exit criteria and those criteria are met, mark it completed and proceed to the next milestone.
+
+
+## Active Evidence
+
+- Keep current evidence in `docs/exec-plans/active/evidence/README.md` and plan-specific files in the same directory.
+- Retain only recent, decision-relevant sessions in active evidence; move older detail to `*-session-archive.md` files.

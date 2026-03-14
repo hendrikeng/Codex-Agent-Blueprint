@@ -71,7 +71,9 @@ This is the canonical completeness index for first-class documentation in `docs/
 - `docs/env/README.md`
 - `docs/exec-plans/README.md`
 - `docs/exec-plans/active/README.md`
+- `docs/exec-plans/active/evidence/README.md`
 - `docs/exec-plans/completed/README.md`
+- `docs/exec-plans/evidence-index/README.md`
 - `docs/exec-plans/tech-debt-tracker.md`
 - `docs/future/README.md`
 - `docs/generated/agent-runtime-context.md`
