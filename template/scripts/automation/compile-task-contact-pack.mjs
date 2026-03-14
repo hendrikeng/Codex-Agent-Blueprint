@@ -447,9 +447,12 @@ function selectScoredInputs(candidates, maxItems, role, stageIndex) {
   return selected.slice(0, maxItems);
 }
 
-function thinPackSummary(selectedInputs) {
+function thinPackSummary(selectedInputs, availableCategories = []) {
   const categories = new Set(selectedInputs.map((entry) => entry.category));
-  const missingCategories = ['state', 'checkpoint', 'artifact'].filter((entry) => !categories.has(entry));
+  const expectedCategories = ['state', 'checkpoint', 'artifact'].filter((entry) =>
+    availableCategories.includes(entry)
+  );
+  const missingCategories = expectedCategories.filter((entry) => !categories.has(entry));
   return {
     thinPack: selectedInputs.length < 4 || missingCategories.length > 0,
     missingCategories
@@ -671,7 +674,14 @@ export async function compileTaskContactPack(input) {
     ...evidenceCandidates
   ].map((entry) => scoreCandidate(entry, analyticsStore, { role, stageIndex, runId }, selectionWeights));
   const selectedInputs = selectScoredInputs(scoredInputs, selectionMaxItems, role, stageIndex);
-  const thinPack = thinPackSummary(selectedInputs);
+  const thinPack = thinPackSummary(
+    selectedInputs,
+    [
+      ...(stateCandidate ? ['state'] : []),
+      ...(checkpointCandidates.length > 0 ? ['checkpoint'] : []),
+      ...(evidenceCandidates.length > 0 ? ['artifact'] : [])
+    ]
+  );
   const selectedCheckpointInputs = selectedInputs.filter((entry) => entry.category === 'checkpoint');
   const selectedEvidenceInputs = selectedInputs.filter((entry) => entry.category === 'artifact');
 
