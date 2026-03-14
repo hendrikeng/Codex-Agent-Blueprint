@@ -7,6 +7,7 @@ Source of Truth: This document.
 
 ## Canonical Architecture Docs
 
+- `ARCHITECTURE.md`
 - `docs/architecture/layers.md`
 - `docs/architecture/dependency-rules.md`
 - `docs/governance/architecture-rules.json`
