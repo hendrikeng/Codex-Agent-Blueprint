@@ -7,6 +7,8 @@ Source of Truth: This document.
 
 This is the canonical completeness index for first-class documentation in `docs/`.
 
+Use `docs/README.md` for navigation, usage, and authoring guidance.
+
 ## First-Class Documents and Folders
 
 - `docs/README.md`

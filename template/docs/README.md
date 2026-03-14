@@ -5,6 +5,8 @@ Owner: {{DOC_OWNER}}
 Last Updated: {{LAST_UPDATED_ISO_DATE}}
 Source of Truth: This document.
 
+This file is the navigation and usage entrypoint for `docs/`. Use `docs/index.md` as the completeness manifest for first-class docs and folders.
+
 ## Entry Points
 
 - Canonical index: `docs/index.md`
