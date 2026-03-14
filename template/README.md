@@ -8,6 +8,8 @@ Current State Date: {{CURRENT_STATE_DATE}}
 
 {{SUMMARY}}
 
+This file is intended to become the adopted repository's root `README.md` after bootstrap.
+
 ## Operating Model
 
 - Docs-first minimal: repository-local docs are the system of record.

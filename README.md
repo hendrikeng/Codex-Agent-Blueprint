@@ -147,6 +147,16 @@ Canonical policy and lifecycle docs:
 4. Run `./scripts/check-template-placeholders.sh`.
 5. Run `./scripts/bootstrap-verify.sh`.
 
+## README Lifecycle
+
+There are two distinct README roles in this repository:
+
+- This root `README.md` explains the harness itself and the pre-bootstrap adoption flow.
+- `template/README.md` is the future root `README.md` for any repository that adopts the harness.
+
+Before bootstrap, agents should read this root `README.md` because this repository is the visible template surface.
+After bootstrap, agents should treat the adopted repository's root `README.md` as canonical, because it is the descendant of `template/README.md`.
+
 ## Agent Quickstart (Plan Mode)
 
 Use this before copying `template/` into a new repository. At this stage, the root repository is the template entrypoint the agent can actually see.
