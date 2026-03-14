@@ -26,6 +26,7 @@ This is the canonical completeness index for first-class documentation in `docs/
 - `docs/exec-plans/`
 - `docs/future/`
 - `docs/generated/`
+- `docs/generated/README.md`
 - `docs/generated/agent-runtime-context.md`
 - `docs/generated/perf-comparison.json`
 - `docs/generated/run-outcomes.json`
@@ -76,6 +77,7 @@ This is the canonical completeness index for first-class documentation in `docs/
 - `docs/exec-plans/evidence-index/README.md`
 - `docs/exec-plans/tech-debt-tracker.md`
 - `docs/future/README.md`
+- `docs/generated/README.md`
 - `docs/generated/agent-runtime-context.md`
 - `docs/governance/README.md`
 - `docs/governance/rules.md`

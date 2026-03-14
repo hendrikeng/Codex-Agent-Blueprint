@@ -24,6 +24,7 @@ Source of Truth: This document.
 - Outcomes scorecard: `docs/ops/automation/OUTCOMES.md`
 - GitHub interop mapping: `docs/ops/automation/INTEROP_GITHUB.md`
 - Provider compatibility: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
+- Generated artifact index: `docs/generated/README.md`
 - Runtime context snapshot: `docs/generated/agent-runtime-context.md`
 
 ## Documentation Classes
