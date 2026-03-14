@@ -30,7 +30,7 @@ Primary Sources: AGENTS.md, docs/agent-hardening/MEMORY_CONTEXT.md, docs/governa
 
 ## Verification Profiles
 - fast: node ./scripts/automation/compile-runtime-context.mjs ; node ./scripts/docs/check-governance.mjs ; node ./scripts/automation/check-plan-metadata.mjs
-- full: node ./scripts/automation/compile-runtime-context.mjs ; node ./scripts/docs/check-governance.mjs ; node ./scripts/check-article-conformance.mjs ; node ./scripts/architecture/check-dependencies.mjs ; node ./scripts/agent-hardening/check-agent-hardening.mjs ; node ./scripts/agent-hardening/check-evals.mjs ; node ./scripts/automation/check-blueprint-alignment.mjs ; node ./scripts/automation/check-plan-metadata.mjs
+- full: node ./scripts/automation/compile-runtime-context.mjs ; node ./scripts/docs/check-governance.mjs ; node ./scripts/check-article-conformance.mjs ; node ./scripts/architecture/check-dependencies.mjs ; node ./scripts/agent-hardening/check-agent-hardening.mjs ; node ./scripts/agent-hardening/check-evals.mjs ; node ./scripts/automation/check-harness-alignment.mjs ; node ./scripts/automation/check-plan-metadata.mjs
 
 ## Memory Posture
 - do: Treat the repo as the main operating system for agent work.
@@ -61,4 +61,3 @@ Primary Sources: AGENTS.md, docs/agent-hardening/MEMORY_CONTEXT.md, docs/governa
 - Apply scoped changes only; keep evidence links canonical.
 - Preserve required safety gates and risk-routing behavior.
 - Use fast verification during iteration, full verification before merge.
-

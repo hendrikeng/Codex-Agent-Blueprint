@@ -1,15 +1,15 @@
-# Agent Blueprint
+# Agent Orchestration Harness
 
 Status: canonical
 Owner: Platform Engineering
 Last Updated: 2026-03-04
 Source of Truth: This directory.
 
-Reusable blueprint for initializing agent-first repositories with docs-as-governance, blast-radius control, and evidence-based delivery.
+Reusable harness for initializing agent-first repositories with docs-as-governance, blast-radius control, and evidence-based delivery.
 
 ## What This Does
 
-- Provides a production-oriented blueprint for agent-driven software delivery.
+- Provides a production-oriented harness for agent-driven software delivery.
 - Ships a docs-as-system-of-record structure with enforceable governance and architecture rules.
 - Adds optional orchestration, role-specialized execution (`planner`, `explorer`, `worker`, `reviewer`), safety gates, and verification automation.
 
@@ -36,6 +36,16 @@ Use the least process that still protects correctness.
 2. `Guarded`: orchestrator sequential execution with risk/approval gates.
 3. `Conveyor`: parallel/worktree execution with branch/PR automation.
 
+## Agent Pickup Without Pollution
+
+Feature agents should consume derived, task-scoped surfaces, not improvise from the entire repo.
+
+- Keep canonical policy in `AGENTS.md`, architecture docs, governance docs, and plan/evidence files.
+- Compile runtime instructions into `docs/generated/agent-runtime-context.md` for compact shared policy.
+- Generate task-scoped contact packs from plan state, checkpoints, and evidence for each role session.
+- Export platform-native agent scaffolds only as derived artifacts such as `.github/agents/*`; do not make them the source of truth.
+- Treat `docs/generated/*`, `.github/agents/*`, and `docs/ops/automation/runtime/*` as generated or transient surfaces that can be rebuilt from canonical docs and run state.
+
 ## Mermaid Diagram Of Orchestration Flow
 
 ```mermaid
@@ -58,15 +68,6 @@ flowchart TD
   L --> M[Optional atomic commit / PR workflow]
 ```
 
-## Lite-First Onboarding
-
-Start with `Lite` by default, then scale up only when risk or workload demands it.
-
-1. Keep work in `docs/exec-plans/active/`.
-2. Run `verify:fast` during implementation.
-3. Run `verify:full` before completion.
-4. Use `Guarded`/`Conveyor` only for higher-risk or dependency-heavy slices.
-
 ## Session Safety and Context Continuity
 
 - Default memory posture is repo-local: treat the repo as the operating system, keep plans/evidence/docs/code/validation as source of truth, and widen scope only when a blocker requires it.
@@ -80,7 +81,7 @@ Start with `Lite` by default, then scale up only when risk or workload demands i
 - Improve checkpoint contents, contact-pack selection, evidence compaction, and observability before considering external retrieval or off-repo memory.
 - Repo-local checkpoints and contact packs remain the default memory architecture; see `template/docs/agent-hardening/MEMORY_CONTEXT.md` for the detailed rule set and escalation triggers.
 
-## How It Works
+## Operating Model
 
 - Governance as working manual:
   - `AGENTS.md`, architecture docs, and governance rules define constraints and expectations.
@@ -108,8 +109,6 @@ Start with `Lite` by default, then scale up only when risk or workload demands i
 - It keeps inference-speed execution while staying structured.
 - It supports both rapid delivery and strategic multi-plan execution.
 - It is team-grade: auditable, reviewable, and handoff-ready by default.
-
-## Core Commands
 
 ## Common Command Matrix
 
@@ -144,30 +143,24 @@ Canonical policy and lifecycle docs:
 
 1. Copy `template/` contents into a new repository root.
 2. Replace placeholders from `PLACEHOLDERS.md`.
-3. Add required scripts to `package.json` (`context:compile`, `docs:verify`, `conformance:verify`, `architecture:verify`, `agent:verify`, `eval:verify`, `blueprint:verify`, `plans:verify`, `verify:fast`, `verify:full`, `perf:baseline`, `perf:after`, `outcomes:report`, `interop:github:export`, `interop:github:export:write`, `automation:run`, `automation:run:medium`, `automation:run:high`, `automation:run:parallel`, `automation:run:parallel:medium`, `automation:run:parallel:high`, `automation:run:grind`, `automation:run:grind:medium`, `automation:run:grind:high`, `automation:run:parallel:grind`, `automation:run:parallel:grind:medium`, `automation:run:parallel:grind:high`, `automation:resume`, `automation:resume:medium`, `automation:resume:high`, `automation:resume:high:non-atomic`, `automation:resume:parallel`, `automation:resume:parallel:medium`, `automation:resume:parallel:high`, `automation:resume:grind`, `automation:resume:grind:medium`, `automation:resume:grind:high`, `automation:resume:parallel:grind`, `automation:resume:parallel:grind:medium`, `automation:resume:parallel:grind:high`, `automation:audit`).
+3. Add the required scripts from `template/package.scripts.fragment.json` to `package.json`.
 4. Run `./scripts/check-template-placeholders.sh`.
 5. Run `./scripts/bootstrap-verify.sh`.
 
-
 ## Agent Quickstart (Plan Mode)
 
-Use this when initializing a new repo from the blueprint:
+Use this before copying `template/` into a new repository. At this stage, the root repository is the template entrypoint the agent can actually see.
 
-1. Create a new repository using this GitHub template.
-2. Enter the repository from CLI (`cd <new-repo>`).
-3. Start the agent in plan mode and define the app before any file edits.
-4. Lock decisions for product scope, first features, stack/runtime, and core invariants.
-5. After decisions are approved, execute bootstrap: copy `template/` into repo root, replace placeholders from `PLACEHOLDERS.md`, and wire required scripts.
-6. Seed strategic work in `docs/future/`; track quick/manual fixes directly in `docs/exec-plans/active/`.
-7. Run `./scripts/check-template-placeholders.sh` until clean.
-8. Run `./scripts/bootstrap-verify.sh`.
-
-Use two prompts in sequence.
+1. Start the agent in plan mode from this repository before any file edits.
+2. Lock product scope, users, stack/runtime/tooling, core invariants, first slices, and acceptance criteria.
+3. Approve the plan before copying files into the target repository.
+4. After approval, execute bootstrap: copy `template/` into the new repository root, replace placeholders, wire scripts, seed plans, and run the bootstrap checks.
+5. Once bootstrapped, rely on the adopted repository's `README.md`, `AGENTS.md`, and `docs/*` as the new canonical operating surface.
 
 Prompt 1 (planning kickoff, before any file copy):
 
 ```text
-We are starting a new app from this Agent Blueprint repository template.
+We are starting a new app from this repository template.
 Stay in plan mode and do not edit files yet.
 Help me decide and lock:
 1) what the app does and who it serves,
@@ -191,3 +184,5 @@ Approved. Execute bootstrap now:
 Then start execution using automation:run (or automation:run:parallel when dependencies allow).
 Keep docs, metadata, and Done-Evidence updated as work progresses.
 ```
+
+Detailed adopter guidance remains in `template/README.md`.

@@ -30,6 +30,6 @@ Source of Truth: This document.
   - `node ./scripts/architecture/check-dependencies.mjs`
   - `node ./scripts/agent-hardening/check-agent-hardening.mjs`
   - `node ./scripts/agent-hardening/check-evals.mjs`
-  - `node ./scripts/automation/check-blueprint-alignment.mjs`
+  - `node ./scripts/automation/check-harness-alignment.mjs`
   - `node ./scripts/automation/check-plan-metadata.mjs`
 - Relevant domain tests remain required for changed behavior.

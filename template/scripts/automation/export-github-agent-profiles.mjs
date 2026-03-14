@@ -148,8 +148,8 @@ function titleCase(value) {
 function renderRoleAgentMarkdown(role, profile, pipelines, mandatoryRules, canonicalEntrypoints) {
   const roleName = titleCase(role);
   const frontmatter = renderFrontmatter([
-    ['name', `blueprint-${role}`],
-    ['description', `${roleName} role scaffold exported from Agent-Blueprint governance.`],
+    ['name', `harness-${role}`],
+    ['description', `${roleName} role scaffold exported from Agent Orchestration Harness governance.`],
     ['model', profile.model || 'set-model']
   ]);
 
@@ -157,7 +157,7 @@ function renderRoleAgentMarkdown(role, profile, pipelines, mandatoryRules, canon
   const lines = [];
   lines.push(frontmatter);
   lines.push('');
-  lines.push(`# Blueprint ${roleName} Agent`);
+  lines.push(`# Harness ${roleName} Agent`);
   lines.push('');
   lines.push('This profile is generated from repository governance and is safe to customize for your repo.');
   lines.push('');
@@ -200,15 +200,15 @@ function renderRoleAgentMarkdown(role, profile, pipelines, mandatoryRules, canon
 
 function renderDefaultAgentMarkdown(pipelines, canonicalEntrypoints) {
   const frontmatter = renderFrontmatter([
-    ['name', 'blueprint-default'],
-    ['description', 'Default blueprint agent profile scaffold with lane-aware guidance.'],
+    ['name', 'harness-default'],
+    ['description', 'Default harness agent profile scaffold with lane-aware guidance.'],
     ['model', 'set-model']
   ]);
 
   const lines = [];
   lines.push(frontmatter);
   lines.push('');
-  lines.push('# Blueprint Default Agent');
+  lines.push('# Harness Default Agent');
   lines.push('');
   lines.push('Use the least process that still protects correctness.');
   lines.push('');
@@ -309,8 +309,8 @@ async function main() {
   };
 
   const roleAgentFiles = Object.entries(roleProfiles).map(([role, profile]) => ({
-    path: path.join(profilesDir, `blueprint-${role}.agent.md`),
-    relPath: toPosix(path.relative(rootDir, path.join(profilesDir, `blueprint-${role}.agent.md`))),
+    path: path.join(profilesDir, `harness-${role}.agent.md`),
+    relPath: toPosix(path.relative(rootDir, path.join(profilesDir, `harness-${role}.agent.md`))),
     payload: renderRoleAgentMarkdown(role, profile, riskPipelines, mandatorySafetyRules, canonicalEntrypoints)
   }));
 
@@ -331,8 +331,8 @@ async function main() {
       payload: `${JSON.stringify(riskPipelinesPayload, null, 2)}\n`
     },
     {
-      path: path.join(profilesDir, 'blueprint-default.agent.md'),
-      relPath: toPosix(path.relative(rootDir, path.join(profilesDir, 'blueprint-default.agent.md'))),
+      path: path.join(profilesDir, 'harness-default.agent.md'),
+      relPath: toPosix(path.relative(rootDir, path.join(profilesDir, 'harness-default.agent.md'))),
       payload: renderDefaultAgentMarkdown(riskPipelines, canonicalEntrypoints)
     },
     {
@@ -364,7 +364,7 @@ async function main() {
     mapping: {
       agentProfileFormat: '.agent.md with YAML frontmatter',
       safetyPolicy: 'policy-manifest.mandatorySafetyRules -> base-policy.json + role .agent.md hard rules section',
-      roleProfiles: 'roleOrchestration.roleProfiles -> role-profiles.json + blueprint-<role>.agent.md',
+      roleProfiles: 'roleOrchestration.roleProfiles -> role-profiles.json + harness-<role>.agent.md',
       riskRouting: 'roleOrchestration.pipelines -> risk-pipelines.json + .agent.md lane sections',
       validationLanes: 'validation -> risk-pipelines.json',
       canonicalEntrypoints: {
@@ -382,7 +382,7 @@ async function main() {
     })),
     notes: [
       'This export is a scaffold and may require platform-specific schema adjustments.',
-      'Blueprint governance remains canonical; exported files should be treated as derived artifacts.'
+      'Harness governance remains canonical; exported files should be treated as derived artifacts.'
     ]
   };
 

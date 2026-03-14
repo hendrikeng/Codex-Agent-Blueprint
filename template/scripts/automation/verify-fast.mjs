@@ -175,7 +175,7 @@ function buildCommandSet(changedFiles) {
     file === 'docs/generated/run-outcomes.json'
   ));
   if (changedAutomation) {
-    selected.add('node ./scripts/automation/check-blueprint-alignment.mjs');
+    selected.add('node ./scripts/automation/check-harness-alignment.mjs');
     selected.add('node ./scripts/automation/check-outcomes-thresholds.mjs --warn-only');
   }
 

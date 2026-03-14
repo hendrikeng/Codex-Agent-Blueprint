@@ -203,7 +203,7 @@ Use the manual path when any of these are true:
   - Failure summaries include only the last `--failure-tail-lines` lines and a pointer to the full log file.
   - `logging.heartbeatSeconds`, `logging.stallWarnSeconds`, `logging.touchSummary`, `logging.touchSampleSize`, `logging.touchScanMode`, `logging.touchScanMinHeartbeats`, `logging.touchScanMaxHeartbeats`, `logging.touchScanBackoffUnchanged`, `logging.liveActivity.mode`, `logging.liveActivity.maxChars`, `logging.liveActivity.sampleSeconds`, `logging.liveActivity.redactPatterns`, `logging.workerFirstTouchDeadlineSeconds`, `logging.workerRetryFirstTouchDeadlineSeconds`, `logging.workerNoTouchRetryLimit`, and `logging.workerPendingStreakLimit` tune heartbeat cadence, stall-warning threshold, file-touch detail level/cadence, provider live-message capture/redaction/rate-limiting, worker first-edit deadline fail-fast (`--worker-first-touch-deadline-seconds`), retry-session first-edit deadline (`--worker-retry-first-touch-deadline-seconds`), automatic worker no-touch retries (`--worker-no-touch-retry-limit`), and same-role worker pending streak fail-fast (`--worker-pending-streak-limit`).
 - Drift guardrail:
-  - Run `npm run blueprint:verify` to fail on orchestration policy drift (role-model enforcement, role command placeholders, pretty logging default, runtime-context and stage-reuse policy).
+  - Run `npm run harness:verify` to fail on harness policy drift (role-model enforcement, role command placeholders, pretty logging default, runtime-context and stage-reuse policy).
 - Do not use provider interactive modes (they will block orchestration); use non-interactive CLI flags in provider commands.
 
 ## Verification Profiles

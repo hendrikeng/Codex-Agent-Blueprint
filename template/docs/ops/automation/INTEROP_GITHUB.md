@@ -7,8 +7,8 @@ Source of Truth: This document.
 
 ## Purpose
 
-Define a stable bridge from blueprint policy/orchestration contracts to GitHub-native agent profile scaffolds.
-This keeps the blueprint provider-agnostic while making platform-native adoption easier.
+Define a stable bridge from harness policy/orchestration contracts to GitHub-native agent profile scaffolds.
+This keeps the harness provider-agnostic while making platform-native adoption easier.
 
 ## Inputs
 
@@ -46,11 +46,11 @@ This keeps the blueprint provider-agnostic while making platform-native adoption
 
 When write mode is enabled, exporter writes:
 
-- `.github/agents/blueprint-default.agent.md`
-- `.github/agents/blueprint-planner.agent.md`
-- `.github/agents/blueprint-explorer.agent.md`
-- `.github/agents/blueprint-worker.agent.md`
-- `.github/agents/blueprint-reviewer.agent.md`
+- `.github/agents/harness-default.agent.md`
+- `.github/agents/harness-planner.agent.md`
+- `.github/agents/harness-explorer.agent.md`
+- `.github/agents/harness-worker.agent.md`
+- `.github/agents/harness-reviewer.agent.md`
 - `.github/agents/README.md`
 - `.github/agents/base-policy.json`
 - `.github/agents/role-profiles.json`
@@ -68,5 +68,5 @@ All exported files may require project-specific adjustments.
 ## Non-Goals
 
 - Enforcing a single platform-specific schema in governance checks.
-- Replacing canonical blueprint policy docs.
+- Replacing canonical harness policy docs.
 - Auto-enabling orchestration features not explicitly configured.

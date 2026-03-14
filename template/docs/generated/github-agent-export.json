@@ -13,7 +13,7 @@
   "mapping": {
     "agentProfileFormat": ".agent.md with YAML frontmatter",
     "safetyPolicy": "policy-manifest.mandatorySafetyRules -> base-policy.json + role .agent.md hard rules section",
-    "roleProfiles": "roleOrchestration.roleProfiles -> role-profiles.json + blueprint-<role>.agent.md",
+    "roleProfiles": "roleOrchestration.roleProfiles -> role-profiles.json + harness-<role>.agent.md",
     "riskRouting": "roleOrchestration.pipelines -> risk-pipelines.json + .agent.md lane sections",
     "validationLanes": "validation -> risk-pipelines.json",
     "canonicalEntrypoints": {
@@ -27,23 +27,23 @@
   },
   "files": [
     {
-      "path": ".github/agents/blueprint-default.agent.md",
+      "path": ".github/agents/harness-default.agent.md",
       "status": "preview-only"
     },
     {
-      "path": ".github/agents/blueprint-planner.agent.md",
+      "path": ".github/agents/harness-planner.agent.md",
       "status": "preview-only"
     },
     {
-      "path": ".github/agents/blueprint-explorer.agent.md",
+      "path": ".github/agents/harness-explorer.agent.md",
       "status": "preview-only"
     },
     {
-      "path": ".github/agents/blueprint-worker.agent.md",
+      "path": ".github/agents/harness-worker.agent.md",
       "status": "preview-only"
     },
     {
-      "path": ".github/agents/blueprint-reviewer.agent.md",
+      "path": ".github/agents/harness-reviewer.agent.md",
       "status": "preview-only"
     },
     {
@@ -65,6 +65,6 @@
   ],
   "notes": [
     "This export is a scaffold and may require platform-specific schema adjustments.",
-    "Blueprint governance remains canonical; exported files should be treated as derived artifacts."
+    "Harness governance remains canonical; exported files should be treated as derived artifacts."
   ]
 }

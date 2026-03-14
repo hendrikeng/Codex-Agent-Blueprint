@@ -22,6 +22,13 @@ Source of Truth: This document.
 - Provider compatibility: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
 - Runtime context snapshot: `docs/generated/agent-runtime-context.md`
 
+## Documentation Classes
+
+- Canonical docs: hand-maintained source of truth such as `AGENTS.md`, `README.md`, `ARCHITECTURE.md`, `docs/governance/*`, `docs/architecture/*`, and plan/evidence docs.
+- Generated docs: rebuildable artifacts derived from canonical policy or measured runs, such as `docs/generated/*`.
+- Runtime artifacts: transient orchestration state under `docs/ops/automation/runtime/*` and `docs/ops/automation/handoffs/*`.
+- Derived platform surfaces: optional exports for platform-native agents such as `.github/agents/*`; these are scaffolds, not canonical policy.
+
 ## Layering Model
 
 - `AGENTS.md`: map and constraints.
@@ -30,9 +37,17 @@ Source of Truth: This document.
 - `docs/agent-hardening/*`: mandatory agent eval/observability/tool/memory policy.
 - `docs/FRONTEND.md` and `docs/BACKEND.md`: implementation-side standards by runtime surface.
 
+## Agent Consumption Order
+
+- Humans and general-purpose agents start with `AGENTS.md`, `README.md`, and `docs/index.md`.
+- Orchestrated role sessions consume `docs/generated/agent-runtime-context.md` plus task contact packs as the primary compact context.
+- Platform-native feature agents should prefer exported scaffolds from `docs/ops/automation/INTEROP_GITHUB.md` rather than copying policy into ad-hoc prompt files.
+- When canonical policy changes, regenerate derived surfaces instead of editing generated or exported files by hand.
+
 ## Authoring Rules
 
 - Keep docs concise, canonical, and linked from `AGENTS.md`/`README.md`/`docs/index.md`.
 - Update docs in the same change as behavior or boundary changes.
 - Prefer canonical docs over ad-hoc notes.
 - When updating strategic plans, keep upstream capability coverage and prior completed-plan reconciliation explicit instead of relying on implicit history.
+- Do not move platform-specific agent instructions into canonical governance docs unless they are truly cross-provider policy.

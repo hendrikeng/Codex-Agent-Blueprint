@@ -7,7 +7,7 @@
     "agent:verify": "node ./scripts/agent-hardening/check-agent-hardening.mjs",
     "eval:continuity": "node ./scripts/agent-hardening/run-continuity-evals.mjs",
     "eval:verify": "node ./scripts/agent-hardening/check-evals.mjs",
-    "blueprint:verify": "node ./scripts/automation/check-blueprint-alignment.mjs",
+    "harness:verify": "node ./scripts/automation/check-harness-alignment.mjs",
     "plans:verify": "node ./scripts/automation/check-plan-metadata.mjs",
     "verify:fast": "node ./scripts/automation/verify-fast.mjs",
     "verify:full": "node ./scripts/automation/verify-full.mjs",

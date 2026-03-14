@@ -638,7 +638,7 @@ async function main() {
   }
 
   if (findings.length > 0) {
-    console.error(`[blueprint-verify] failed with ${findings.length} issue(s):`);
+    console.error(`[harness-verify] failed with ${findings.length} issue(s):`);
     for (const finding of findings) {
       const pathSuffix = finding.filePath ? ` (${finding.filePath})` : '';
       console.error(`- [${finding.code}] ${finding.message}${pathSuffix}`);
@@ -664,7 +664,7 @@ async function main() {
   await ensurePragmaticScaffold();
 
   if (findings.length > 0) {
-    console.error(`[blueprint-verify] failed with ${findings.length} issue(s):`);
+    console.error(`[harness-verify] failed with ${findings.length} issue(s):`);
     for (const finding of findings) {
       const pathSuffix = finding.filePath ? ` (${finding.filePath})` : '';
       console.error(`- [${finding.code}] ${finding.message}${pathSuffix}`);
@@ -675,19 +675,19 @@ async function main() {
   const provider = String(config?.executor?.provider ?? 'codex').trim().toLowerCase();
   const roleCount = gatherPipelineRoles(config).length;
   if (advisories.length > 0) {
-    console.log(`[blueprint-verify] advisories (${advisories.length}):`);
+    console.log(`[harness-verify] advisories (${advisories.length}):`);
     for (const advisory of advisories) {
       const pathSuffix = advisory.filePath ? ` (${advisory.filePath})` : '';
       console.log(`- [${advisory.code}] ${advisory.message}${pathSuffix}`);
     }
   }
   console.log(
-    `[blueprint-verify] passed (provider=${provider}, pipelineRoles=${roleCount}, output=${config.logging.output}, advisories=${advisories.length}).`
+    `[harness-verify] passed (provider=${provider}, pipelineRoles=${roleCount}, output=${config.logging.output}, advisories=${advisories.length}).`
   );
 }
 
 main().catch((error) => {
-  console.error('[blueprint-verify] failed with an unexpected error.');
+  console.error('[harness-verify] failed with an unexpected error.');
   console.error(error instanceof Error ? error.stack : String(error));
   process.exit(1);
 });
