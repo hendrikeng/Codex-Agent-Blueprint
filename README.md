@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: Platform Engineering
-Last Updated: 2026-03-04
+Last Updated: 2026-03-14
 Source of Truth: This directory.
 
 Reusable harness for initializing agent-first repositories with docs-as-governance, blast-radius control, and evidence-based delivery.
