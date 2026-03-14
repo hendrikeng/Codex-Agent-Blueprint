@@ -12,7 +12,7 @@ import {
 
 const DEFAULT_POLICY_PATH = 'docs/governance/policy-manifest.json';
 const DEFAULT_CONFIG_PATH = 'docs/ops/automation/orchestrator.config.json';
-const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/agent-runtime-context.md';
+const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/AGENT-RUNTIME-CONTEXT.md';
 const DEFAULT_OUTPUT_PATH = 'docs/ops/automation/runtime/contacts/manual/contact-pack.md';
 const DEFAULT_MAX_POLICY_BULLETS = 10;
 const DEFAULT_MAX_RECENT_EVIDENCE_ITEMS = 6;

@@ -9,7 +9,7 @@ Generated artifacts are rebuildable outputs derived from canonical docs, policy 
 
 ## Core Generated Artifacts
 
-- `docs/generated/agent-runtime-context.md`: compact runtime policy snapshot compiled for orchestrated role sessions.
+- `docs/generated/AGENT-RUNTIME-CONTEXT.md`: compact runtime policy snapshot compiled for orchestrated role sessions.
 - `docs/generated/run-outcomes.json`: aggregated run telemetry, continuity metrics, and outcome scorecard.
 - `docs/generated/perf-comparison.json`: before/after performance comparison output when perf baselines are captured.
 - `docs/generated/github-agent-export.json`: exported GitHub-agent scaffold metadata and sync report.
@@ -24,5 +24,5 @@ Generated artifacts are rebuildable outputs derived from canonical docs, policy 
 ## Rules
 
 - Regenerate artifacts from canonical policy, schema, or telemetry sources instead of hand-editing generated outputs.
-- If a generated artifact becomes a routine entrypoint, surface it from `docs/index.md` or `docs/README.md`.
+- If a generated artifact becomes a routine entrypoint, surface it from `docs/MANIFEST.md` or `docs/README.md`.
 - Remove generated artifacts that are no longer produced by any documented contract or script.

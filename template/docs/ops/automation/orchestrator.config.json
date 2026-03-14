@@ -21,7 +21,7 @@
     "timeoutSeconds": 1800
   },
   "context": {
-    "runtimeContextPath": "docs/generated/agent-runtime-context.md",
+    "runtimeContextPath": "docs/generated/AGENT-RUNTIME-CONTEXT.md",
     "maxTokens": 1400,
     "contactPacks": {
       "enabled": true,

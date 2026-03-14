@@ -63,4 +63,4 @@ This also applies when the agent/session is explicitly set to plan mode: default
 - `docs/exec-plans/README.md`
 - `docs/exec-plans/active/README.md`
 - `docs/exec-plans/completed/README.md`
-- `docs/exec-plans/tech-debt-tracker.md`
+- `docs/exec-plans/TECH-DEBT-TRACKER.md`

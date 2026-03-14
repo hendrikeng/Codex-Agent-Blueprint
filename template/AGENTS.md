@@ -41,23 +41,23 @@ If instructions conflict, this file is the behavioral priority entrypoint.
 Start here, then follow linked source-of-truth docs:
 - Platform scope/status: `README.md`
 - Architecture quick entrypoint: `ARCHITECTURE.md`
-- Canonical docs coverage index: `docs/index.md`
+- Canonical docs coverage manifest: `docs/MANIFEST.md`
 - Documentation index: `docs/README.md`
-- Governance policy (detailed): `docs/governance/rules.md`
+- Governance policy (detailed): `docs/governance/RULES.md`
 - Policy manifest (runtime source): `docs/governance/policy-manifest.json`
-- Golden principles: `docs/governance/golden-principles.md`
+- Golden principles: `docs/governance/GOLDEN-PRINCIPLES.md`
 - Quality scorecard: `docs/QUALITY_SCORE.md`
 - Design docs: `docs/design-docs/README.md`
-- Engineering invariants: `docs/design-docs/engineering-invariants.md`
-- UI standards: `docs/design-docs/ui-standards.md`
+- Engineering invariants: `docs/design-docs/ENGINEERING-INVARIANTS.md`
+- UI standards: `docs/design-docs/UI-STANDARDS.md`
 - Frontend standards: `docs/FRONTEND.md`
 - Backend standards: `docs/BACKEND.md`
 - Agent hardening policy map: `docs/agent-hardening/README.md`
 - Memory and context policy: `docs/agent-hardening/MEMORY_CONTEXT.md`
-- Git safety: `docs/design-docs/git-safety.md`
+- Git safety: `docs/design-docs/GIT-SAFETY.md`
 - Plan lifecycle (non-trivial changes): `docs/PLANS.md`
 - Product specs index: `docs/product-specs/README.md`
-- Product state snapshot: `docs/product-specs/current-state.md`
+- Product state snapshot: `docs/product-specs/CURRENT-STATE.md`
 - Execution plans: `docs/exec-plans/README.md`
 - Ops automation conveyor: `docs/ops/automation/README.md`
 - Role orchestration contract: `docs/ops/automation/ROLE_ORCHESTRATION.md`
@@ -65,7 +65,7 @@ Start here, then follow linked source-of-truth docs:
 - Automation outcomes scorecard: `docs/ops/automation/OUTCOMES.md`
 - GitHub interop mapping: `docs/ops/automation/INTEROP_GITHUB.md`
 - Provider compatibility contract: `docs/ops/automation/PROVIDER_COMPATIBILITY.md`
-- Generated runtime context snapshot: `docs/generated/agent-runtime-context.md`
+- Generated runtime context snapshot: `docs/generated/AGENT-RUNTIME-CONTEXT.md`
 
 ## Non-Negotiables
 
@@ -113,7 +113,7 @@ Docs are part of done.
 
 ## Git and File Safety
 
-- Canonical policy location: `docs/design-docs/git-safety.md`.
+- Canonical policy location: `docs/design-docs/GIT-SAFETY.md`.
 - Never edit `.env` or environment variable files.
 - Never run destructive git/file commands without explicit written instruction.
 - Do not use `git stash` unless explicitly requested in-thread.
@@ -124,7 +124,7 @@ Docs are part of done.
 - Runtime context generation is mandatory: `npm run context:compile`.
 - Iteration profile: `npm run verify:fast`.
 - Merge profile: `npm run verify:full`.
-- Canonical verification policy lives in `docs/governance/rules.md`.
+- Canonical verification policy lives in `docs/governance/RULES.md`.
 - Add/adjust tests for behavior changes.
 - Every bug fix needs a regression test.
 - Critical flows require focused coverage.
@@ -136,4 +136,4 @@ Do not guess. Stop, inspect, and apply the safest explicit change.
 
 ## Repo-Specific Extensions
 
-- Put repo-specific domain constraints in `docs/product-specs/current-state.md` and domain docs.
+- Put repo-specific domain constraints in `docs/product-specs/CURRENT-STATE.md` and domain docs.

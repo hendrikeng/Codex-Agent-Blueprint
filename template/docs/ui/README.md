@@ -9,11 +9,11 @@ Source of Truth: This document.
 
 - `docs/ui/` captures canonical user-visible interaction contracts.
 - Keep this folder for UI behavior that is more specific than product specs and more stable than implementation notes.
-- Do not duplicate visual system rules from `docs/design-docs/ui-standards.md` or runtime implementation details from `docs/FRONTEND.md`.
+- Do not duplicate visual system rules from `docs/design-docs/UI-STANDARDS.md` or runtime implementation details from `docs/FRONTEND.md`.
 
 ## Current Inventory
 
-- `docs/ui/intents.md`: canonical interaction-intent and UI event vocabulary.
+- `docs/ui/INTENTS.md`: canonical interaction-intent and UI event vocabulary.
 
 ## When To Add More Here
 

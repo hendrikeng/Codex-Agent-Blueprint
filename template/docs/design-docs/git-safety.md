@@ -3,7 +3,7 @@
 Status: canonical
 Owner: {{DOC_OWNER}}
 Last Updated: {{LAST_UPDATED_ISO_DATE}}
-Source of Truth: docs/design-docs/git-safety.md
+Source of Truth: docs/design-docs/GIT-SAFETY.md
 
 ## File and Git Safety Rules
 

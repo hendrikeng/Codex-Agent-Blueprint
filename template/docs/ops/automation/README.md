@@ -49,7 +49,7 @@ Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
 - `docs/exec-plans/active/`: current execution state and in-progress work.
 - `docs/exec-plans/completed/`: completed execution plans and closure records.
 - `docs/exec-plans/evidence-index/`: canonical compact evidence references by plan ID.
-- `docs/product-specs/current-state.md`: product-facing delivery timeline via `Automated Delivery Log`.
+- `docs/product-specs/CURRENT-STATE.md`: product-facing delivery timeline via `Automated Delivery Log`.
 - `## Must-Land Checklist` inside each plan is the executable completion contract; broader vision belongs in `## Deferred Follow-Ons`, not in completion gating.
 - Future blueprints and strategic active phase plans must also include `## Prior Completed Plan Reconciliation` so overlapping completed plans are explicitly preserved, refactored, superseded, marked obsolete, or reopened.
 
@@ -118,7 +118,7 @@ Use the manual path when any of these are true:
   - `"contextSoftUsedRatio": 0.65`
   - `"contextHardUsedRatio": 0.8`
   - `"requireResultPayload": true`
-  - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/agent-runtime-context.md` by default).
+  - `"context.runtimeContextPath"` points to compiled runtime instructions (`docs/generated/AGENT-RUNTIME-CONTEXT.md` by default).
   - `"context.maxTokens"` sets a hard budget for compiled runtime context size.
   - `"context.contactPacks"` configures per-task scoped role contact packs (`enabled`, `maxPolicyBullets`, `includeRecentEvidence`, `maxRecentEvidenceItems`, `includeLatestState`, `maxRecentCheckpointItems`, `maxStateListItems`, `cacheMode`).
   - Contact packs include the shared memory posture and select continuity inputs in priority order: latest continuity state, latest same-role checkpoint, latest cross-role or stage-transition checkpoint, then capped evidence refs.

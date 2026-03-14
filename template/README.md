@@ -74,7 +74,7 @@ Reference: `docs/ops/automation/LITE_QUICKSTART.md`.
 - Non-terminal sessions must also emit structured continuity fields (`currentSubtask`, `nextAction`, `stateDelta`) so orchestration can checkpoint resumable machine state instead of relying on raw transcript history.
 - Continuity is persisted as repo-local runtime state under `docs/ops/automation/runtime/state/<plan-id>/latest.json` and `checkpoints.jsonl`.
 - Handoffs are written as both markdown notes and structured JSON packets, then reused by later same-run rollovers and `resume` runs.
-- Runtime context is recompiled from canonical docs (`docs/generated/agent-runtime-context.md`) to reduce drift and hallucination risk.
+- Runtime context is recompiled from canonical docs (`docs/generated/AGENT-RUNTIME-CONTEXT.md`) to reduce drift and hallucination risk.
 - Contact packs now carry runtime policy, the memory posture, task scope, latest continuity state, selected checkpoints, and capped evidence references.
 - Improve checkpoint contents, contact-pack selection, evidence compaction, and observability before considering external retrieval or off-repo memory.
 - Repo-local checkpoints and contact packs remain the default memory architecture; see `docs/agent-hardening/MEMORY_CONTEXT.md` for the detailed rule set and escalation triggers.
@@ -84,7 +84,7 @@ Reference: `docs/ops/automation/LITE_QUICKSTART.md`.
 Start with:
 - `AGENTS.md`
 - `ARCHITECTURE.md`
-- `docs/index.md`
+- `docs/MANIFEST.md`
 - `docs/README.md`
 - `docs/PLANS.md`
 - `docs/FRONTEND.md`
@@ -92,7 +92,7 @@ Start with:
 - `docs/agent-hardening/README.md`
 - `docs/governance/README.md`
 - `docs/product-specs/README.md`
-- `docs/product-specs/current-state.md`
+- `docs/product-specs/CURRENT-STATE.md`
 - `docs/exec-plans/README.md`
 - `docs/ops/automation/README.md`
 
@@ -101,7 +101,7 @@ Start with:
 - {{SCOPE1}}
 - {{SCOPE2}}
 - {{SCOPE3}}
-- Detailed current behavior is tracked in `docs/product-specs/current-state.md`.
+- Detailed current behavior is tracked in `docs/product-specs/CURRENT-STATE.md`.
 
 ## Architecture At A Glance
 
@@ -126,7 +126,7 @@ Start with:
 - Plan metadata drift self-heal (local default): `plans:verify` auto-aligns top-level `Status:` with metadata `- Status`; disable via `ORCH_PLAN_METADATA_AUTO_HEAL_STATUS=0` (CI defaults to disabled).
 - Fast iteration profile: `npm run verify:fast`
 - Full merge profile: `npm run verify:full`
-- Canonical command map and policy: `docs/governance/rules.md`
+- Canonical command map and policy: `docs/governance/RULES.md`
 
 ## When To Run Checks
 

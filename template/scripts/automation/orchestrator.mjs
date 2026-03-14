@@ -34,7 +34,7 @@ const DEFAULT_MAX_SESSIONS_PER_PLAN = 12;
 const DEFAULT_HANDOFF_EXIT_CODE = 75;
 const DEFAULT_REQUIRE_RESULT_PAYLOAD = true;
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = 1800;
-const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/agent-runtime-context.md';
+const DEFAULT_RUNTIME_CONTEXT_PATH = 'docs/generated/AGENT-RUNTIME-CONTEXT.md';
 const DEFAULT_HOST_VALIDATION_MODE = 'hybrid';
 const DEFAULT_HOST_VALIDATION_TIMEOUT_SECONDS = 1800;
 const DEFAULT_HOST_VALIDATION_POLL_SECONDS = 15;
@@ -1682,7 +1682,7 @@ function buildWorkerTouchPolicy(plan) {
   const specTargets =
     Array.isArray(plan?.specTargets) && plan.specTargets.length > 0
       ? plan.specTargets
-      : ['docs/product-specs/current-state.md'];
+      : ['docs/product-specs/CURRENT-STATE.md'];
   const docsOnlySpecTargets = specTargets.every((target) => {
     const category = classifyTouchedPath(target);
     return category === 'plan-docs' || category === 'docs' || category === 'automation';
@@ -4340,7 +4340,7 @@ async function promoteFuturePlans(paths, state, options) {
           metadataValue(future.metadata, 'Security-Approval'),
           SECURITY_APPROVAL_NOT_REQUIRED
         ),
-      'Spec-Targets': future.specTargets.length > 0 ? future.specTargets.join(', ') : 'docs/product-specs/current-state.md',
+      'Spec-Targets': future.specTargets.length > 0 ? future.specTargets.join(', ') : 'docs/product-specs/CURRENT-STATE.md',
       'Done-Evidence': future.doneEvidence.length > 0 ? future.doneEvidence.join(', ') : 'pending'
     };
 
@@ -7008,7 +7008,7 @@ function resolveAtomicCommitRoots(plan, config, paths, completionContext = {}) {
   const planSpecTargets =
     Array.isArray(plan.specTargets) && plan.specTargets.length > 0
       ? plan.specTargets
-      : ['docs/product-specs/current-state.md'];
+      : ['docs/product-specs/CURRENT-STATE.md'];
   for (const target of normalizeRelativePrefixList(planSpecTargets)) {
     roots.add(target);
   }
@@ -7033,7 +7033,7 @@ function resolveAtomicCommitRoots(plan, config, paths, completionContext = {}) {
 
   // Runtime context compilation may run during continuation sessions and mutate this generated file.
   const runtimeContextPath = normalizedRelativePrefix(
-    config?.context?.runtimeContextPath ?? 'docs/generated/agent-runtime-context.md'
+    config?.context?.runtimeContextPath ?? 'docs/generated/AGENT-RUNTIME-CONTEXT.md'
   );
   if (runtimeContextPath) {
     roots.add(assertSafeRelativePlanPath(runtimeContextPath));
@@ -7259,7 +7259,7 @@ async function finalizeCompletedPlan(plan, paths, state, validationEvidence, opt
 }
 
 async function updateProductSpecs(plan, completedPath, paths, state, options) {
-  const targets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/current-state.md'];
+  const targets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/CURRENT-STATE.md'];
   const dateStamp = todayIsoDate();
   const relativeCompleted = toPosix(path.relative(paths.rootDir, completedPath));
 
@@ -7317,7 +7317,7 @@ async function updateProductSpecs(plan, completedPath, paths, state, options) {
     const entry = `${dateStamp}: completed \`${plan.planId}\` via \`${relativeCompleted}\``;
     content = appendToDeliveryLog(content, entry);
 
-    if (targetRel === 'docs/product-specs/current-state.md') {
+    if (targetRel === 'docs/product-specs/CURRENT-STATE.md') {
       content = updateSimpleMetadataField(content, 'Last Updated', dateStamp);
       content = updateSimpleMetadataField(content, 'Current State Date', dateStamp);
     }
@@ -7909,7 +7909,7 @@ async function runValidationAndFinalize(plan, paths, state, options, config, ass
     await captureRollbackSnapshot(completedTargetPath);
     await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, `${plan.planId}.md`));
     await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, 'README.md'));
-    const specTargets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/current-state.md'];
+    const specTargets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/CURRENT-STATE.md'];
     for (const target of specTargets) {
       try {
         const resolved = resolveSafeRepoPath(paths.rootDir, target, `Spec target for plan '${plan.planId}'`);
@@ -9035,11 +9035,11 @@ function schedulerLocksForPlan(plan) {
   const targets =
     Array.isArray(plan.specTargets) && plan.specTargets.length > 0
       ? plan.specTargets
-      : ['docs/product-specs/current-state.md'];
+      : ['docs/product-specs/CURRENT-STATE.md'];
   for (const target of targets) {
     locks.add(`spec:${target}`);
   }
-  if (targets.includes('docs/product-specs/current-state.md')) {
+  if (targets.includes('docs/product-specs/CURRENT-STATE.md')) {
     locks.add('shared:product-spec-current-state');
   }
   return [...locks].sort((a, b) => a.localeCompare(b));

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const DEFAULT_OUTPUT = 'docs/generated/perf-comparison.json';
-const DEFAULT_RUNTIME_CONTEXT = 'docs/generated/agent-runtime-context.md';
+const DEFAULT_RUNTIME_CONTEXT = 'docs/generated/AGENT-RUNTIME-CONTEXT.md';
 const DEFAULT_EVENTS = 'docs/ops/automation/run-events.jsonl';
 const DEFAULT_STAGE = 'baseline';
 

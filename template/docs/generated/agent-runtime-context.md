@@ -51,7 +51,7 @@ Primary Sources: AGENTS.md, docs/agent-hardening/MEMORY_CONTEXT.md, docs/governa
 - Do not edit .env files or switch branches/worktrees unless explicitly requested in-thread.
 
 ## Documentation Contract
-- Canonical entrypoints: AGENTS.md, README.md, ARCHITECTURE.md, docs/index.md
+- Canonical entrypoints: AGENTS.md, README.md, ARCHITECTURE.md, docs/MANIFEST.md
 - Update docs in same change when affecting: architecture boundaries
 - Update docs in same change when affecting: critical invariants
 - Update docs in same change when affecting: security/compliance behavior

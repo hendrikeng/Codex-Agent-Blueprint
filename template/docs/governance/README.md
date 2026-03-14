@@ -7,8 +7,8 @@ Source of Truth: This document.
 
 ## Canonical Governance Docs
 
-- `docs/governance/rules.md`
-- `docs/governance/golden-principles.md`
+- `docs/governance/RULES.md`
+- `docs/governance/GOLDEN-PRINCIPLES.md`
 - `docs/governance/policy-manifest.json`
 - `docs/governance/policy-manifest.schema.json`
 - `docs/governance/doc-checks.config.json`

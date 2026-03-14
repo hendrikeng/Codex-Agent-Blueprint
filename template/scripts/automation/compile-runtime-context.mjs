@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const DEFAULT_MAX_TOKENS = 1400;
-const DEFAULT_OUTPUT_PATH = 'docs/generated/agent-runtime-context.md';
+const DEFAULT_OUTPUT_PATH = 'docs/generated/AGENT-RUNTIME-CONTEXT.md';
 const DEFAULT_POLICY_PATH = 'docs/governance/policy-manifest.json';
 const DEFAULT_AGENTS_PATH = 'AGENTS.md';
 const DEFAULT_MEMORY_CONTEXT_PATH = 'docs/agent-hardening/MEMORY_CONTEXT.md';

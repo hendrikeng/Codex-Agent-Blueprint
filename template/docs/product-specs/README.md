@@ -7,7 +7,7 @@ Source of Truth: This document.
 
 ## Canonical Specs
 
-- `docs/product-specs/current-state.md`
+- `docs/product-specs/CURRENT-STATE.md`
 
 ## Adopted Repo Rule
 

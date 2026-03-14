@@ -11,7 +11,7 @@ Source of Truth: This document.
 - `docs/exec-plans/active/evidence/`
 - `docs/exec-plans/completed/`
 - `docs/exec-plans/evidence-index/`
-- `docs/exec-plans/tech-debt-tracker.md`
+- `docs/exec-plans/TECH-DEBT-TRACKER.md`
 
 ## Plan Metadata Header
 

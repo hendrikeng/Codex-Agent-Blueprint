@@ -8,7 +8,7 @@ Source of Truth: This document.
 ## Canonical Architecture Docs
 
 - `ARCHITECTURE.md`
-- `docs/architecture/topology.md`
-- `docs/architecture/layers.md`
-- `docs/architecture/dependency-rules.md`
+- `docs/architecture/TOPOLOGY.md`
+- `docs/architecture/LAYERS.md`
+- `docs/architecture/DEPENDENCY-RULES.md`
 - `docs/governance/architecture-rules.json`

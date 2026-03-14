@@ -107,7 +107,7 @@
       "AGENTS.md",
       "README.md",
       "ARCHITECTURE.md",
-      "docs/index.md"
+      "docs/MANIFEST.md"
     ],
     "requiresSameChangeUpdateFor": [
       "architecture boundaries",

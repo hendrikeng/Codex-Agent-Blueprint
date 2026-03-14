@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const DOC_REF_IN_CODE_REGEX = /`(AGENTS\.md|README\.md|ARCHITECTURE\.md|docs\/[A-Za-z0-9_./-]+\.(?:md|json|ya?ml))`/g;
+const DOC_REF_IN_CODE_REGEX = /`(AGENTS\.md|README\.md|ARCHITECTURE\.md|docs\/[A-Za-z0-9_./-]+\.(?:md|MD|json|ya?ml))`/g;
 const MD_LINK_REGEX = /\[[^\]]*\]\(([^)]+)\)/g;
 
 function toPosix(value) {
@@ -181,7 +181,7 @@ async function walkMarkdownFiles(baseDir) {
       const nextPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
         await walk(nextPath);
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
         results.push(nextPath);
       }
     }
@@ -262,7 +262,7 @@ export async function runGovernanceAnalysis({
     }
   }
 
-  const docsIndexPath = config.docsIndexPath ?? 'docs/index.md';
+  const docsIndexPath = config.docsIndexPath ?? 'docs/MANIFEST.md';
   const docsIndexContent = contents.get(docsIndexPath);
   if (!docsIndexContent) {
     errors.push(makeFinding('error', 'MISSING_DOCS_INDEX', `Missing docs index: ${docsIndexPath}`, docsIndexPath));
@@ -456,7 +456,7 @@ export async function runGovernanceAnalysis({
 
     const exclude = new Set(activePlansConfig.excludeFiles ?? ['README.md']);
     const planFiles = activeEntries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && !exclude.has(entry.name))
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md') && !exclude.has(entry.name))
       .map((entry) => `${activeDirRel}/${entry.name}`)
       .sort((a, b) => a.localeCompare(b));
 
@@ -496,7 +496,7 @@ export async function runGovernanceAnalysis({
 
     const exclude = new Set(completedPlansConfig.excludeFiles ?? ['README.md']);
     const completedFiles = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && !exclude.has(entry.name))
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md') && !exclude.has(entry.name))
       .map((entry) => `${completedDirRel}/${entry.name}`);
 
     for (const filePath of completedFiles) {
@@ -640,7 +640,7 @@ export async function runGovernanceAnalysis({
     }
   }
 
-  const docFiles = [...contents.keys()].filter((file) => file.startsWith('docs/') && file.endsWith('.md'));
+  const docFiles = [...contents.keys()].filter((file) => file.startsWith('docs/') && file.toLowerCase().endsWith('.md'));
   const seeds = config.graphSeeds ?? ['AGENTS.md', 'README.md', docsIndexPath];
   const visited = new Set();
   const queue = [...seeds];
@@ -668,7 +668,7 @@ export async function runGovernanceAnalysis({
   const unreachablePolicy = config.unreachablePolicy ?? { scope: 'all_docs', level: 'warning' };
   const unreachableLevel = unreachablePolicy.level === 'error' ? 'error' : 'warning';
   const canonicalDocSet = new Set(
-    (config.canonicalDocs ?? []).filter((file) => file.startsWith('docs/') && file.endsWith('.md'))
+    (config.canonicalDocs ?? []).filter((file) => file.startsWith('docs/') && file.toLowerCase().endsWith('.md'))
   );
 
   const reachabilityScope = unreachablePolicy.scope ?? 'all_docs';
@@ -699,7 +699,7 @@ export async function runGovernanceAnalysis({
     stats: {
       markdownFilesAnalyzed: sourceFiles.length,
       docFilesAnalyzed: docFiles.length,
-      activePlansAnalyzed: config.activePlans?.directory ? (await fs.readdir(path.join(rootDir, config.activePlans.directory)).catch(() => [])).filter((name) => name.endsWith('.md')).length : 0,
+      activePlansAnalyzed: config.activePlans?.directory ? (await fs.readdir(path.join(rootDir, config.activePlans.directory)).catch(() => [])).filter((name) => name.toLowerCase().endsWith('.md')).length : 0,
       brokenRefCount: errors.filter((finding) => finding.code === 'BROKEN_DOC_REF').length
     }
   };

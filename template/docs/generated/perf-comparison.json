@@ -6,7 +6,7 @@
     "baseline": {
       "capturedAtUtc": "2026-03-01T19:54:11.606Z",
       "runtimeContext": {
-        "path": "docs/generated/agent-runtime-context.md",
+        "path": "docs/generated/AGENT-RUNTIME-CONTEXT.md",
         "bytes": 3209,
         "lines": 54,
         "tokens": 345
@@ -27,7 +27,7 @@
     "after": {
       "capturedAtUtc": "2026-03-01T19:54:13.192Z",
       "runtimeContext": {
-        "path": "docs/generated/agent-runtime-context.md",
+        "path": "docs/generated/AGENT-RUNTIME-CONTEXT.md",
         "bytes": 3209,
         "lines": 54,
         "tokens": 345
