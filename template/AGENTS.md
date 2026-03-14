@@ -90,6 +90,13 @@ Start here, then follow linked source-of-truth docs:
 - {{DOMAIN_INVARIANT_3A}}
 - {{DOMAIN_INVARIANT_3B}}
 
+## Doc Naming Convention
+
+- Harness-defined canonical framework docs under `docs/` use uppercase basenames with lowercase `.md` (for example `docs/MANIFEST.md`, `docs/governance/RULES.md`, `docs/product-specs/CURRENT-STATE.md`).
+- Folder entrypoints remain `README.md`.
+- Newly created repo-local docs should stay lowercase by default unless they are explicitly promoted into the canonical harness contract.
+- Operational evidence, dated plans, generated vendor/reference captures, and other evolving repo-local docs remain lowercase unless a repo deliberately standardizes them.
+
 ## Documentation Contract
 
 Any change affecting architecture boundaries, critical invariants,
