@@ -99,6 +99,12 @@ function toRunId(event) {
 
 function toSessionKey(event) {
   const details = eventDetails(event);
+  const artifactKey = String(
+    details.commandLogPath ?? details.resultPath ?? details.executorLogPath ?? details.logPath ?? ''
+  ).trim();
+  if (artifactKey) {
+    return artifactKey;
+  }
   const runId = toRunId(event) ?? 'unknown-run';
   const planId = toPlanId(event) ?? 'unknown-plan';
   const session = String(event?.session ?? details.session ?? '').trim();
@@ -151,7 +157,11 @@ async function main() {
   const planStats = new Map();
   let sessionFinishedCount = 0;
   let continuityDerivedSessions = 0;
-  const checkpointOutcomeBySession = new Map();
+  let fallbackContinuityDegradedSessions = 0;
+  let fallbackResumeSafeCheckpointSessions = 0;
+  let explicitCheckpointAssessments = 0;
+  let explicitContinuityDegradedSessions = 0;
+  let explicitResumeSafeCheckpointSessions = 0;
   let contactPackSessions = 0;
   let contactPackGeneratedSessions = 0;
   let contactPackCacheHitSessions = 0;
@@ -333,31 +343,20 @@ async function main() {
         ) {
           stats.firstWorkerEditSeconds = (timestampMs - stats.firstSeenMs) / 1000;
         }
-        const sessionKey = toSessionKey(event);
-        if (sessionKey) {
-          const current = checkpointOutcomeBySession.get(sessionKey) ?? {
-            fallbackContinuityDegraded: false,
-            fallbackCheckpointResumeSafe: false,
-            explicitContinuityDegraded: null,
-            explicitCheckpointResumeSafe: null
-          };
-          current.fallbackContinuityDegraded = details.continuityDegraded === true;
-          current.fallbackCheckpointResumeSafe = details.checkpointResumeSafe === true;
-          checkpointOutcomeBySession.set(sessionKey, current);
+        if (details.continuityDegraded === true) {
+          fallbackContinuityDegradedSessions += 1;
+        }
+        if (details.checkpointResumeSafe === true) {
+          fallbackResumeSafeCheckpointSessions += 1;
         }
       }
       if (typeLower === 'session_checkpoint_assessed') {
-        const sessionKey = toSessionKey(event);
-        if (sessionKey) {
-          const current = checkpointOutcomeBySession.get(sessionKey) ?? {
-            fallbackContinuityDegraded: false,
-            fallbackCheckpointResumeSafe: false,
-            explicitContinuityDegraded: null,
-            explicitCheckpointResumeSafe: null
-          };
-          current.explicitContinuityDegraded = details.continuityDegraded === true;
-          current.explicitCheckpointResumeSafe = details.checkpointResumeSafe === true;
-          checkpointOutcomeBySession.set(sessionKey, current);
+        explicitCheckpointAssessments += 1;
+        if (details.continuityDegraded === true) {
+          explicitContinuityDegradedSessions += 1;
+        }
+        if (details.checkpointResumeSafe === true) {
+          explicitResumeSafeCheckpointSessions += 1;
         }
       }
 
@@ -373,24 +372,12 @@ async function main() {
     }
   }
 
-  let continuityDegradedSessions = 0;
-  let resumeSafeCheckpointSessions = 0;
-  for (const outcome of checkpointOutcomeBySession.values()) {
-    const continuityDegraded =
-      outcome.explicitContinuityDegraded != null
-        ? outcome.explicitContinuityDegraded
-        : outcome.fallbackContinuityDegraded;
-    const checkpointResumeSafe =
-      outcome.explicitCheckpointResumeSafe != null
-        ? outcome.explicitCheckpointResumeSafe
-        : outcome.fallbackCheckpointResumeSafe;
-    if (continuityDegraded) {
-      continuityDegradedSessions += 1;
-    }
-    if (checkpointResumeSafe) {
-      resumeSafeCheckpointSessions += 1;
-    }
-  }
+  const continuityDegradedSessions =
+    explicitCheckpointAssessments > 0 ? explicitContinuityDegradedSessions : fallbackContinuityDegradedSessions;
+  const resumeSafeCheckpointSessions =
+    explicitCheckpointAssessments > 0
+      ? explicitResumeSafeCheckpointSessions
+      : fallbackResumeSafeCheckpointSessions;
 
   const leadTimesSeconds = [];
   let completedPlans = 0;
