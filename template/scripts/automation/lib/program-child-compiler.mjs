@@ -447,7 +447,7 @@ function renderChildDocument(parent, definition, preserved, validationIds) {
     '',
     `${GENERATED_START} parent=${parent.planId} child=${definition.planId} hash=${specHash} -->`,
     ...generatedSections,
-    `${GENERATED_END} -->`,
+    GENERATED_END,
     '',
     preserved.tail.trim(),
     ''

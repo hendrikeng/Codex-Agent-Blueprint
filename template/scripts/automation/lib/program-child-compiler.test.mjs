@@ -154,6 +154,8 @@ Validation-Ready: no
   assert.match(childContent, /## Validation Contract/);
   assert.match(childContent, /repo:verify-fast/);
   assert.match(childContent, /repo:verify-full/);
+  assert.doesNotMatch(childContent, /ORCH-GENERATED-END --> -->/);
+  assert.doesNotMatch(childContent, /\n-->\n/);
 
   await fs.writeFile(parentPath, (await fs.readFile(parentPath, 'utf8')).replace('Child Slice One', 'Child Slice One Updated'), 'utf8');
   const checkResult = await compileProgramChildren(rootDir, { write: false });
