@@ -54,6 +54,7 @@ Reconciliation lowers omission and stale-scope risk, but it does not replace pla
 - `Delivery-Class: docs`, `ops`, and `reconciliation` allow artifact-first completion when the acceptance criteria are truthful.
 - `Execution-Scope: slice` means the plan is directly executable by orchestration.
 - `Execution-Scope: program` means the plan is a non-executable parent contract or portfolio. Keep it active while child slices execute; do not send it directly to validation.
+- When a program plan enumerates remaining execution slices or portfolio units, materialize those units as child plans in `future/`, `active/`, or `completed/` with `Parent-Plan-ID` before expecting grind/promotion to continue automatically.
 - `Implementation-Targets` are the authoritative code roots for product slices. `Spec-Targets` remain the broader impact/documentation list and do not replace implementation evidence.
 - `## Capability Proof Map` maps must-land IDs to capability claims and proof rows. Proof rows should reference explicit validation IDs or artifact paths, not inferred test names.
 

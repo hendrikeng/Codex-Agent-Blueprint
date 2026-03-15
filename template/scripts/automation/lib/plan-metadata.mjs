@@ -33,6 +33,10 @@ export const UNFINISHED_COVERAGE_STATUS_PATTERNS = [
   /\bplanned\b/i,
   /\bdraft\b/i
 ];
+const PROGRAM_CHILD_SECTION_PATTERNS = [
+  /^Remaining Execution Slices$/i,
+  /Portfolio Units$/i
+];
 
 export const REQUIRED_METADATA_FIELDS = {
   future: [
@@ -164,6 +168,60 @@ export function firstSectionBody(content, sectionTitles) {
     }
   }
   return { title: null, body: '' };
+}
+
+function isProgramChildSectionTitle(value) {
+  const rendered = String(value ?? '').trim();
+  return PROGRAM_CHILD_SECTION_PATTERNS.some((pattern) => pattern.test(rendered));
+}
+
+function normalizeProgramChildHeading(rawHeading) {
+  const rendered = String(rawHeading ?? '').trim();
+  if (!rendered) {
+    return null;
+  }
+  const planIdHintMatch = rendered.match(/:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$/);
+  const planIdHint = planIdHintMatch ? parsePlanId(planIdHintMatch[1], null) : null;
+  const title = rendered
+    .replace(/^\d+\.\s*/, '')
+    .replace(/^Stage\s+\d+\.\s*/i, '')
+    .replace(/^Slice\s+\d+\s*:\s*/i, '')
+    .replace(/^PU-\d+\s*(?:\([^)]*\))?\s*:\s*/i, '')
+    .trim();
+  return {
+    rawHeading: rendered,
+    title: title || rendered,
+    planIdHint
+  };
+}
+
+export function extractProgramChildUnitDeclarations(content) {
+  const lines = String(content ?? '').split(/\r?\n/);
+  const declarations = [];
+  let currentSection = '';
+
+  for (const line of lines) {
+    const h2Match = line.match(/^##\s+(.+?)\s*$/);
+    if (h2Match) {
+      currentSection = h2Match[1].trim();
+      continue;
+    }
+
+    const h3Match = line.match(/^###\s+(.+?)\s*$/);
+    if (!h3Match || !isProgramChildSectionTitle(currentSection)) {
+      continue;
+    }
+
+    const declaration = normalizeProgramChildHeading(h3Match[1]);
+    if (declaration) {
+      declarations.push({
+        ...declaration,
+        sectionTitle: currentSection
+      });
+    }
+  }
+
+  return declarations;
 }
 
 function parseMarkdownTableRow(line) {

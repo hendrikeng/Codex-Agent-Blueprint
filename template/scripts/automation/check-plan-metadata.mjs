@@ -16,6 +16,7 @@ import {
   RISK_TIERS,
   SECURITY_APPROVAL_VALUES,
   collectUnfinishedCoverageRows,
+  extractProgramChildUnitDeclarations,
   listMarkdownFiles,
   metadataValue,
   parseCapabilityProofMap,
@@ -502,6 +503,9 @@ async function scanPhase(phase, directoryPath) {
     const configuredValidationIds = scanPhase.configuredValidationIds ?? new Set();
     const reconciliationRequired =
       phase === 'future' || (phase === 'active' && executionScope === 'program');
+    const declaredProgramUnits = executionScope === 'program'
+      ? extractProgramChildUnitDeclarations(content)
+      : [];
 
     const mustLandRequired = phase === 'future' || phase === 'active';
 
@@ -1032,7 +1036,8 @@ async function scanPhase(phase, directoryPath) {
       dependencies: parsedDependencies,
       deliveryClass,
       executionScope,
-      parentPlanId
+      parentPlanId,
+      declaredProgramUnits
     });
   }
 
@@ -1161,6 +1166,38 @@ async function main() {
   }
 
   for (const plan of allPlans) {
+    if (
+      plan.phase === 'active' &&
+      plan.executionScope === 'program' &&
+      Array.isArray(plan.declaredProgramUnits) &&
+      plan.declaredProgramUnits.length > 0
+    ) {
+      const children = childrenByParent.get(plan.planId) ?? [];
+      if (children.length < plan.declaredProgramUnits.length) {
+        const childPlanIds = new Set(children.map((child) => child.planId).filter(Boolean));
+        const missingHints = plan.declaredProgramUnits
+          .filter((unit) => unit.planIdHint && !childPlanIds.has(unit.planIdHint))
+          .map((unit) => unit.planIdHint);
+        const unlabeledUnits = plan.declaredProgramUnits
+          .filter((unit) => !unit.planIdHint)
+          .map((unit) => unit.title)
+          .slice(0, 3);
+        const detailParts = [];
+        if (missingHints.length > 0) {
+          detailParts.push(`missing child Plan-IDs: ${missingHints.join(', ')}`);
+        }
+        if (unlabeledUnits.length > 0) {
+          detailParts.push(`missing declared units include: ${unlabeledUnits.join(' | ')}`);
+        }
+        const detail = detailParts.length > 0 ? ` ${detailParts.join('; ')}.` : '';
+        addFinding(
+          'ACTIVE_PROGRAM_CHILD_PLAN_GAP',
+          `Active program plan declares ${plan.declaredProgramUnits.length} child units but only ${children.length} child plan(s) reference this parent. Materialize the missing child plans in future/active before expecting grind to continue.${detail}`,
+          plan.rel
+        );
+      }
+    }
+
     if (plan.phase !== 'completed' || plan.executionScope !== 'program') {
       continue;
     }
