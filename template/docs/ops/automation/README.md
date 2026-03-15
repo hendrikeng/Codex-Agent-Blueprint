@@ -182,7 +182,8 @@ Use the manual path when any of these are true:
   - If host validation fails with command output (for example architecture/dependency checks), treat it as a real repository-gate failure and fix the code/docs; host configuration is already functioning.
 - Semantic proof:
   - `semanticProof.mode: advisory|required` controls whether missing proof coverage is reported or blocks product-slice completion.
-  - Product slices should add stable must-land IDs plus `## Capability Proof Map` so must-land claims map to explicit capability and proof rows.
+  - Product slices should add stable lowercase must-land IDs such as `ml-lifecycle-workbench-summary` plus `## Capability Proof Map` so must-land claims map to explicit capability and proof rows.
+  - `## Capability Proof Map` must use two markdown tables in order: `Capability ID | Must-Land IDs | Claim | Required Strength`, then `Proof ID | Capability ID | Type | Lane | Validation ID / Artifact | Freshness`.
   - Proof rows should reference explicit validation IDs or artifact paths; do not rely on title or test-name inference.
   - Validation commands can emit structured result payloads via `ORCH_VALIDATION_RESULT_PATH`; orchestrator uses those payloads for proof matching and external-residual failure classification.
   - When structured findings show a validation failure is entirely outside the current plan scope, orchestration records a residual blocker instead of failing the slice as product-incomplete.
