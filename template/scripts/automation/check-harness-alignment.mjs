@@ -15,6 +15,11 @@ const requiredPaths = {
   orchestrator: path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
   wrapper: path.join(rootDir, 'scripts', 'automation', 'executor-wrapper.mjs'),
   executorPolicy: path.join(rootDir, 'scripts', 'automation', 'lib', 'executor-policy.mjs'),
+  orchestratorShared: path.join(rootDir, 'scripts', 'automation', 'lib', 'orchestrator-shared.mjs'),
+  planDocumentState: path.join(rootDir, 'scripts', 'automation', 'lib', 'plan-document-state.mjs'),
+  sessionPolicy: path.join(rootDir, 'scripts', 'automation', 'lib', 'session-policy.mjs'),
+  atomicCommitPolicy: path.join(rootDir, 'scripts', 'automation', 'lib', 'atomic-commit-policy.mjs'),
+  validationCompletion: path.join(rootDir, 'scripts', 'automation', 'lib', 'validation-completion.mjs'),
   config: path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json'),
   contextCompiler: path.join(rootDir, 'scripts', 'automation', 'compile-runtime-context.mjs'),
   contactPackCompiler: path.join(rootDir, 'scripts', 'automation', 'compile-task-contact-pack.mjs'),
@@ -77,7 +82,14 @@ function codexCommandIncludesRoleReasoning(command) {
   return value.includes('{role_reasoning_effort}');
 }
 
-function ensureScriptSignatures(orchestratorRaw, wrapperRaw, executorPolicyRaw, contextCompilerRaw, contactPackCompilerRaw) {
+function ensureScriptSignatures(
+  orchestratorRaw,
+  wrapperRaw,
+  executorPolicyRaw,
+  contextCompilerRaw,
+  contactPackCompilerRaw,
+  moduleRaws = {}
+) {
   if (!orchestratorRaw.includes("const DEFAULT_OUTPUT_MODE = 'pretty';")) {
     addFinding(
       'MISSING_PRETTY_DEFAULT',
@@ -125,6 +137,68 @@ function ensureScriptSignatures(orchestratorRaw, wrapperRaw, executorPolicyRaw, 
       'MISSING_SHARED_EXECUTOR_POLICY_IMPORT',
       'scripts/automation/executor-wrapper.mjs must import the shared executor policy module.',
       'scripts/automation/executor-wrapper.mjs'
+    );
+  }
+  const requiredOrchestratorImports = [
+    './lib/plan-document-state.mjs',
+    './lib/session-policy.mjs',
+    './lib/atomic-commit-policy.mjs',
+    './lib/validation-completion.mjs'
+  ];
+  for (const importRef of requiredOrchestratorImports) {
+    if (!orchestratorRaw.includes(importRef)) {
+      addFinding(
+        'MISSING_ORCHESTRATOR_MODULE_IMPORT',
+        `scripts/automation/orchestrator.mjs must import ${importRef}.`,
+        'scripts/automation/orchestrator.mjs'
+      );
+    }
+  }
+  if (!orchestratorRaw.includes('const validationCompletionOps = createValidationCompletionOps(')) {
+    addFinding(
+      'MISSING_VALIDATION_COMPLETION_FACTORY',
+      'scripts/automation/orchestrator.mjs must construct validationCompletionOps from the shared validation/completion module.',
+      'scripts/automation/orchestrator.mjs'
+    );
+  }
+  const sharedRaw = String(moduleRaws.orchestratorShared ?? '');
+  const planDocumentRaw = String(moduleRaws.planDocumentState ?? '');
+  const sessionPolicyRaw = String(moduleRaws.sessionPolicy ?? '');
+  const atomicCommitRaw = String(moduleRaws.atomicCommitPolicy ?? '');
+  const validationCompletionRaw = String(moduleRaws.validationCompletion ?? '');
+  if (!sharedRaw.includes('export function resolveSafeRepoPath(')) {
+    addFinding(
+      'MISSING_SHARED_SAFE_PATH_HELPER',
+      'scripts/automation/lib/orchestrator-shared.mjs must export resolveSafeRepoPath.',
+      'scripts/automation/lib/orchestrator-shared.mjs'
+    );
+  }
+  if (!planDocumentRaw.includes('export async function setPlanStatus(')) {
+    addFinding(
+      'MISSING_PLAN_DOCUMENT_STATUS_WRITER',
+      'scripts/automation/lib/plan-document-state.mjs must export setPlanStatus.',
+      'scripts/automation/lib/plan-document-state.mjs'
+    );
+  }
+  if (!sessionPolicyRaw.includes('export function disallowedTouchedPathsForRole(')) {
+    addFinding(
+      'MISSING_SESSION_POLICY_SCOPE_ENFORCEMENT',
+      'scripts/automation/lib/session-policy.mjs must export disallowedTouchedPathsForRole.',
+      'scripts/automation/lib/session-policy.mjs'
+    );
+  }
+  if (!atomicCommitRaw.includes('export function evaluateAtomicCommitReadiness(')) {
+    addFinding(
+      'MISSING_ATOMIC_COMMIT_PREFLIGHT',
+      'scripts/automation/lib/atomic-commit-policy.mjs must export evaluateAtomicCommitReadiness.',
+      'scripts/automation/lib/atomic-commit-policy.mjs'
+    );
+  }
+  if (!validationCompletionRaw.includes('export function createValidationCompletionOps(')) {
+    addFinding(
+      'MISSING_VALIDATION_COMPLETION_MODULE',
+      'scripts/automation/lib/validation-completion.mjs must export createValidationCompletionOps.',
+      'scripts/automation/lib/validation-completion.mjs'
     );
   }
   if (!executorPolicyRaw.includes('Must-Land Checklist')) {
@@ -702,10 +776,30 @@ async function main() {
     process.exit(1);
   }
 
-  const [orchestratorRaw, wrapperRaw, executorPolicyRaw, contextCompilerRaw, contactPackCompilerRaw, config, manifest, manifestRaw, schemaRaw] = await Promise.all([
+  const [
+    orchestratorRaw,
+    wrapperRaw,
+    executorPolicyRaw,
+    orchestratorSharedRaw,
+    planDocumentStateRaw,
+    sessionPolicyRaw,
+    atomicCommitPolicyRaw,
+    validationCompletionRaw,
+    contextCompilerRaw,
+    contactPackCompilerRaw,
+    config,
+    manifest,
+    manifestRaw,
+    schemaRaw
+  ] = await Promise.all([
     fs.readFile(requiredPaths.orchestrator, 'utf8'),
     fs.readFile(requiredPaths.wrapper, 'utf8'),
     fs.readFile(requiredPaths.executorPolicy, 'utf8'),
+    fs.readFile(requiredPaths.orchestratorShared, 'utf8'),
+    fs.readFile(requiredPaths.planDocumentState, 'utf8'),
+    fs.readFile(requiredPaths.sessionPolicy, 'utf8'),
+    fs.readFile(requiredPaths.atomicCommitPolicy, 'utf8'),
+    fs.readFile(requiredPaths.validationCompletion, 'utf8'),
     fs.readFile(requiredPaths.contextCompiler, 'utf8'),
     fs.readFile(requiredPaths.contactPackCompiler, 'utf8'),
     readJsonStrict(requiredPaths.config)
@@ -715,7 +809,13 @@ async function main() {
     fs.readFile(requiredPaths.policySchema, 'utf8')
   ]);
 
-  ensureScriptSignatures(orchestratorRaw, wrapperRaw, executorPolicyRaw, contextCompilerRaw, contactPackCompilerRaw);
+  ensureScriptSignatures(orchestratorRaw, wrapperRaw, executorPolicyRaw, contextCompilerRaw, contactPackCompilerRaw, {
+    orchestratorShared: orchestratorSharedRaw,
+    planDocumentState: planDocumentStateRaw,
+    sessionPolicy: sessionPolicyRaw,
+    atomicCommitPolicy: atomicCommitPolicyRaw,
+    validationCompletion: validationCompletionRaw
+  });
   ensureManifestPolicy(manifest, manifestRaw, schemaRaw, requiredPaths.policyManifest, requiredPaths.policySchema);
   ensureConfigPolicy(config, requiredPaths.config);
   await ensurePragmaticScaffold();

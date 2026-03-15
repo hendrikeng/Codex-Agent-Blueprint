@@ -38,6 +38,55 @@ import {
   normalizeTouchedPathList,
   pathMatchesRootPrefix
 } from './lib/plan-scope.mjs';
+import {
+  appendToDeliveryLog,
+  completionGateReadyForValidation,
+  documentStatusValue,
+  documentValidationReadyValue,
+  evaluateCompletionGate,
+  maybeAutoPromoteCompletionGate,
+  removeDuplicateSections,
+  removeSection,
+  sectionBody,
+  sectionBounds,
+  sectionlessPreamble,
+  setHostValidationSection,
+  setPlanDocumentFields,
+  setPlanStatus,
+  setResidualValidationBlockersSection,
+  updateSimpleMetadataField,
+  upsertSection
+} from './lib/plan-document-state.mjs';
+import {
+  buildWorkerTouchPolicy,
+  disallowedTouchedPathsForRole,
+  formatTouchSummaryDetails,
+  formatTouchSummaryInline,
+  hasMeaningfulWorkerTouchSummary,
+  summarizeTouchedPaths
+} from './lib/session-policy.mjs';
+import {
+  createAtomicCommit,
+  dirtyImplementationTouchPaths,
+  dirtyRepoPaths,
+  gitAvailable,
+  gitDirty,
+  hasRecordedImplementationEvidence,
+  implementationEvidencePaths,
+  isArtifactSlicePlan,
+  isProductPlan,
+  isProgramPlan,
+  parseGitPorcelainZPaths,
+  planRequiresImplementationEvidence,
+  recordImplementationEvidence,
+  resolveAtomicCommitRoots,
+  stagedRepoPaths,
+  evaluateAtomicCommitReadiness
+} from './lib/atomic-commit-policy.mjs';
+import {
+  classifyValidationFailureScope,
+  createValidationCompletionOps
+} from './lib/validation-completion.mjs';
 
 const DEFAULT_CONTEXT_THRESHOLD = 10000;
 const DEFAULT_CONTEXT_SOFT_USED_RATIO = 0.65;
@@ -209,6 +258,39 @@ const ANSI_ESCAPE_REGEX = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const RUN_MEMORY_PLAN_RECORD_CACHE = new Map();
 const RUN_MEMORY_CONTACT_PACK_CACHE = new Map();
 const ROLLING_CONTEXT_SCHEMA_VERSION = 2;
+const validationCompletionOps = createValidationCompletionOps({
+  SECURITY_APPROVAL_APPROVED,
+  SECURITY_APPROVAL_NOT_REQUIRED,
+  SECURITY_APPROVAL_PENDING,
+  clearPlanContinuationState,
+  createAtomicCommit,
+  createTouchBaseline,
+  curateEvidenceForPlan,
+  didTimeout,
+  evaluateAtomicCommitReadiness,
+  executionOutput,
+  isTickerOutput,
+  logEvent,
+  pathMatchesRootPrefix,
+  persistSecurityApproval,
+  progressLog,
+  refreshEvidenceIndex,
+  requiresSecurityApproval,
+  resolveAtomicCommitRoots,
+  resolveCompletedPlanTargetPath,
+  resolveEvidenceLifecycleConfig,
+  resolvedSecurityApproval,
+  rewritePlanFileReferencesInPlanDocs,
+  runShellMonitored,
+  setHostValidationSection,
+  setPlanStatus,
+  setResidualValidationBlockersSection,
+  shouldCaptureCommandOutput,
+  tailLines,
+  updatePlanValidationState,
+  writeEvidenceIndex,
+  writeSessionExecutorLog
+});
 
 function usage() {
   console.log(`Usage:
@@ -1656,84 +1738,6 @@ function didWorkerStallTimeout(result) {
   return result?.error?.code === 'EWORKER_STALL';
 }
 
-function hasMeaningfulWorkerTouchSummary(summary, touchPolicy = null) {
-  const touchedPaths = Array.isArray(summary?.touched) ? summary.touched : [];
-  if (touchedPaths.length > 0) {
-    return touchedPaths.some((entry) => isMeaningfulWorkerTouchPath(entry, touchPolicy));
-  }
-
-  const categories = Array.isArray(summary?.categories) ? summary.categories : [];
-  if (touchPolicy?.allowPlanDocsOnlyTouches) {
-    return categories.some((entry) => {
-      const category = String(entry?.category ?? '').trim().toLowerCase();
-      const count = Number(entry?.count ?? 0);
-      return category !== 'plan-docs' && isMeaningfulWorkerTouchCategory(category, touchPolicy) && Number.isFinite(count) && count > 0;
-    });
-  }
-  return categories.some((entry) => {
-    const category = String(entry?.category ?? '').trim().toLowerCase();
-    const count = Number(entry?.count ?? 0);
-    return isMeaningfulWorkerTouchCategory(category, touchPolicy) && Number.isFinite(count) && count > 0;
-  });
-}
-
-function isMeaningfulWorkerTouchCategory(category, touchPolicy = null) {
-  const normalized = String(category ?? '').trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized === 'plan-docs') {
-    return touchPolicy?.allowPlanDocsOnlyTouches === true;
-  }
-  return true;
-}
-
-function isMeaningfulWorkerTouchPath(filePath, touchPolicy = null) {
-  const normalized = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
-  if (!normalized) {
-    return false;
-  }
-  if (!isMeaningfulWorkerTouchCategory(classifyTouchedPath(normalized), touchPolicy)) {
-    return false;
-  }
-  if (!touchPolicy?.allowPlanDocsOnlyTouches) {
-    return true;
-  }
-  const allowedTouchRoots = Array.isArray(touchPolicy.allowedTouchRoots) ? touchPolicy.allowedTouchRoots : [];
-  if (allowedTouchRoots.length === 0) {
-    return false;
-  }
-  return allowedTouchRoots.some((root) => pathMatchesRootPrefix(normalized, root));
-}
-
-function buildWorkerTouchPolicy(plan) {
-  const docsOnlyArtifactPlan = isArtifactSlicePlan(plan);
-  const content = typeof plan?.content === 'string' ? plan.content : '';
-  const documentStatus = content ? documentStatusValue(content) : '';
-  const validationReady = content ? documentValidationReadyValue(content) : '';
-  const validationOnlyPlan = completionGateReadyForValidation(documentStatus, validationReady);
-  const allowPlanDocsOnlyTouches = docsOnlyArtifactPlan;
-  const allowedTouchRoots = allowPlanDocsOnlyTouches
-    ? normalizeRelativePrefixList([
-        plan.rel,
-        ...normalizeRelativePrefixList(plan.specTargets ?? []),
-        toPosix(path.posix.join('docs', 'exec-plans', 'active', 'evidence', `${plan.planId}.md`)),
-        toPosix(path.posix.join('docs', 'exec-plans', 'evidence-index', `${plan.planId}.md`))
-      ])
-    : [];
-  const progressLabel = allowPlanDocsOnlyTouches
-    ? 'repository edits in the plan\'s scoped docs/artifact targets'
-    : 'repository edits outside plan/evidence files';
-
-  return {
-    docsOnlySpecTargets: docsOnlyArtifactPlan,
-    validationOnlyPlan,
-    allowPlanDocsOnlyTouches,
-    allowedTouchRoots,
-    progressLabel
-  };
-}
-
 function roleActivity(role) {
   const normalized = normalizeRoleName(role, ROLE_WORKER);
   if (normalized === ROLE_PLANNER) return 'planning';
@@ -1772,168 +1776,6 @@ function formatCommandHeartbeatMessage(context, elapsedSeconds, idleSeconds) {
   return (
     `heartbeat plan=${planId} role=${role} phase=${phase} activity=${activity} elapsed=${elapsed} idle=${idle} ${touchSummary}`
   );
-}
-
-function summarizeTouchedPaths(paths, sampleSize = DEFAULT_TOUCH_SAMPLE_SIZE) {
-  const normalized = [...new Set((Array.isArray(paths) ? paths : []).map((entry) => toPosix(String(entry ?? '').trim())).filter(Boolean))];
-  if (normalized.length === 0) {
-    return {
-      count: 0,
-      categories: [],
-      samples: [],
-      fingerprint: 'none'
-    };
-  }
-
-  const categoryCounts = new Map();
-  for (const filePath of normalized) {
-    const category = classifyTouchedPath(filePath);
-    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
-  }
-
-  const categories = [...categoryCounts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .map(([category, count]) => ({ category, count }));
-  const samples = normalized.slice(0, Math.max(1, sampleSize));
-  const fingerprint = createHash('sha1')
-    .update(normalized.join('\n'))
-    .digest('hex')
-    .slice(0, 10);
-
-  return {
-    count: normalized.length,
-    categories,
-    samples,
-    fingerprint
-  };
-}
-
-function classifyTouchedPath(filePath) {
-  const value = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
-  const baseName = path.posix.basename(value).toLowerCase();
-
-  if (value.startsWith('docs/exec-plans/')) {
-    return 'plan-docs';
-  }
-  if (value.startsWith('docs/ops/automation/')) {
-    return 'automation';
-  }
-  if (value.startsWith('docs/')) {
-    return 'docs';
-  }
-  if (baseName.endsWith('.md') || baseName.endsWith('.mdx')) {
-    return 'docs';
-  }
-  if (
-    baseName.endsWith('.spec.ts') ||
-    baseName.endsWith('.spec.tsx') ||
-    baseName.endsWith('.spec.js') ||
-    baseName.endsWith('.spec.jsx') ||
-    baseName.endsWith('.test.ts') ||
-    baseName.endsWith('.test.tsx') ||
-    baseName.endsWith('.test.js') ||
-    baseName.endsWith('.test.jsx') ||
-    value.includes('/__tests__/') ||
-    value.includes('/tests/') ||
-    value.includes('/test/') ||
-    value.includes('/e2e/')
-  ) {
-    return 'tests';
-  }
-  if (
-    baseName === 'package-lock.json' ||
-    baseName === 'pnpm-lock.yaml' ||
-    baseName === 'yarn.lock' ||
-    baseName === 'bun.lockb'
-  ) {
-    return 'lockfiles';
-  }
-  if (
-    baseName === 'package.json' ||
-    baseName === 'tsconfig.json' ||
-    baseName === 'tsconfig.base.json' ||
-    baseName === 'turbo.json' ||
-    baseName === 'components.json' ||
-    baseName === 'biome.json' ||
-    baseName === 'biome.jsonc' ||
-    baseName === 'eslint.config.js' ||
-    baseName === 'eslint.config.mjs' ||
-    baseName === 'eslint.config.cjs' ||
-    baseName === 'eslint.config.ts' ||
-    baseName === 'vitest.config.js' ||
-    baseName === 'vitest.config.mjs' ||
-    baseName === 'vitest.config.cjs' ||
-    baseName === 'vitest.config.ts' ||
-    baseName === 'jest.config.js' ||
-    baseName === 'jest.config.mjs' ||
-    baseName === 'jest.config.cjs' ||
-    baseName === 'jest.config.ts' ||
-    baseName === 'playwright.config.js' ||
-    baseName === 'playwright.config.mjs' ||
-    baseName === 'playwright.config.cjs' ||
-    baseName === 'playwright.config.ts' ||
-    baseName === 'vite.config.js' ||
-    baseName === 'vite.config.mjs' ||
-    baseName === 'vite.config.cjs' ||
-    baseName === 'vite.config.ts' ||
-    baseName === 'next.config.js' ||
-    baseName === 'next.config.mjs' ||
-    baseName === 'next.config.cjs' ||
-    baseName === 'next.config.ts' ||
-    baseName === 'tailwind.config.js' ||
-    baseName === 'tailwind.config.mjs' ||
-    baseName === 'tailwind.config.cjs' ||
-    baseName === 'tailwind.config.ts' ||
-    baseName === 'pnpm-workspace.yaml' ||
-    baseName === 'pnpm-workspace.yml' ||
-    baseName.startsWith('.eslintrc') ||
-    baseName.startsWith('.prettierrc')
-  ) {
-    return 'configs';
-  }
-  if (
-    value.startsWith('config/') ||
-    value.startsWith('configs/') ||
-    value.startsWith('db/') ||
-    value.startsWith('migrations/') ||
-    value.startsWith('prisma/') ||
-    value.startsWith('sql/') ||
-    value.startsWith('apps/') ||
-    value.startsWith('libs/') ||
-    value.startsWith('packages/') ||
-    value.startsWith('src/')
-  ) {
-    return 'source';
-  }
-  if (value.startsWith('scripts/')) {
-    return 'scripts';
-  }
-  return 'other';
-}
-
-function formatTouchSummaryInline(summary) {
-  const payload = summary && typeof summary === 'object' ? summary : null;
-  if (!payload || payload.count <= 0) {
-    return 'touch=none';
-  }
-  const categories = payload.categories
-    .slice(0, 2)
-    .map((entry) => `${entry.category}:${entry.count}`)
-    .join(',');
-  return `touch=${payload.count}(${categories || 'n/a'})`;
-}
-
-function formatTouchSummaryDetails(summary) {
-  const payload = summary && typeof summary === 'object' ? summary : null;
-  if (!payload || payload.count <= 0) {
-    return 'touched=0';
-  }
-  const categories = payload.categories
-    .slice(0, 4)
-    .map((entry) => `${entry.category}:${entry.count}`)
-    .join(', ');
-  const samples = payload.samples.length > 0 ? payload.samples.join(', ') : 'none';
-  return `touched=${payload.count} categories=[${categories}] sample=[${samples}]`;
 }
 
 function touchPathSignature(rootDir, relativePath) {
@@ -1993,19 +1835,6 @@ function monitorTouchedPaths(cwd, baselineState, options = {}) {
     ...summary,
     touched
   };
-}
-
-function disallowedTouchedPathsForRole(role, plan, touchedPaths = []) {
-  const normalizedRole = normalizeRoleName(role, ROLE_WORKER);
-  if (normalizedRole === ROLE_WORKER) {
-    return disallowedWorkerTouchedPaths(plan, touchedPaths);
-  }
-  const normalized = [...new Set(
-    (Array.isArray(touchedPaths) ? touchedPaths : [])
-      .map((entry) => toPosix(String(entry ?? '').trim()).replace(/^\.?\//, ''))
-      .filter(Boolean)
-  )];
-  return normalized.filter((filePath) => !filePath.startsWith('docs/exec-plans/'));
 }
 
 async function runShellMonitored(
@@ -4000,52 +3829,6 @@ function updatePlanValidationState(state, planId, patch) {
   };
 }
 
-function planScopedValidationRoots(plan) {
-  return normalizeRelativePrefixList([
-    plan?.rel ?? '',
-    `docs/exec-plans/active/evidence/${plan?.planId ?? ''}.md`,
-    `docs/exec-plans/evidence-index/${plan?.planId ?? ''}.md`,
-    ...(Array.isArray(plan?.specTargets) ? plan.specTargets : []),
-    ...(Array.isArray(plan?.implementationTargets) ? plan.implementationTargets : [])
-  ]);
-}
-
-function classifyValidationFailureScope(failedResult, plan) {
-  const findingFiles = normalizeValidationFindingFiles(failedResult?.findingFiles);
-  if (findingFiles.length === 0) {
-    return 'unknown';
-  }
-  const roots = planScopedValidationRoots(plan);
-  const inScope = findingFiles.filter((filePath) => roots.some((root) => pathMatchesRootPrefix(filePath, root)));
-  if (inScope.length === 0) {
-    return 'external';
-  }
-  if (inScope.length === findingFiles.length) {
-    return 'in-scope';
-  }
-  return 'mixed';
-}
-
-async function setResidualValidationBlockersSection(planPath, failedResult, reason, dryRun) {
-  if (dryRun) {
-    return;
-  }
-  const content = await fs.readFile(planPath, 'utf8');
-  const lines = [
-    `- Status: residual-external`,
-    `- Updated At: ${nowIso()}`,
-    `- Validation ID: ${failedResult?.validationId ?? 'unknown'}`,
-    `- Reason: ${reason}`,
-    `- Finding Files: ${
-      normalizeValidationFindingFiles(failedResult?.findingFiles).length > 0
-        ? normalizeValidationFindingFiles(failedResult?.findingFiles).join(', ')
-        : 'none'
-    }`
-  ];
-  const updated = upsertSection(content, 'Residual Validation Blockers', lines);
-  await fs.writeFile(planPath, updated, 'utf8');
-}
-
 function proofTypeIsStrong(type, validationRef = '') {
   if (String(validationRef ?? '').trim().startsWith('repo:')) {
     return false;
@@ -4924,14 +4707,6 @@ function classifyRecoverablePlans(activePlans, completedPlanIds, state, options,
   };
 }
 
-async function setPlanStatus(planPath, status, dryRun) {
-  if (dryRun) return;
-
-  const content = await fs.readFile(planPath, 'utf8');
-  const updated = setPlanDocumentFields(content, { Status: status });
-  await fs.writeFile(planPath, updated, 'utf8');
-}
-
 async function snapshotFileState(filePath) {
   try {
     const content = await fs.readFile(filePath, 'utf8');
@@ -5673,467 +5448,6 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   });
 }
 
-function sectionBounds(content, sectionTitle) {
-  const headingRegex = new RegExp(`^##\\s+${escapeRegex(sectionTitle)}\\s*$`, 'm');
-  const match = headingRegex.exec(content);
-  if (!match) {
-    return null;
-  }
-
-  const start = match.index;
-  const headingEnd = content.indexOf('\n', start);
-  const bodyStart = headingEnd === -1 ? content.length : headingEnd + 1;
-  const remaining = content.slice(bodyStart);
-  const nextHeading = /^##\s+/m.exec(remaining);
-  const end = nextHeading ? bodyStart + nextHeading.index : content.length;
-  return { start, bodyStart, end };
-}
-
-function upsertSection(content, sectionTitle, bodyLines) {
-  const body = Array.isArray(bodyLines) ? bodyLines.join('\n') : String(bodyLines ?? '');
-  const rendered = `## ${sectionTitle}\n\n${body.trim()}\n`;
-  const bounds = sectionBounds(content, sectionTitle);
-
-  if (!bounds) {
-    return `${content.trimEnd()}\n\n${rendered}\n`;
-  }
-
-  const before = content.slice(0, bounds.start).trimEnd();
-  const after = content.slice(bounds.end).trimStart();
-  if (!after) {
-    return `${before}\n\n${rendered}\n`;
-  }
-  return `${before}\n\n${rendered}\n${after}`.replace(/\n{3,}/g, '\n\n');
-}
-
-function removeSection(content, sectionTitle) {
-  const bounds = sectionBounds(content, sectionTitle);
-  if (!bounds) {
-    return content;
-  }
-
-  const before = content.slice(0, bounds.start).trimEnd();
-  const after = content.slice(bounds.end).trimStart();
-  if (!before && !after) {
-    return '';
-  }
-  if (!before) {
-    return `${after}\n`;
-  }
-  if (!after) {
-    return `${before}\n`;
-  }
-  return `${before}\n\n${after}`.replace(/\n{3,}/g, '\n\n');
-}
-
-function sectionBody(content, sectionTitle) {
-  const bounds = sectionBounds(content, sectionTitle);
-  if (!bounds) {
-    return '';
-  }
-  return content.slice(bounds.bodyStart, bounds.end).trim();
-}
-
-function sectionlessPreamble(content) {
-  const firstSectionIndex = content.search(/^##\s+/m);
-  if (firstSectionIndex === -1) {
-    return content.trimEnd();
-  }
-  return content.slice(0, firstSectionIndex).trimEnd();
-}
-
-function appendToDeliveryLog(content, entryLine) {
-  const sectionTitle = 'Automated Delivery Log';
-  const body = sectionBody(content, sectionTitle);
-  const lines = body ? body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
-  lines.push(`- ${entryLine}`);
-  return upsertSection(content, sectionTitle, lines);
-}
-
-function normalizeBulletSection(content, sectionTitle) {
-  const body = sectionBody(content, sectionTitle);
-  if (!body) {
-    return content;
-  }
-
-  const lines = body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('- '));
-  const unique = [];
-  const seen = new Set();
-  for (const line of lines) {
-    if (seen.has(line)) {
-      continue;
-    }
-    seen.add(line);
-    unique.push(line);
-  }
-
-  if (unique.length === 0) {
-    return content;
-  }
-  return upsertSection(content, sectionTitle, unique);
-}
-
-function removeDuplicateSections(content, sectionTitle) {
-  let updated = content;
-  while (true) {
-    const first = sectionBounds(updated, sectionTitle);
-    if (!first) {
-      return updated;
-    }
-    const rest = updated.slice(first.end);
-    const second = sectionBounds(rest, sectionTitle);
-    if (!second) {
-      return updated;
-    }
-
-    const secondStart = first.end + second.start;
-    const secondEnd = first.end + second.end;
-    const before = updated.slice(0, secondStart).trimEnd();
-    const after = updated.slice(secondEnd).trimStart();
-    updated = after ? `${before}\n\n${after}` : `${before}\n`;
-  }
-}
-
-function normalizeClosureSection(content) {
-  const body = sectionBody(content, 'Closure');
-  if (!body) {
-    return content;
-  }
-
-  const lines = body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('- '));
-
-  const seenKeys = new Set();
-  const seenLines = new Set();
-  const kept = [];
-  for (const line of lines) {
-    const keyMatch = line.match(/^- ([^:]+):/);
-    if (keyMatch) {
-      const key = keyMatch[1].trim().toLowerCase();
-      if (seenKeys.has(key)) {
-        continue;
-      }
-      seenKeys.add(key);
-      let normalizedLine = line;
-      if (key === 'completed at') {
-        const rawValue = line.replace(/^- Completed At:\s*/, '').trim();
-        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?$/.test(rawValue)) {
-          normalizedLine = `- Completed At: ${rawValue}Z`;
-        }
-      }
-      kept.push(normalizedLine);
-      continue;
-    }
-
-    if (seenLines.has(line)) {
-      continue;
-    }
-    seenLines.add(line);
-    kept.push(line);
-  }
-
-  if (kept.length === 0) {
-    return content;
-  }
-  return upsertSection(content, 'Closure', kept);
-}
-
-function updateSimpleMetadataField(content, field, value) {
-  const regex = new RegExp(`^${escapeRegex(field)}:\\s*.*$`, 'm');
-  if (regex.test(content)) {
-    return content.replace(regex, `${field}: ${value}`);
-  }
-  return `${content.trimEnd()}\n${field}: ${value}\n`;
-}
-
-function setPlanDocumentFields(content, fields = {}) {
-  let updated = setMetadataFields(content, fields);
-  if (Object.prototype.hasOwnProperty.call(fields, 'Status')) {
-    updated = updateSimpleMetadataField(updated, 'Status', fields.Status);
-  }
-  if (Object.prototype.hasOwnProperty.call(fields, 'Validation-Ready')) {
-    updated = updateSimpleMetadataField(updated, 'Validation-Ready', fields['Validation-Ready']);
-  }
-  return updated;
-}
-
-function documentStatusValue(content) {
-  const metadata = parseMetadata(content);
-  const metadataStatus = normalizeStatus(metadataValue(metadata, 'Status'));
-  if (metadataStatus) {
-    return metadataStatus;
-  }
-  const match = content.match(/^Status:\s*(.+)$/m);
-  return normalizeStatus(match?.[1] ?? '');
-}
-
-function documentValidationReadyValue(content) {
-  const metadata = parseMetadata(content);
-  const value = normalizeStatus(metadataValue(metadata, 'Validation-Ready'));
-  if (value === 'yes' || value === 'host-required-only' || value === 'no') {
-    return value;
-  }
-  return '';
-}
-
-function completionGateReadyForValidation(documentStatus, validationReady = '') {
-  if (documentStatus === 'completed') {
-    return true;
-  }
-  if (documentStatus !== 'validation') {
-    return false;
-  }
-  return validationReady === 'yes' || validationReady === 'host-required-only';
-}
-
-function nextStepChecklistLines(content) {
-  const body = sectionBody(content, 'Next-Step Checklist');
-  if (!body) {
-    return [];
-  }
-
-  return body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .filter((line) => /^\d+\.\s+/.test(line) || line.startsWith('- '));
-}
-
-function mustLandChecklistLines(content) {
-  const body = sectionBody(content, MUST_LAND_SECTION);
-  if (!body) {
-    return [];
-  }
-
-  return body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /^-\s+\[[ xX]\]\s+/.test(line));
-}
-
-function mustLandChecklistHasOpenItems(content) {
-  return mustLandChecklistLines(content).some((line) => /^-\s+\[\s\]\s+/.test(line));
-}
-
-function nextStepChecklistIsHostValidationOnly(lines) {
-  if (!Array.isArray(lines) || lines.length === 0) {
-    return false;
-  }
-
-  return lines.every((line) => {
-    const lower = line.toLowerCase();
-    const referencesHostValidation =
-      lower.includes('host validation') ||
-      lower.includes('host-required') ||
-      lower.includes('host required') ||
-      lower.includes('host lane') ||
-      lower.includes('validation lane');
-    const closeAfterHost =
-      lower.includes('status: completed') ||
-      lower.includes('status `completed`') ||
-      lower.includes('set plan') ||
-      lower.includes('reviewer closeout');
-    const mentionsOpenImplementation =
-      lower.includes('worker follow-up') ||
-      lower.includes('worker remediation') ||
-      lower.includes('reviewer follow-up') ||
-      lower.includes('reviewer re-check') ||
-      lower.includes('implementation') ||
-      lower.includes('code edit') ||
-      lower.includes('source edit') ||
-      lower.includes('test edit');
-
-    if (mentionsOpenImplementation) {
-      return false;
-    }
-    if (referencesHostValidation) {
-      return true;
-    }
-    return closeAfterHost && lower.includes('host');
-  });
-}
-
-function sessionSignalsHostValidationOnly(sessionResult) {
-  const text = `${sessionResult?.summary ?? ''}\n${sessionResult?.reason ?? ''}`.toLowerCase();
-  if (!text.trim()) {
-    return false;
-  }
-
-  const mentionsHostValidation =
-    text.includes('host validation') || text.includes('host-required') || text.includes('host required');
-  const saysOnlyGate =
-    text.includes('only remaining') ||
-    text.includes('only closeout gate') ||
-    text.includes('only remaining completion gate') ||
-    text.includes('sole gate') ||
-    (text.includes('remaining') && text.includes('host') && text.includes('only'));
-  const mentionsFurtherImplementation =
-    text.includes('worker follow-up') ||
-    text.includes('worker remediation') ||
-    text.includes('reviewer follow-up') ||
-    text.includes('implementation remains') ||
-    text.includes('another worker session') ||
-    text.includes('pending implementation');
-
-  return mentionsHostValidation && saysOnlyGate && !mentionsFurtherImplementation;
-}
-
-async function maybeAutoPromoteCompletionGate(planPath, currentRole, sessionResult, options) {
-  if (normalizeRoleName(currentRole, ROLE_WORKER) !== ROLE_REVIEWER) {
-    return { promoted: false, reason: null };
-  }
-
-  const content = await fs.readFile(planPath, 'utf8');
-  const unfinishedCoverageRows = collectUnfinishedCoverageRows(content);
-  if (unfinishedCoverageRows.length > 0) {
-    return { promoted: false, reason: null };
-  }
-  const status = documentStatusValue(content);
-  const validationReady = documentValidationReadyValue(content);
-  if (completionGateReadyForValidation(status, validationReady)) {
-    return { promoted: false, reason: null };
-  }
-
-  if (validationReady === 'no') {
-    return { promoted: false, reason: null };
-  }
-  if (validationReady === 'yes' || validationReady === 'host-required-only') {
-    await setPlanStatus(planPath, 'validation', options.dryRun);
-    return {
-      promoted: true,
-      reason:
-        validationReady === 'host-required-only'
-          ? "Plan metadata 'Validation-Ready: host-required-only' indicates host validation is the sole gate."
-          : "Plan metadata 'Validation-Ready: yes' indicates implementation is complete for validation."
-    };
-  }
-
-  const checklistHostOnly = nextStepChecklistIsHostValidationOnly(nextStepChecklistLines(content));
-  const sessionHostOnly = sessionSignalsHostValidationOnly(sessionResult);
-  if (!checklistHostOnly && !sessionHostOnly) {
-    return { promoted: false, reason: null };
-  }
-
-  if (!options.dryRun) {
-    const updatedPlan = setPlanDocumentFields(content, {
-      Status: 'validation',
-      'Validation-Ready': 'host-required-only'
-    });
-    await fs.writeFile(planPath, updatedPlan, 'utf8');
-  }
-  return {
-    promoted: true,
-    reason: checklistHostOnly
-      ? 'Next-step checklist indicates host validation is the only remaining gate.'
-      : 'Reviewer session result indicates host validation is the only remaining gate.'
-  };
-}
-
-async function evaluateCompletionGate(plan, rootDir, state = null) {
-  const content = await fs.readFile(plan.filePath, 'utf8');
-  const documentStatus = documentStatusValue(content);
-  const validationReady = documentValidationReadyValue(content);
-
-  if (!plan.deliveryClass) {
-    return {
-      ready: false,
-      reason:
-        "Plan is missing 'Delivery-Class'. Declare whether the plan is product, docs, ops, or reconciliation before validation/completion."
-    };
-  }
-
-  if (!plan.executionScope) {
-    return {
-      ready: false,
-      reason:
-        "Plan is missing 'Execution-Scope'. Declare whether the plan is an executable slice or a non-executable program before validation/completion."
-    };
-  }
-
-  if (isProgramPlan(plan)) {
-    return {
-      ready: false,
-      reason:
-        'Program plans are non-executable parent contracts. Keep the parent active, complete child slices first, and close the parent only after scope reconciliation is done.'
-    };
-  }
-
-  if (completionGateReadyForValidation(documentStatus, validationReady)) {
-    const mustLandLines = mustLandChecklistLines(content);
-    if (mustLandLines.length === 0) {
-      return {
-        ready: false,
-        reason:
-          "Plan is missing executable scope. Add '## Must-Land Checklist' with markdown checkbox items before validation/completion."
-      };
-    }
-
-    if (mustLandChecklistHasOpenItems(content)) {
-      return {
-        ready: false,
-        reason:
-          "Plan still has unchecked items in '## Must-Land Checklist'. Keep the plan in-progress until every must-land deliverable is complete."
-      };
-    }
-
-    if (isProductPlan(plan)) {
-      const unfinishedCoverageRows = collectUnfinishedCoverageRows(content);
-      if (unfinishedCoverageRows.length > 0) {
-        const preview = unfinishedCoverageRows
-          .slice(0, 3)
-          .map((entry) => `${entry.capability}='${entry.status}'`)
-          .join(', ');
-        return {
-          ready: false,
-          reason:
-            `Plan still records unfinished current-status rows in '${unfinishedCoverageRows[0].sectionTitle}' (${preview}). ` +
-            'Keep the plan in-progress until those capabilities are implemented in product code or split into separate executable follow-on plans.'
-        };
-      }
-
-      const targetRoots = implementationTargetRoots(plan, { sourceOnly: true });
-      if (targetRoots.length === 0) {
-        return {
-          ready: false,
-          reason:
-            "Product slice plans must declare at least one source-code 'Implementation-Targets' root before validation/completion."
-        };
-      }
-
-      const implementationTouches = implementationEvidencePaths(state, plan, rootDir);
-      if (implementationTouches.length === 0) {
-        const targetPreview = targetRoots.slice(0, 4).join(', ');
-        return {
-          ready: false,
-          reason:
-            `Plan declares product implementation roots via Implementation-Targets (${targetPreview}) but no durable source implementation evidence has been recorded under those roots. ` +
-            'Keep the plan in-progress until worker sessions land shipped product changes under the declared source paths.'
-        };
-      }
-    }
-
-    return { ready: true, reason: null };
-  }
-
-  if (documentStatus === 'validation') {
-    return {
-      ready: false,
-      reason:
-        "Plan status is 'validation' but Validation-Ready is not explicit. Keep the plan in-progress until reviewer closeout sets `Validation-Ready: yes` or `Validation-Ready: host-required-only`."
-    };
-  }
-
-  return {
-    ready: false,
-    reason:
-      'Plan is not ready for validation. Set top-level `Status: validation` (preferred) or `Status: completed` when implementation is done and validation can run.'
-  };
-}
 async function findPlanRecordById(paths, planId) {
   const [activePlans, completedPlans] = await Promise.all([
     loadPlanRecords(paths.rootDir, paths.activeDir, 'active'),
@@ -7727,425 +7041,6 @@ async function canonicalizeCompletedPlansEvidence(paths, options, config, planId
   };
 }
 
-async function setHostValidationSection(planPath, status, provider, reason, dryRun) {
-  if (dryRun) {
-    return;
-  }
-
-  const content = await fs.readFile(planPath, 'utf8');
-  const lines = [
-    `- Status: ${status}`,
-    `- Updated At: ${nowIso()}`,
-    `- Provider: ${provider || 'n/a'}`,
-    `- Reason: ${reason || 'none'}`
-  ];
-  let updated = upsertSection(content, 'Host Validation', lines);
-  if (normalizeStatus(status) === 'passed') {
-    updated = removeSection(updated, 'Remaining Validation Work (Host Required)');
-  }
-  await fs.writeFile(planPath, updated, 'utf8');
-}
-
-function gitAvailable(rootDir) {
-  const result = runShellCapture('git rev-parse --is-inside-work-tree', rootDir);
-  return result.status === 0;
-}
-
-function parseGitPorcelainZPaths(stdout) {
-  const raw = String(stdout ?? '');
-  if (!raw) {
-    return [];
-  }
-  const tokens = raw.split('\0').filter(Boolean);
-  const paths = [];
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token.length < 4) {
-      continue;
-    }
-    const status = token.slice(0, 2);
-    const primaryPath = toPosix(token.slice(3));
-    if (primaryPath) {
-      paths.push(primaryPath);
-    }
-    const isRenameOrCopy = status.includes('R') || status.includes('C');
-    if (isRenameOrCopy && index + 1 < tokens.length) {
-      const secondaryPath = toPosix(tokens[index + 1]);
-      if (secondaryPath) {
-        paths.push(secondaryPath);
-      }
-      index += 1;
-    }
-  }
-
-  return paths;
-}
-
-function isProgramPlan(plan) {
-  return String(plan?.executionScope ?? '').trim().toLowerCase() === 'program';
-}
-
-function isProductPlan(plan) {
-  return String(plan?.deliveryClass ?? '').trim().toLowerCase() === 'product';
-}
-
-function isArtifactSlicePlan(plan) {
-  return !isProgramPlan(plan) && !isProductPlan(plan);
-}
-
-function planRequiresImplementationEvidence(plan) {
-  return isProductPlan(plan) && !isProgramPlan(plan);
-}
-
-function dirtyImplementationTouchPaths(rootDir, plan) {
-  const implementationRoots = implementationTargetRoots(plan, { sourceOnly: true });
-  if (implementationRoots.length === 0) {
-    return [];
-  }
-
-  return dirtyRepoPaths(rootDir, { includeTransient: false }).filter((entry) =>
-    implementationRoots.some((root) => pathMatchesRootPrefix(entry, root))
-  );
-}
-
-function implementationEvidenceFingerprint(rootDir, relativePath) {
-  const normalized = toPosix(String(relativePath ?? '').trim()).replace(/^\.?\//, '');
-  if (!normalized) {
-    return 'missing';
-  }
-  const absPath = path.join(rootDir, normalized);
-  try {
-    const stat = fsSync.lstatSync(absPath);
-    if (stat.isFile()) {
-      const digest = createHash('sha1').update(fsSync.readFileSync(absPath)).digest('hex');
-      return `f:${stat.size}:${digest}`;
-    }
-    if (stat.isDirectory()) {
-      return 'd';
-    }
-    if (stat.isSymbolicLink()) {
-      return `l:${fsSync.readlinkSync(absPath)}`;
-    }
-    return 'o';
-  } catch {
-    return 'missing';
-  }
-}
-
-function implementationEvidenceEntries(state, plan, rootDir) {
-  const implementationRoots = implementationTargetRoots(plan, { sourceOnly: true });
-  if (implementationRoots.length === 0) {
-    return [];
-  }
-  const entry = state?.implementationState?.[plan.planId];
-  const pathRecords = entry?.pathRecords && typeof entry.pathRecords === 'object'
-    ? entry.pathRecords
-    : {};
-  const touchedPaths = Array.isArray(entry?.touchedPaths) ? entry.touchedPaths : [];
-  const merged = new Map();
-
-  for (const [filePath, record] of Object.entries(pathRecords)) {
-    const normalized = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
-    if (!normalized) {
-      continue;
-    }
-    merged.set(normalized, {
-      baselineFingerprint: String(record?.baselineFingerprint ?? '').trim(),
-      recordedFingerprint: String(record?.recordedFingerprint ?? record?.fingerprint ?? '').trim()
-    });
-  }
-
-  for (const filePath of normalizeTouchedPathList(touchedPaths)) {
-    if (merged.has(filePath)) {
-      continue;
-    }
-    merged.set(filePath, {
-      baselineFingerprint: '',
-      recordedFingerprint: implementationEvidenceFingerprint(rootDir, filePath)
-    });
-  }
-
-  return [...merged.entries()]
-    .filter(([filePath]) => implementationRoots.some((root) => pathMatchesRootPrefix(filePath, root)))
-    .map(([filePath, record]) => ({
-      path: filePath,
-      baselineFingerprint: record.baselineFingerprint,
-      recordedFingerprint: record.recordedFingerprint,
-      currentFingerprint: implementationEvidenceFingerprint(rootDir, filePath)
-    }));
-}
-
-function implementationEvidencePaths(state, plan, rootDir) {
-  return implementationEvidenceEntries(state, plan, rootDir)
-    .filter((entry) => {
-      if (!entry.currentFingerprint || entry.currentFingerprint === 'missing') {
-        return false;
-      }
-      if (entry.baselineFingerprint) {
-        return entry.currentFingerprint !== entry.baselineFingerprint;
-      }
-      return entry.recordedFingerprint && entry.currentFingerprint === entry.recordedFingerprint;
-    })
-    .map((entry) => entry.path);
-}
-
-function hasRecordedImplementationEvidence(state, plan, rootDir) {
-  return implementationEvidencePaths(state, plan, rootDir).length > 0;
-}
-
-function recordImplementationEvidence(state, rootDir, plan, touchedPaths = [], metadata = {}) {
-  const implementationRoots = implementationTargetRoots(plan, { sourceOnly: true });
-  if (implementationRoots.length === 0) {
-    return { recorded: false, matchedPaths: [] };
-  }
-
-  const matchedPaths = normalizeTouchedPathList(touchedPaths).filter((entry) =>
-    implementationRoots.some((root) => pathMatchesRootPrefix(entry, root))
-  );
-  if (matchedPaths.length === 0) {
-    return { recorded: false, matchedPaths: [] };
-  }
-
-  const current = ensurePlanImplementationState(state, plan.planId);
-  const pathRecords = current.pathRecords && typeof current.pathRecords === 'object'
-    ? current.pathRecords
-    : {};
-  const baselineFingerprints =
-    metadata.baselineFingerprints && typeof metadata.baselineFingerprints === 'object'
-      ? metadata.baselineFingerprints
-      : {};
-  const mergedPaths = [...new Set([...(Array.isArray(current.touchedPaths) ? current.touchedPaths : []), ...matchedPaths])];
-  const recordedAt = nowIso();
-  for (const filePath of matchedPaths) {
-    const baselineFingerprint = String(
-      Object.prototype.hasOwnProperty.call(baselineFingerprints, filePath)
-        ? baselineFingerprints[filePath]
-        : 'missing'
-    ).trim();
-    const recordedFingerprint = implementationEvidenceFingerprint(rootDir, filePath);
-    pathRecords[filePath] = {
-      baselineFingerprint,
-      recordedFingerprint,
-      fingerprint: recordedFingerprint,
-      recordedAt,
-      runId: metadata.runId ?? null,
-      session: metadata.session ?? null,
-      role: metadata.role ?? null
-    };
-  }
-  state.implementationState[plan.planId] = {
-    pathRecords,
-    touchedPaths: mergedPaths,
-    lastRecordedAt: recordedAt,
-    updatedAt: recordedAt
-  };
-  return {
-    recorded: true,
-    matchedPaths
-  };
-}
-
-function resolveAtomicCommitRoots(plan, config, paths, completionContext = {}) {
-  const policy = config?.git?.atomicCommitRoots ?? {};
-  const includePlanMetadata = asBoolean(policy.allowPlanMetadata, true);
-  const defaults = normalizeRelativePrefixList(policy.defaults);
-  const shared = normalizeRelativePrefixList(policy.shared);
-  const roots = new Set([...defaults, ...shared]);
-
-  if (includePlanMetadata) {
-    for (const root of normalizeRelativePrefixList(plan.atomicRoots ?? [])) {
-      roots.add(root);
-    }
-  }
-
-  if (plan.rel) {
-    const planRel = assertSafeRelativePlanPath(plan.rel);
-    roots.add(planRel);
-  }
-
-  const planSpecTargets =
-    Array.isArray(plan.specTargets) && plan.specTargets.length > 0
-      ? plan.specTargets
-      : ['docs/product-specs/CURRENT-STATE.md'];
-  for (const target of normalizeRelativePrefixList(planSpecTargets)) {
-    roots.add(target);
-  }
-
-  for (const target of normalizeRelativePrefixList(plan.implementationTargets ?? [])) {
-    roots.add(target);
-  }
-
-  const completedRelCandidate = completionContext.completedRel
-    ? assertSafeRelativePlanPath(completionContext.completedRel)
-    : null;
-  if (completedRelCandidate) {
-    roots.add(completedRelCandidate);
-  }
-
-  const evidenceIndexRel = assertSafeRelativePlanPath(
-    toPosix(path.relative(paths.rootDir, path.join(paths.evidenceIndexDir, `${plan.planId}.md`)))
-  );
-  roots.add(evidenceIndexRel);
-  roots.add(assertSafeRelativePlanPath(toPosix(path.relative(paths.rootDir, path.join(paths.evidenceIndexDir, 'README.md')))));
-
-  // Plan-scoped evidence artifacts are updated by curation and should be included in atomic roots.
-  const activeEvidenceFile = `docs/exec-plans/active/evidence/${plan.planId}.md`;
-  roots.add(assertSafeRelativePlanPath(activeEvidenceFile));
-  roots.add(assertSafeRelativePlanPath('docs/exec-plans/active/evidence/README.md'));
-
-  // Runtime context compilation may run during continuation sessions and mutate this generated file.
-  const runtimeContextPath = normalizedRelativePrefix(
-    config?.context?.runtimeContextPath ?? 'docs/generated/AGENT-RUNTIME-CONTEXT.md'
-  );
-  if (runtimeContextPath) {
-    roots.add(assertSafeRelativePlanPath(runtimeContextPath));
-  }
-
-  // Host validation may regenerate the aggregated outcomes scorecard as a repo-level validation artifact.
-  const runOutcomesPath = normalizedRelativePrefix('docs/generated/run-outcomes.json');
-  if (runOutcomesPath) {
-    roots.add(assertSafeRelativePlanPath(runOutcomesPath));
-  }
-
-  return [...roots]
-    .map((entry) => normalizedRelativePrefix(entry))
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-}
-
-function dirtyRepoPaths(rootDir, options = {}) {
-  const includeTransient = asBoolean(options.includeTransient, false);
-  const result = runShellCapture('git status --porcelain=v1 -z', rootDir);
-  if (result.status !== 0) {
-    return [];
-  }
-  const paths = parseGitPorcelainZPaths(result.stdout);
-  if (includeTransient) {
-    return paths;
-  }
-  return paths.filter((entry) => !isTransientAutomationPath(entry));
-}
-
-function stagedRepoPaths(rootDir, options = {}) {
-  const includeTransient = asBoolean(options.includeTransient, false);
-  const result = runShellCapture('git diff --cached --name-only -z', rootDir);
-  if (result.status !== 0) {
-    return [];
-  }
-  const paths = String(result.stdout ?? '')
-    .split('\0')
-    .map((entry) => toPosix(String(entry ?? '').trim()))
-    .filter(Boolean);
-  if (includeTransient) {
-    return paths;
-  }
-  return paths.filter((entry) => !isTransientAutomationPath(entry));
-}
-
-function gitDirty(rootDir, options = {}) {
-  const ignoreTransientAutomationArtifacts = asBoolean(options.ignoreTransientAutomationArtifacts, false);
-  const result = runShellCapture('git status --porcelain=v1 -z', rootDir);
-  if (result.status !== 0) {
-    return false;
-  }
-  const dirtyPaths = parseGitPorcelainZPaths(result.stdout);
-  if (!ignoreTransientAutomationArtifacts) {
-    return dirtyPaths.length > 0;
-  }
-  return dirtyPaths.some((pathValue) => !isTransientAutomationPath(pathValue));
-}
-
-function evaluateAtomicCommitReadiness(rootDir, planId, allowDirty, commitPolicy = {}, options = {}) {
-  const requireDirty = asBoolean(options.requireDirty, true);
-  if (allowDirty) {
-    return {
-      ok: false,
-      committed: false,
-      commitHash: null,
-      reason: 'Refusing atomic commit with --allow-dirty true. Re-run with --allow-dirty false or --commit false.'
-    };
-  }
-
-  if (!gitAvailable(rootDir)) {
-    return { ok: true, committed: false, commitHash: null, reason: 'git-unavailable' };
-  }
-
-  const hasDirtyChanges = gitDirty(rootDir, { ignoreTransientAutomationArtifacts: true });
-  if (requireDirty && !hasDirtyChanges) {
-    return { ok: true, committed: false, commitHash: null, reason: 'no-changes' };
-  }
-
-  const enforceRoots = asBoolean(commitPolicy.enforceRoots, true);
-  const allowedRoots = normalizeRelativePrefixList(commitPolicy.allowedRoots);
-  if (enforceRoots && allowedRoots.length > 0) {
-    const dirtyPaths = dirtyRepoPaths(rootDir);
-    const outsideRoots = dirtyPaths.filter((entry) => !allowedRoots.some((root) => pathMatchesRootPrefix(entry, root)));
-    if (outsideRoots.length > 0) {
-      return {
-        ok: false,
-        committed: false,
-        commitHash: null,
-        reason: `Atomic root policy violation for ${planId}. Paths outside allowed roots: ${outsideRoots.join(', ')}`
-      };
-    }
-  }
-
-  const preStagedPaths = stagedRepoPaths(rootDir, { includeTransient: true });
-  const stagedTransient = preStagedPaths.filter((entry) => isTransientAutomationPath(entry));
-  if (stagedTransient.length > 0) {
-    return {
-      ok: false,
-      committed: false,
-      commitHash: null,
-      reason: `Atomic commit refused because transient runtime files are already staged: ${stagedTransient.join(', ')}`
-    };
-  }
-  if (enforceRoots && allowedRoots.length > 0) {
-    const stagedOutsideRoots = preStagedPaths.filter(
-      (entry) => !allowedRoots.some((root) => pathMatchesRootPrefix(entry, root))
-    );
-    if (stagedOutsideRoots.length > 0) {
-      return {
-        ok: false,
-        committed: false,
-        commitHash: null,
-        reason: `Atomic root policy violation for ${planId}. Staged paths outside allowed roots: ${stagedOutsideRoots.join(', ')}`
-      };
-    }
-  }
-
-  return { ok: true, committed: false, commitHash: null, reason: null };
-}
-
-function createAtomicCommit(rootDir, planId, dryRun, allowDirty, commitPolicy = {}) {
-  if (dryRun) {
-    return { ok: true, committed: false, commitHash: null, reason: 'dry-run' };
-  }
-
-  const preflight = evaluateAtomicCommitReadiness(rootDir, planId, allowDirty, commitPolicy, { requireDirty: true });
-  if (!preflight.ok || preflight.reason === 'git-unavailable' || preflight.reason === 'no-changes') {
-    return preflight;
-  }
-
-  const allowedRoots = normalizeRelativePrefixList(commitPolicy.allowedRoots);
-  const addTargets = allowedRoots.length > 0 ? allowedRoots.map((entry) => shellQuote(entry)).join(' ') : '.';
-  const add = runShellCapture(`git add --all -- ${addTargets}`, rootDir);
-  if (add.status !== 0) {
-    return { ok: false, committed: false, commitHash: null, reason: 'git add failed' };
-  }
-
-  const commitMessage = `exec-plan(${planId}): complete`;
-  const commit = runShellCapture(`git commit -m ${JSON.stringify(commitMessage)}`, rootDir);
-  if (commit.status !== 0) {
-    return { ok: false, committed: false, commitHash: null, reason: 'git commit failed' };
-  }
-
-  const hash = runShellCapture('git rev-parse HEAD', rootDir);
-  const commitHash = hash.status === 0 ? String(hash.stdout ?? '').trim() : null;
-  return { ok: true, committed: true, commitHash, reason: null };
-}
-
 async function resolveCompletedPlanTargetPath(planFilePath, completedDir) {
   const completedDate = isoDate(nowIso());
   const currentBase = path.parse(path.basename(planFilePath));
@@ -8620,435 +7515,6 @@ async function announceStageReuse(paths, state, plan, roleState, options) {
   progressLog(options, `role stage reuse ${plan.planId}: skipped ${roleState.reusedPrefixStages.join(' -> ')}`);
 }
 
-async function runValidationAndFinalize(plan, paths, state, options, config, assessment, roleState, executionContext = {}) {
-  const session = asInteger(executionContext.session, 0);
-  const planStartedAt = executionContext.planStartedAt ?? nowIso();
-  const sessionsExecuted = asInteger(executionContext.sessionsExecuted, session);
-  const rollovers = asInteger(executionContext.rollovers, 0);
-
-  const approvalRequired = requiresSecurityApproval(plan, assessment, config);
-  const {
-    securityApprovalField,
-    securityApprovalValue,
-    metadataSecurityApproval,
-    source: securityApprovalSource
-  } = resolvedSecurityApproval(plan, assessment, config);
-  plan.securityApproval = securityApprovalValue;
-
-  if (approvalRequired && securityApprovalValue !== SECURITY_APPROVAL_APPROVED) {
-    await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
-    if (metadataSecurityApproval === SECURITY_APPROVAL_NOT_REQUIRED) {
-      await persistSecurityApproval(plan, securityApprovalField, SECURITY_APPROVAL_PENDING, options.dryRun);
-    }
-    const reason = `Security approval required: set '${securityApprovalField}' to '${SECURITY_APPROVAL_APPROVED}' for ${assessment.effectiveRiskTier}-risk completion.`;
-    await logEvent(paths, state, 'security_approval_pending', {
-      planId: plan.planId,
-      riskTier: assessment.effectiveRiskTier,
-      securityApprovalField,
-      securityApproval: securityApprovalValue,
-      sensitive: assessment.sensitive,
-      reason
-    }, options.dryRun);
-    progressLog(options, `security approval pending for ${plan.planId}: ${reason}`);
-    return {
-      outcome: 'blocked',
-      reason,
-      riskTier: assessment.effectiveRiskTier
-    };
-  }
-
-  if (approvalRequired && metadataSecurityApproval !== SECURITY_APPROVAL_APPROVED) {
-    await persistSecurityApproval(plan, securityApprovalField, SECURITY_APPROVAL_APPROVED, options.dryRun);
-    await logEvent(paths, state, 'security_approval_recorded', {
-      planId: plan.planId,
-      riskTier: assessment.effectiveRiskTier,
-      securityApprovalField,
-      source: securityApprovalSource
-    }, options.dryRun);
-    progressLog(
-      options,
-      `security approval recorded for ${plan.planId}: source=${securityApprovalSource} status=${SECURITY_APPROVAL_APPROVED}`
-    );
-  }
-
-  await setPlanStatus(plan.filePath, 'validation', options.dryRun);
-  progressLog(options, `validation start ${plan.planId} lane=always`);
-  const alwaysValidation = await runAlwaysValidation(paths, options, config, state, plan);
-  updatePlanValidationResults(state, plan.planId, 'always', alwaysValidation.results ?? []);
-  if (!alwaysValidation.ok) {
-    state.stats.validationFailures += 1;
-    const failureScope = classifyValidationFailureScope(alwaysValidation.failedResult, plan);
-    if (failureScope === 'external') {
-      updatePlanValidationState(state, plan.planId, {
-        always: 'pending',
-        reason: alwaysValidation.reason ?? `Validation blocked by residual external failure: ${alwaysValidation.failedCommand}`
-      });
-      await setPlanStatus(plan.filePath, 'validation', options.dryRun);
-      await setResidualValidationBlockersSection(
-        plan.filePath,
-        alwaysValidation.failedResult,
-        alwaysValidation.reason ?? `Validation blocked by residual external failure: ${alwaysValidation.failedCommand}`,
-        options.dryRun
-      );
-      await logEvent(paths, state, 'validation_residual_external', {
-        planId: plan.planId,
-        command: alwaysValidation.failedCommand,
-        reason: alwaysValidation.reason ?? null,
-        findingFiles: alwaysValidation.failedResult?.findingFiles ?? [],
-        outputLogPath: alwaysValidation.outputLogPath ?? null
-      }, options.dryRun);
-      progressLog(
-        options,
-        `validation residual blocker ${plan.planId}: ${alwaysValidation.reason ?? alwaysValidation.failedCommand}`
-      );
-      return {
-        outcome: 'pending',
-        reason: alwaysValidation.reason ?? `Validation blocked by residual external failure: ${alwaysValidation.failedCommand}`,
-        riskTier: assessment.effectiveRiskTier
-      };
-    }
-    updatePlanValidationState(state, plan.planId, {
-      always: 'failed',
-      reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`
-    });
-    await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-    await logEvent(paths, state, 'validation_failed', {
-      planId: plan.planId,
-      command: alwaysValidation.failedCommand,
-      reason: alwaysValidation.reason ?? null,
-      outputLogPath: alwaysValidation.outputLogPath ?? null
-    }, options.dryRun);
-    progressLog(options, `validation failed ${plan.planId}: ${alwaysValidation.reason ?? alwaysValidation.failedCommand}`);
-    if (alwaysValidation.outputLogPath) {
-      progressLog(options, `validation log: ${alwaysValidation.outputLogPath}`);
-    }
-    if (alwaysValidation.failureTail && !isTickerOutput(options)) {
-      progressLog(options, `validation failure tail:\n${alwaysValidation.failureTail}`);
-    }
-
-    return {
-      outcome: 'failed',
-      reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`,
-      riskTier: assessment.effectiveRiskTier
-    };
-  }
-
-  updatePlanValidationState(state, plan.planId, {
-    always: 'passed',
-    reason: null
-  });
-  progressLog(options, `validation passed ${plan.planId} lane=always`);
-
-  await logEvent(paths, state, 'host_validation_requested', {
-    planId: plan.planId,
-    mode: resolveHostValidationMode(config),
-    commands: resolveHostRequiredValidationCommands(config)
-  }, options.dryRun);
-  progressLog(options, `validation start ${plan.planId} lane=host mode=${resolveHostValidationMode(config)}`);
-
-  const hostValidation = await runHostValidation(paths, state, plan, options, config);
-  updatePlanValidationResults(state, plan.planId, 'host-required', hostValidation.results ?? []);
-  if (hostValidation.status === 'failed') {
-    state.stats.validationFailures += 1;
-    const failureScope = classifyValidationFailureScope(hostValidation.failedResult, plan);
-    if (failureScope === 'external') {
-      updatePlanValidationState(state, plan.planId, {
-        host: 'pending',
-        provider: hostValidation.provider ?? null,
-        reason: hostValidation.reason ?? 'Host validation blocked by residual external failure.'
-      });
-      await setPlanStatus(plan.filePath, 'validation', options.dryRun);
-      await setResidualValidationBlockersSection(
-        plan.filePath,
-        hostValidation.failedResult,
-        hostValidation.reason ?? 'Host validation blocked by residual external failure.',
-        options.dryRun
-      );
-      await logEvent(paths, state, 'host_validation_residual_external', {
-        planId: plan.planId,
-        provider: hostValidation.provider ?? null,
-        reason: hostValidation.reason ?? 'Host validation blocked by residual external failure.',
-        findingFiles: hostValidation.failedResult?.findingFiles ?? [],
-        outputLogPath: hostValidation.outputLogPath ?? null
-      }, options.dryRun);
-      progressLog(
-        options,
-        `host validation residual blocker ${plan.planId}: ${hostValidation.reason ?? 'Host validation blocked.'}`
-      );
-      return {
-        outcome: 'pending',
-        reason: hostValidation.reason ?? 'Host validation blocked by residual external failure.',
-        riskTier: assessment.effectiveRiskTier
-      };
-    }
-    updatePlanValidationState(state, plan.planId, {
-      host: 'failed',
-      provider: hostValidation.provider ?? null,
-      reason: hostValidation.reason ?? 'Host validation failed.'
-    });
-    await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-    await logEvent(paths, state, 'host_validation_failed', {
-      planId: plan.planId,
-      provider: hostValidation.provider ?? null,
-      reason: hostValidation.reason ?? 'Host validation failed.',
-      outputLogPath: hostValidation.outputLogPath ?? null
-    }, options.dryRun);
-    progressLog(options, `host validation failed ${plan.planId}: ${hostValidation.reason ?? 'Host validation failed.'}`);
-    if (hostValidation.outputLogPath) {
-      progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
-    }
-    if (hostValidation.failureTail && !isTickerOutput(options)) {
-      progressLog(options, `host validation failure tail:\n${hostValidation.failureTail}`);
-    }
-
-    return {
-      outcome: 'failed',
-      reason: hostValidation.reason ?? 'Host validation failed.',
-      riskTier: assessment.effectiveRiskTier
-    };
-  }
-
-  if (hostValidation.status === 'pending') {
-    updatePlanValidationState(state, plan.planId, {
-      host: 'pending',
-      provider: hostValidation.provider ?? null,
-      reason: hostValidation.reason ?? 'Host validation pending.'
-    });
-    await setPlanStatus(plan.filePath, 'validation', options.dryRun);
-    await setHostValidationSection(
-      plan.filePath,
-      'pending',
-      hostValidation.provider ?? 'unknown',
-      hostValidation.reason ?? 'Host validation pending.',
-      options.dryRun
-    );
-    await logEvent(paths, state, 'host_validation_blocked', {
-      planId: plan.planId,
-      provider: hostValidation.provider ?? null,
-      reason: hostValidation.reason ?? 'Host validation pending.',
-      outputLogPath: hostValidation.outputLogPath ?? null
-    }, options.dryRun);
-    progressLog(options, `host validation pending ${plan.planId}: ${hostValidation.reason ?? 'Host validation pending.'}`);
-    if (hostValidation.outputLogPath) {
-      progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
-    }
-    if (hostValidation.failureTail && !isTickerOutput(options)) {
-      progressLog(options, `host validation tail:\n${hostValidation.failureTail}`);
-    }
-
-    return {
-      outcome: 'pending',
-      reason: hostValidation.reason ?? 'Host validation pending.',
-      riskTier: assessment.effectiveRiskTier
-    };
-  }
-
-  updatePlanValidationState(state, plan.planId, {
-    host: 'passed',
-    provider: hostValidation.provider ?? null,
-    reason: null
-  });
-  await setHostValidationSection(
-    plan.filePath,
-    'passed',
-    hostValidation.provider ?? 'unknown',
-    'Host-required validations passed.',
-    options.dryRun
-  );
-  await logEvent(paths, state, 'host_validation_passed', {
-    planId: plan.planId,
-    provider: hostValidation.provider ?? null
-  }, options.dryRun);
-  progressLog(options, `host validation passed ${plan.planId} provider=${hostValidation.provider ?? 'n/a'}`);
-
-  const semanticProofReport = evaluateSemanticProofCoverage(plan, state, config);
-  const semanticProofManifestPath = await writeSemanticProofManifest(paths, state, plan, semanticProofReport, options);
-  await logEvent(paths, state, 'semantic_proof_evaluated', {
-    planId: plan.planId,
-    mode: semanticProofReport.mode,
-    applicable: semanticProofReport.applicable,
-    satisfied: semanticProofReport.satisfied,
-    issueCount: semanticProofReport.issues.length,
-    manifestPath: semanticProofManifestPath
-  }, options.dryRun);
-  if (semanticProofReport.applicable && !semanticProofReport.satisfied) {
-    progressLog(
-      options,
-      `semantic proof ${semanticProofReport.mode} ${plan.planId}: ${semanticProofReport.issues.slice(0, 3).join(' | ') || 'coverage incomplete'}`
-    );
-    if (semanticProofReport.mode === 'required') {
-      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      return {
-        outcome: 'failed',
-        reason: `Semantic proof coverage incomplete: ${semanticProofReport.issues[0] ?? 'unknown proof gap'}`,
-        riskTier: assessment.effectiveRiskTier
-      };
-    }
-  }
-
-  const mergedValidationEvidence = [
-    ...alwaysValidation.evidence,
-    ...(Array.isArray(hostValidation.evidence) ? hostValidation.evidence : []),
-    ...semanticProofCoverageLines(semanticProofReport),
-    ...(semanticProofManifestPath ? [`Semantic proof manifest: ${semanticProofManifestPath}`] : [])
-  ];
-  const shouldCreateAtomicCommit = asBoolean(options.commit, config.git.atomicCommits !== false);
-  const completedTargetPath = await resolveCompletedPlanTargetPath(plan.filePath, paths.completedDir);
-  const completedTargetRel = toPosix(path.relative(paths.rootDir, completedTargetPath));
-  const commitPolicy = {
-    enforceRoots: asBoolean(config.git?.atomicCommitRoots?.enforce, true),
-    allowedRoots: resolveAtomicCommitRoots(
-      plan,
-      config,
-      paths,
-      { completedRel: completedTargetRel }
-    )
-  };
-
-  if (shouldCreateAtomicCommit && !options.dryRun) {
-    const preflight = evaluateAtomicCommitReadiness(
-      paths.rootDir,
-      plan.planId,
-      options.allowDirty,
-      commitPolicy,
-      { requireDirty: false }
-    );
-    if (!preflight.ok) {
-      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      return {
-        outcome: 'failed',
-        reason: preflight.reason ?? 'atomic commit preflight failed'
-      };
-    }
-  }
-
-  const lifecycle = resolveEvidenceLifecycleConfig(config);
-  if (lifecycle.pruneOnComplete) {
-    const completionCuration = await curateEvidenceForPlan(plan, paths, options, config);
-    if (completionCuration.filesPruned > 0 || completionCuration.filesUpdated > 0) {
-      await logEvent(paths, state, 'evidence_curated', {
-        planId: plan.planId,
-        stage: 'completion',
-        session,
-        directoriesVisited: completionCuration.directoriesVisited,
-        filesPruned: completionCuration.filesPruned,
-        filesKept: completionCuration.filesKept,
-        filesUpdated: completionCuration.filesUpdated,
-        replacementsApplied: completionCuration.replacementsApplied
-      }, options.dryRun);
-      await refreshEvidenceIndex(plan, paths, state, options, config);
-    }
-  }
-
-  if (shouldCreateAtomicCommit && !options.dryRun) {
-    const preflight = evaluateAtomicCommitReadiness(
-      paths.rootDir,
-      plan.planId,
-      options.allowDirty,
-      commitPolicy,
-      { requireDirty: false }
-    );
-    if (!preflight.ok) {
-      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      return {
-        outcome: 'failed',
-        reason: preflight.reason ?? 'atomic commit preflight failed'
-      };
-    }
-  }
-
-  const rollbackSnapshots = new Map();
-  const captureRollbackSnapshot = async (targetPath) => {
-    const key = path.resolve(targetPath);
-    if (rollbackSnapshots.has(key)) {
-      return;
-    }
-    rollbackSnapshots.set(key, await snapshotFileState(key));
-  };
-  const rollbackCompletionMutation = async () => {
-    const restoreTargets = [...rollbackSnapshots.keys()].reverse();
-    for (const target of restoreTargets) {
-      await restoreFileState(target, rollbackSnapshots.get(target));
-    }
-  };
-
-  if (shouldCreateAtomicCommit && !options.dryRun) {
-    await captureRollbackSnapshot(plan.filePath);
-    await captureRollbackSnapshot(completedTargetPath);
-    await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, `${plan.planId}.md`));
-    await captureRollbackSnapshot(path.join(paths.evidenceIndexDir, 'README.md'));
-    const specTargets = plan.specTargets.length > 0 ? plan.specTargets : ['docs/product-specs/CURRENT-STATE.md'];
-    for (const target of specTargets) {
-      try {
-        const resolved = resolveSafeRepoPath(paths.rootDir, target, `Spec target for plan '${plan.planId}'`);
-        await captureRollbackSnapshot(resolved.abs);
-      } catch {
-        // Skip invalid spec targets here; updateProductSpecs already emits explicit skip events.
-      }
-    }
-  }
-
-  const completedPath = await finalizeCompletedPlan(
-    plan,
-    paths,
-    state,
-    mergedValidationEvidence,
-    options,
-    config,
-    {
-      planStartedAt,
-      sessionsExecuted,
-      rollovers,
-      hostValidationProvider: hostValidation.provider ?? 'none',
-      semanticProofReport,
-      semanticProofManifestPath,
-      effectiveRiskTier: assessment.effectiveRiskTier,
-      declaredRiskTier: assessment.declaredRiskTier,
-      rolePipeline:
-        Array.isArray(roleState?.stages) && roleState.stages.length > 0
-          ? roleState.stages.join(' -> ')
-          : ROLE_WORKER,
-      targetPath: completedTargetPath
-    }
-  );
-
-  await updateProductSpecs(plan, completedPath, paths, state, options);
-
-  let commitResult = { ok: true, committed: false, commitHash: null };
-  if (shouldCreateAtomicCommit) {
-    commitResult = createAtomicCommit(
-      paths.rootDir,
-      plan.planId,
-      options.dryRun,
-      options.allowDirty,
-      commitPolicy
-    );
-    if (!commitResult.ok) {
-      if (!options.dryRun) {
-        await rollbackCompletionMutation();
-      }
-      await setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      return {
-        outcome: 'failed',
-        reason: commitResult.reason ?? 'atomic commit failed; completion mutation rolled back'
-      };
-    }
-    if (commitResult.committed) {
-      state.stats.commits += 1;
-    }
-  }
-
-  clearPlanContinuationState(state, plan.planId);
-  return {
-    outcome: 'completed',
-    reason: 'completed',
-    completedPath: toPosix(path.relative(paths.rootDir, completedPath)),
-    commitHash: commitResult.commitHash,
-    validationEvidence: mergedValidationEvidence,
-    riskTier: assessment.effectiveRiskTier
-  };
-}
-
 async function processPlan(plan, paths, state, options, config) {
   let lastAssessment = computeRiskAssessment(plan, state, config);
   const gate = evaluatePolicyGate(
@@ -9076,7 +7542,9 @@ async function processPlan(plan, paths, state, options, config) {
     };
   }
 
-  const initialCompletionGate = await evaluateCompletionGate(plan, paths.rootDir, state);
+  const initialCompletionGate = await evaluateCompletionGate(plan, paths.rootDir, state, {
+    implementationEvidencePaths
+  });
   if (!initialCompletionGate.ready) {
     await setPlanStatus(plan.filePath, 'in-progress', options.dryRun);
   }
@@ -9131,13 +7599,15 @@ async function processPlan(plan, paths, state, options, config) {
     const stageIndex = roleIndex + 1;
     const currentRole = normalizeRoleName(roleState.stages[roleIndex], ROLE_WORKER);
     const currentRoleProfile = resolveRoleExecutionProfile(config, currentRole, lastAssessment.effectiveRiskTier);
-    const completionGateBeforeSession = await evaluateCompletionGate(plan, paths.rootDir, state);
+    const completionGateBeforeSession = await evaluateCompletionGate(plan, paths.rootDir, state, {
+      implementationEvidencePaths
+    });
     if (completionGateBeforeSession.ready) {
       progressLog(
         options,
         `validation fast-path ${plan.planId}: status gate already open, skipping role=${currentRole}`
       );
-      return runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
+      return validationCompletionOps.runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
         session: Math.max(0, asInteger(ensurePlanSessionState(state, plan.planId).nextSessionOrdinal, 0)),
         sessionsExecuted: Math.max(0, sessionAttempt - 1),
         planStartedAt,
@@ -9332,6 +7802,7 @@ async function processPlan(plan, paths, state, options, config) {
     if (currentRole === ROLE_WORKER && sessionResult.status !== 'failed' && sessionResult.status !== 'blocked') {
       const implementationEvidenceUpdate = recordImplementationEvidence(
         state,
+        ensurePlanImplementationState,
         paths.rootDir,
         plan,
         sessionResult.touchSummary?.touched ?? [],
@@ -9445,7 +7916,9 @@ async function processPlan(plan, paths, state, options, config) {
     if (!(await exists(plan.filePath))) {
       const relocatedPlan = await findPlanRecordById(paths, plan.planId);
       if (relocatedPlan?.phase === 'completed') {
-        const completionGateForRelocatedPlan = await evaluateCompletionGate(relocatedPlan, paths.rootDir, state);
+        const completionGateForRelocatedPlan = await evaluateCompletionGate(relocatedPlan, paths.rootDir, state, {
+          implementationEvidencePaths
+        });
         if (!completionGateForRelocatedPlan.ready) {
           return {
             outcome: 'failed',
@@ -9807,7 +8280,9 @@ async function processPlan(plan, paths, state, options, config) {
       continue;
     }
 
-    let completionGate = await evaluateCompletionGate(plan, paths.rootDir, state);
+    let completionGate = await evaluateCompletionGate(plan, paths.rootDir, state, {
+      implementationEvidencePaths
+    });
     if (!completionGate.ready) {
       const autoPromotedGate = await maybeAutoPromoteCompletionGate(
         plan.filePath,
@@ -9818,7 +8293,9 @@ async function processPlan(plan, paths, state, options, config) {
       if (autoPromotedGate.promoted) {
         const refreshedPlan = await findPlanRecordById(paths, plan.planId);
         syncPlanRecord(plan, refreshedPlan);
-        completionGate = await evaluateCompletionGate(plan, paths.rootDir, state);
+        completionGate = await evaluateCompletionGate(plan, paths.rootDir, state, {
+          implementationEvidencePaths
+        });
         await logEvent(paths, state, 'completion_gate_auto_promoted_validation', {
           planId: plan.planId,
           session,
@@ -9882,7 +8359,7 @@ async function processPlan(plan, paths, state, options, config) {
       continue;
     }
 
-    return runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
+    return validationCompletionOps.runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
       session,
       sessionsExecuted: sessionAttempt,
       planStartedAt,
