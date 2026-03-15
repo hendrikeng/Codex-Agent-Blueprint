@@ -1,6 +1,6 @@
 # Agent Runtime Context (Generated)
 
-Generated At: 2026-03-13T22:08:28.470Z
+Generated At: 2026-03-15T13:14:16.261Z
 Primary Sources: AGENTS.md, docs/agent-hardening/MEMORY_CONTEXT.md, docs/governance/policy-manifest.json, docs/ops/automation/orchestrator.config.json
 
 ## Mission
@@ -61,3 +61,4 @@ Primary Sources: AGENTS.md, docs/agent-hardening/MEMORY_CONTEXT.md, docs/governa
 - Apply scoped changes only; keep evidence links canonical.
 - Preserve required safety gates and risk-routing behavior.
 - Use fast verification during iteration, full verification before merge.
+

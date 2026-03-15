@@ -87,16 +87,115 @@ function normalizeTargetPathValue(value) {
   return String(value ?? '').trim().replaceAll('\\', '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
 }
 
-function isNonDocImplementationTarget(value) {
+function implementationTargetCategory(value) {
   const normalized = normalizeTargetPathValue(value);
   if (!normalized) {
-    return false;
+    return '';
   }
+  const baseName = path.posix.basename(normalized).toLowerCase();
   const lower = normalized.toLowerCase();
   if (lower.startsWith('docs/')) {
-    return false;
+    return 'docs';
   }
-  return !lower.endsWith('.md') && !lower.endsWith('.mdx');
+  if (lower.endsWith('.md') || lower.endsWith('.mdx')) {
+    return 'docs';
+  }
+  if (
+    baseName.endsWith('.spec.ts') ||
+    baseName.endsWith('.spec.tsx') ||
+    baseName.endsWith('.spec.js') ||
+    baseName.endsWith('.spec.jsx') ||
+    baseName.endsWith('.test.ts') ||
+    baseName.endsWith('.test.tsx') ||
+    baseName.endsWith('.test.js') ||
+    baseName.endsWith('.test.jsx') ||
+    normalized.includes('/__tests__/') ||
+    normalized.includes('/tests/') ||
+    normalized.includes('/test/') ||
+    normalized.includes('/e2e/')
+  ) {
+    return 'tests';
+  }
+  if (
+    baseName === 'package-lock.json' ||
+    baseName === 'pnpm-lock.yaml' ||
+    baseName === 'yarn.lock' ||
+    baseName === 'bun.lockb'
+  ) {
+    return 'lockfiles';
+  }
+  if (
+    baseName === 'package.json' ||
+    baseName === 'tsconfig.json' ||
+    baseName === 'tsconfig.base.json' ||
+    baseName === 'turbo.json' ||
+    baseName === 'components.json' ||
+    baseName === 'biome.json' ||
+    baseName === 'biome.jsonc' ||
+    baseName === 'eslint.config.js' ||
+    baseName === 'eslint.config.mjs' ||
+    baseName === 'eslint.config.cjs' ||
+    baseName === 'eslint.config.ts' ||
+    baseName === 'vitest.config.js' ||
+    baseName === 'vitest.config.mjs' ||
+    baseName === 'vitest.config.cjs' ||
+    baseName === 'vitest.config.ts' ||
+    baseName === 'jest.config.js' ||
+    baseName === 'jest.config.mjs' ||
+    baseName === 'jest.config.cjs' ||
+    baseName === 'jest.config.ts' ||
+    baseName === 'playwright.config.js' ||
+    baseName === 'playwright.config.mjs' ||
+    baseName === 'playwright.config.cjs' ||
+    baseName === 'playwright.config.ts' ||
+    baseName === 'vite.config.js' ||
+    baseName === 'vite.config.mjs' ||
+    baseName === 'vite.config.cjs' ||
+    baseName === 'vite.config.ts' ||
+    baseName === 'next.config.js' ||
+    baseName === 'next.config.mjs' ||
+    baseName === 'next.config.cjs' ||
+    baseName === 'next.config.ts' ||
+    baseName === 'tailwind.config.js' ||
+    baseName === 'tailwind.config.mjs' ||
+    baseName === 'tailwind.config.cjs' ||
+    baseName === 'tailwind.config.ts' ||
+    baseName === 'pnpm-workspace.yaml' ||
+    baseName === 'pnpm-workspace.yml' ||
+    baseName.startsWith('.eslintrc') ||
+    baseName.startsWith('.prettierrc')
+  ) {
+    return 'configs';
+  }
+  if (
+    lower.startsWith('config/') ||
+    lower.startsWith('configs/') ||
+    lower.startsWith('db/') ||
+    lower.startsWith('migrations/') ||
+    lower.startsWith('prisma/') ||
+    lower.startsWith('sql/') ||
+    lower.startsWith('apps/') ||
+    lower.startsWith('libs/') ||
+    lower.startsWith('packages/') ||
+    lower.startsWith('src/')
+  ) {
+    return 'source';
+  }
+  if (lower.startsWith('scripts/')) {
+    return 'scripts';
+  }
+  return 'other';
+}
+
+function isSupportedImplementationTarget(value) {
+  const category = implementationTargetCategory(value);
+  return (
+    category === 'source' ||
+    category === 'tests' ||
+    category === 'scripts' ||
+    category === 'configs' ||
+    category === 'lockfiles'
+  );
 }
 
 function sectionBounds(content, sectionTitle) {
@@ -158,6 +257,41 @@ function candidatePlanScopeIds(plan, targetPlanId) {
     candidates.add(targetPlanId);
   }
   return candidates;
+}
+
+function expandScopedPlanIds(allPlans, targetPlanId) {
+  const scopedPlanIds = new Set();
+  const queue = [];
+
+  for (const plan of allPlans) {
+    if (candidatePlanScopeIds(plan, targetPlanId).size === 0 || !plan.planId) {
+      continue;
+    }
+    if (!scopedPlanIds.has(plan.planId)) {
+      scopedPlanIds.add(plan.planId);
+      queue.push(plan.planId);
+    }
+  }
+
+  while (queue.length > 0) {
+    const currentPlanId = queue.shift();
+    for (const plan of allPlans) {
+      const relatesToCurrent = plan.planId === currentPlanId || plan.parentPlanId === currentPlanId;
+      if (!relatesToCurrent) {
+        continue;
+      }
+      if (plan.planId && !scopedPlanIds.has(plan.planId)) {
+        scopedPlanIds.add(plan.planId);
+        queue.push(plan.planId);
+      }
+      if (plan.parentPlanId && !scopedPlanIds.has(plan.parentPlanId)) {
+        scopedPlanIds.add(plan.parentPlanId);
+        queue.push(plan.parentPlanId);
+      }
+    }
+  }
+
+  return scopedPlanIds;
 }
 
 async function scanPhase(phase, directoryPath) {
@@ -265,7 +399,9 @@ async function scanPhase(phase, directoryPath) {
     const implementationTargets = implementationTargetsRaw.map(normalizeTargetPathValue).filter(Boolean);
     const implementationTargetsProvided = implementationTargets.length > 0;
     const productSlicePlan = deliveryClass === 'product' && executionScope === 'slice';
-    const reconciliationRequired = phase === 'future' || (phase === 'active' && executionScope === 'program');
+    const phaseResetPlan = /^phase-\d+(?:-|$)/.test(inferredPlanId ?? '');
+    const reconciliationRequired =
+      phase === 'future' || (phase === 'active' && (executionScope === 'program' || phaseResetPlan));
 
     const mustLandRequired = phase === 'future' || phase === 'active';
 
@@ -382,10 +518,10 @@ async function scanPhase(phase, directoryPath) {
       );
     }
 
-    if (productSlicePlan && implementationTargetsProvided && !implementationTargets.some(isNonDocImplementationTarget)) {
+    if (productSlicePlan && implementationTargetsProvided && !implementationTargets.some(isSupportedImplementationTarget)) {
       addFinding(
         'INVALID_IMPLEMENTATION_TARGETS',
-        "Product slice plans must include at least one non-doc path in 'Implementation-Targets'.",
+        "Product slice plans must include at least one runtime-supported path in 'Implementation-Targets' (source|tests|scripts|configs|lockfiles outside docs).",
         rel
       );
     }
@@ -729,10 +865,11 @@ async function main() {
 
   let scopeSummary = '';
   if (scopedPlanId) {
+    const scopedPlanIds = expandScopedPlanIds(allPlans, scopedPlanId);
     const scopedFiles = new Set();
     for (const plan of allPlans) {
       const ids = candidatePlanScopeIds(plan, scopedPlanId);
-      if (ids.size > 0) {
+      if (ids.size > 0 || (plan.planId && scopedPlanIds.has(plan.planId))) {
         scopedFiles.add(plan.rel);
       }
     }

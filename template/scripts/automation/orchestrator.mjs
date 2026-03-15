@@ -1659,6 +1659,13 @@ function hasMeaningfulWorkerTouchSummary(summary, touchPolicy = null) {
   }
 
   const categories = Array.isArray(summary?.categories) ? summary.categories : [];
+  if (touchPolicy?.allowPlanDocsOnlyTouches) {
+    return categories.some((entry) => {
+      const category = String(entry?.category ?? '').trim().toLowerCase();
+      const count = Number(entry?.count ?? 0);
+      return category !== 'plan-docs' && isMeaningfulWorkerTouchCategory(category, touchPolicy) && Number.isFinite(count) && count > 0;
+    });
+  }
   return categories.some((entry) => {
     const category = String(entry?.category ?? '').trim().toLowerCase();
     const count = Number(entry?.count ?? 0);
@@ -1678,7 +1685,21 @@ function isMeaningfulWorkerTouchCategory(category, touchPolicy = null) {
 }
 
 function isMeaningfulWorkerTouchPath(filePath, touchPolicy = null) {
-  return isMeaningfulWorkerTouchCategory(classifyTouchedPath(filePath), touchPolicy);
+  const normalized = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
+  if (!normalized) {
+    return false;
+  }
+  if (!isMeaningfulWorkerTouchCategory(classifyTouchedPath(normalized), touchPolicy)) {
+    return false;
+  }
+  if (!touchPolicy?.allowPlanDocsOnlyTouches) {
+    return true;
+  }
+  const allowedTouchRoots = Array.isArray(touchPolicy.allowedTouchRoots) ? touchPolicy.allowedTouchRoots : [];
+  if (allowedTouchRoots.length === 0) {
+    return false;
+  }
+  return allowedTouchRoots.some((root) => pathMatchesRootPrefix(normalized, root));
 }
 
 function buildWorkerTouchPolicy(plan) {
@@ -1688,6 +1709,14 @@ function buildWorkerTouchPolicy(plan) {
   const validationReady = content ? documentValidationReadyValue(content) : '';
   const validationOnlyPlan = completionGateReadyForValidation(documentStatus, validationReady);
   const allowPlanDocsOnlyTouches = docsOnlyArtifactPlan;
+  const allowedTouchRoots = allowPlanDocsOnlyTouches
+    ? normalizeRelativePrefixList([
+        plan.rel,
+        ...normalizeRelativePrefixList(plan.specTargets ?? []),
+        toPosix(path.posix.join('docs', 'exec-plans', 'active', 'evidence', `${plan.planId}.md`)),
+        toPosix(path.posix.join('docs', 'exec-plans', 'evidence-index', `${plan.planId}.md`))
+      ])
+    : [];
   const progressLabel = allowPlanDocsOnlyTouches
     ? 'repository edits in the plan\'s scoped docs/artifact targets'
     : 'repository edits outside plan/evidence files';
@@ -1696,6 +1725,7 @@ function buildWorkerTouchPolicy(plan) {
     docsOnlySpecTargets: docsOnlyArtifactPlan,
     validationOnlyPlan,
     allowPlanDocsOnlyTouches,
+    allowedTouchRoots,
     progressLabel
   };
 }
@@ -3780,7 +3810,7 @@ async function persistSecurityApproval(plan, securityApprovalField, securityAppr
 
 function createInitialState(runId, requestedMode, effectiveMode) {
   return {
-    version: 3,
+    version: 4,
     runId,
     requestedMode,
     effectiveMode,
@@ -3800,6 +3830,7 @@ function createInitialState(runId, requestedMode, effectiveMode) {
     validationState: {},
     recoveryState: {},
     continuationState: {},
+    sessionState: {},
     evidenceState: {},
     implementationState: {},
     roleState: {},
@@ -3830,6 +3861,10 @@ function normalizePersistedState(state) {
   normalized.continuationState =
     normalized.continuationState && typeof normalized.continuationState === 'object'
       ? normalized.continuationState
+      : {};
+  normalized.sessionState =
+    normalized.sessionState && typeof normalized.sessionState === 'object'
+      ? normalized.sessionState
       : {};
   normalized.evidenceState =
     normalized.evidenceState && typeof normalized.evidenceState === 'object' ? normalized.evidenceState : {};
@@ -4013,6 +4048,26 @@ function ensurePlanContinuationState(state, planId) {
   return state.continuationState[planId];
 }
 
+function ensurePlanSessionState(state, planId) {
+  if (!state.sessionState || typeof state.sessionState !== 'object') {
+    state.sessionState = {};
+  }
+  if (!state.sessionState[planId] || typeof state.sessionState[planId] !== 'object') {
+    state.sessionState[planId] = {
+      nextSessionOrdinal: 0,
+      updatedAt: null
+    };
+  }
+  return state.sessionState[planId];
+}
+
+function nextPlanSessionOrdinal(state, planId) {
+  const current = ensurePlanSessionState(state, planId);
+  current.nextSessionOrdinal = Math.max(0, asInteger(current.nextSessionOrdinal, 0)) + 1;
+  current.updatedAt = nowIso();
+  return current.nextSessionOrdinal;
+}
+
 function clearPlanContinuationState(state, planId) {
   if (!state.continuationState || typeof state.continuationState !== 'object') {
     return;
@@ -4041,6 +4096,7 @@ function ensurePlanImplementationState(state, planId) {
   }
   if (!state.implementationState[planId] || typeof state.implementationState[planId] !== 'object') {
     state.implementationState[planId] = {
+      pathRecords: {},
       touchedPaths: [],
       lastRecordedAt: null,
       updatedAt: null
@@ -4052,6 +4108,32 @@ function ensurePlanImplementationState(state, planId) {
 async function saveState(paths, state, dryRun) {
   state.lastUpdated = nowIso();
   await writeJson(paths.runStatePath, state, dryRun);
+}
+
+async function hydrateSessionStateFromRunEvents(paths, state) {
+  if (!state?.runId) {
+    return;
+  }
+  let raw = '';
+  try {
+    raw = await fs.readFile(paths.runEventsPath, 'utf8');
+  } catch {
+    return;
+  }
+  for (const event of parseEventLines(raw)) {
+    if (String(event?.runId ?? '') !== state.runId) {
+      continue;
+    }
+    const details = event?.details && typeof event.details === 'object' ? event.details : {};
+    const planId = String(event?.planId ?? details.planId ?? '').trim();
+    const session = Math.max(0, asInteger(event?.session ?? details.session, 0));
+    if (!planId || session <= 0) {
+      continue;
+    }
+    const current = ensurePlanSessionState(state, planId);
+    current.nextSessionOrdinal = Math.max(asInteger(current.nextSessionOrdinal, 0), session);
+    current.updatedAt = nowIso();
+  }
 }
 
 function redactString(value) {
@@ -4825,7 +4907,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     role === ROLE_WORKER ? dirtyImplementationTouchPaths(paths.rootDir, plan) : [];
   const workerHasImplementationBaseline =
     role === ROLE_WORKER
-      ? workerDirtyImplementationBaselinePaths.length > 0 || hasRecordedImplementationEvidence(state, plan)
+      ? workerDirtyImplementationBaselinePaths.length > 0 || hasRecordedImplementationEvidence(state, plan, paths.rootDir)
       : false;
 
   if (!options.dryRun) {
@@ -5682,7 +5764,7 @@ async function evaluateCompletionGate(plan, rootDir, state = null) {
         };
       }
 
-      const implementationTouches = implementationEvidencePaths(state, plan);
+      const implementationTouches = implementationEvidencePaths(state, plan, rootDir);
       if (implementationTouches.length === 0) {
         const targetPreview = targetRoots.slice(0, 4).join(', ');
         return {
@@ -7253,24 +7335,81 @@ function dirtyImplementationTouchPaths(rootDir, plan) {
   );
 }
 
-function implementationEvidencePaths(state, plan) {
+function implementationEvidenceFingerprint(rootDir, relativePath) {
+  const normalized = toPosix(String(relativePath ?? '').trim()).replace(/^\.?\//, '');
+  if (!normalized) {
+    return 'missing';
+  }
+  const absPath = path.join(rootDir, normalized);
+  try {
+    const stat = fsSync.lstatSync(absPath);
+    if (stat.isFile()) {
+      const digest = createHash('sha1').update(fsSync.readFileSync(absPath)).digest('hex');
+      return `f:${stat.size}:${digest}`;
+    }
+    if (stat.isDirectory()) {
+      return 'd';
+    }
+    if (stat.isSymbolicLink()) {
+      return `l:${fsSync.readlinkSync(absPath)}`;
+    }
+    return 'o';
+  } catch {
+    return 'missing';
+  }
+}
+
+function implementationEvidenceEntries(state, plan, rootDir) {
   const implementationRoots = implementationTargetRoots(plan);
   if (implementationRoots.length === 0) {
     return [];
   }
-  const touchedPaths = Array.isArray(state?.implementationState?.[plan.planId]?.touchedPaths)
-    ? state.implementationState[plan.planId].touchedPaths
-    : [];
-  return normalizeTouchedPathList(touchedPaths).filter((entry) =>
-    implementationRoots.some((root) => pathMatchesRootPrefix(entry, root))
-  );
+  const entry = state?.implementationState?.[plan.planId];
+  const pathRecords = entry?.pathRecords && typeof entry.pathRecords === 'object'
+    ? entry.pathRecords
+    : {};
+  const touchedPaths = Array.isArray(entry?.touchedPaths) ? entry.touchedPaths : [];
+  const merged = new Map();
+
+  for (const [filePath, record] of Object.entries(pathRecords)) {
+    const normalized = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
+    if (!normalized) {
+      continue;
+    }
+    merged.set(normalized, {
+      fingerprint: String(record?.fingerprint ?? '').trim()
+    });
+  }
+
+  for (const filePath of normalizeTouchedPathList(touchedPaths)) {
+    if (merged.has(filePath)) {
+      continue;
+    }
+    merged.set(filePath, {
+      fingerprint: implementationEvidenceFingerprint(rootDir, filePath)
+    });
+  }
+
+  return [...merged.entries()]
+    .filter(([filePath]) => implementationRoots.some((root) => pathMatchesRootPrefix(filePath, root)))
+    .map(([filePath, record]) => ({
+      path: filePath,
+      fingerprint: record.fingerprint,
+      currentFingerprint: implementationEvidenceFingerprint(rootDir, filePath)
+    }));
 }
 
-function hasRecordedImplementationEvidence(state, plan) {
-  return implementationEvidencePaths(state, plan).length > 0;
+function implementationEvidencePaths(state, plan, rootDir) {
+  return implementationEvidenceEntries(state, plan, rootDir)
+    .filter((entry) => entry.fingerprint && entry.currentFingerprint === entry.fingerprint)
+    .map((entry) => entry.path);
 }
 
-function recordImplementationEvidence(state, plan, touchedPaths = []) {
+function hasRecordedImplementationEvidence(state, plan, rootDir) {
+  return implementationEvidencePaths(state, plan, rootDir).length > 0;
+}
+
+function recordImplementationEvidence(state, rootDir, plan, touchedPaths = [], metadata = {}) {
   const implementationRoots = implementationTargetRoots(plan);
   if (implementationRoots.length === 0) {
     return { recorded: false, matchedPaths: [] };
@@ -7284,11 +7423,25 @@ function recordImplementationEvidence(state, plan, touchedPaths = []) {
   }
 
   const current = ensurePlanImplementationState(state, plan.planId);
+  const pathRecords = current.pathRecords && typeof current.pathRecords === 'object'
+    ? current.pathRecords
+    : {};
   const mergedPaths = [...new Set([...(Array.isArray(current.touchedPaths) ? current.touchedPaths : []), ...matchedPaths])];
+  const recordedAt = nowIso();
+  for (const filePath of matchedPaths) {
+    pathRecords[filePath] = {
+      fingerprint: implementationEvidenceFingerprint(rootDir, filePath),
+      recordedAt,
+      runId: metadata.runId ?? null,
+      session: metadata.session ?? null,
+      role: metadata.role ?? null
+    };
+  }
   state.implementationState[plan.planId] = {
+    pathRecords,
     touchedPaths: mergedPaths,
-    lastRecordedAt: nowIso(),
-    updatedAt: nowIso()
+    lastRecordedAt: recordedAt,
+    updatedAt: recordedAt
   };
   return {
     recorded: true,
@@ -8356,7 +8509,7 @@ async function processPlan(plan, paths, state, options, config) {
   let roleState = ensureRoleState(state, plan, lastAssessment, resolvePipelineStages(lastAssessment, config), config);
   await announceStageReuse(paths, state, plan, roleState, options);
 
-  for (let session = 1; session <= maxSessionsPerPlan; session += 1) {
+  for (let sessionAttempt = 1; sessionAttempt <= maxSessionsPerPlan; sessionAttempt += 1) {
     lastAssessment = computeRiskAssessment(plan, state, config);
     const dynamicGate = evaluatePolicyGate(
       {
@@ -8387,12 +8540,14 @@ async function processPlan(plan, paths, state, options, config) {
         `validation fast-path ${plan.planId}: status gate already open, skipping role=${currentRole}`
       );
       return runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
-        session,
-        sessionsExecuted: Math.max(0, session - 1),
+        session: Math.max(0, asInteger(ensurePlanSessionState(state, plan.planId).nextSessionOrdinal, 0)),
+        sessionsExecuted: Math.max(0, sessionAttempt - 1),
         planStartedAt,
         rollovers
       });
     }
+
+    const session = nextPlanSessionOrdinal(state, plan.planId);
 
     state.inProgress = {
       planId: plan.planId,
@@ -8494,21 +8649,6 @@ async function processPlan(plan, paths, state, options, config) {
         updatedAt: sessionResult.liveActivity.updatedAt ?? null
       }, options.dryRun);
     }
-    const implementationEvidenceUpdate = recordImplementationEvidence(
-      state,
-      plan,
-      sessionResult.touchSummary?.touched ?? []
-    );
-    if (implementationEvidenceUpdate.recorded) {
-      await logEvent(paths, state, 'implementation_evidence_recorded', {
-        planId: plan.planId,
-        session,
-        role: currentRole,
-        matchedPaths: implementationEvidenceUpdate.matchedPaths.slice(0, 20),
-        matchedCount: implementationEvidenceUpdate.matchedPaths.length
-      }, options.dryRun);
-      await saveState(paths, state, options.dryRun);
-    }
     const workerTouchCount =
       typeof sessionResult.touchSummary?.count === 'number' && Number.isFinite(sessionResult.touchSummary.count)
         ? sessionResult.touchSummary.count
@@ -8589,6 +8729,30 @@ async function processPlan(plan, paths, state, options, config) {
         incidentBundleFile,
         status: sessionResult.status
       }, options.dryRun);
+    }
+
+    if (currentRole === ROLE_WORKER && sessionResult.status !== 'failed' && sessionResult.status !== 'blocked') {
+      const implementationEvidenceUpdate = recordImplementationEvidence(
+        state,
+        paths.rootDir,
+        plan,
+        sessionResult.touchSummary?.touched ?? [],
+        {
+          runId: state.runId,
+          session,
+          role: currentRole
+        }
+      );
+      if (implementationEvidenceUpdate.recorded) {
+        await logEvent(paths, state, 'implementation_evidence_recorded', {
+          planId: plan.planId,
+          session,
+          role: currentRole,
+          matchedPaths: implementationEvidenceUpdate.matchedPaths.slice(0, 20),
+          matchedCount: implementationEvidenceUpdate.matchedPaths.length
+        }, options.dryRun);
+        await saveState(paths, state, options.dryRun);
+      }
     }
 
     if (sessionResult.status === 'handoff_required') {
@@ -8840,7 +9004,7 @@ async function processPlan(plan, paths, state, options, config) {
       if (
         workerNeedsMeaningfulTouch &&
         workerNoTouchRetryCount < workerNoTouchRetryLimit &&
-        session < maxSessionsPerPlan
+        sessionAttempt < maxSessionsPerPlan
       ) {
         workerNoTouchRetryCount += 1;
         const retryReason =
@@ -8991,7 +9155,7 @@ async function processPlan(plan, paths, state, options, config) {
       state.roleState[plan.planId] = roleState;
       storeContinuationState();
       await saveState(paths, state, options.dryRun);
-      if (session >= maxSessionsPerPlan) {
+      if (sessionAttempt >= maxSessionsPerPlan) {
         storeContinuationState();
         await saveState(paths, state, options.dryRun);
         return {
@@ -9118,7 +9282,7 @@ async function processPlan(plan, paths, state, options, config) {
 
     return runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
       session,
-      sessionsExecuted: session,
+      sessionsExecuted: sessionAttempt,
       planStartedAt,
       rollovers
     });
@@ -10079,8 +10243,16 @@ async function runCommand(paths, options) {
   }
   const modeResolution = resolveEffectiveMode(options.mode);
   const runId = options.runId || randomRunId();
+  const previousPersisted = await readJsonIfExists(paths.runStatePath, null);
+  const previousState =
+    previousPersisted && typeof previousPersisted === 'object' && previousPersisted.runId
+      ? normalizePersistedState(previousPersisted)
+      : null;
 
   const state = createInitialState(runId, modeResolution.requestedMode, modeResolution.effectiveMode);
+  if (previousState?.implementationState && typeof previousState.implementationState === 'object') {
+    state.implementationState = previousState.implementationState;
+  }
   state.capabilities = await detectCapabilities();
 
   if (
@@ -10219,6 +10391,7 @@ async function resumeCommand(paths, options) {
     );
     state.inProgress = null;
   }
+  await hydrateSessionStateFromRunEvents(paths, state);
   state.capabilities = await detectCapabilities();
   if (
     !asBoolean(options.allowDirty, false) &&
