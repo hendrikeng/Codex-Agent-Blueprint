@@ -137,10 +137,13 @@ async function main() {
   const runIds = new Set();
   const planIds = new Set();
   const planStats = new Map();
+  let explicitCheckpointAssessmentCount = 0;
   let sessionFinishedCount = 0;
   let continuityDerivedSessions = 0;
   let continuityDegradedSessions = 0;
   let resumeSafeCheckpointSessions = 0;
+  let fallbackContinuityDegradedSessions = 0;
+  let fallbackResumeSafeCheckpointSessions = 0;
   let contactPackSessions = 0;
   let contactPackGeneratedSessions = 0;
   let contactPackCacheHitSessions = 0;
@@ -322,8 +325,15 @@ async function main() {
         ) {
           stats.firstWorkerEditSeconds = (timestampMs - stats.firstSeenMs) / 1000;
         }
+        if (details.continuityDegraded === true) {
+          fallbackContinuityDegradedSessions += 1;
+        }
+        if (details.checkpointResumeSafe === true) {
+          fallbackResumeSafeCheckpointSessions += 1;
+        }
       }
       if (typeLower === 'session_checkpoint_assessed') {
+        explicitCheckpointAssessmentCount += 1;
         if (details.continuityDegraded === true) {
           continuityDegradedSessions += 1;
         }
@@ -342,6 +352,12 @@ async function main() {
         }
       }
     }
+  }
+
+  // Older runs may log checkpoint quality on session_finished without a dedicated assessment event.
+  if (explicitCheckpointAssessmentCount === 0) {
+    continuityDegradedSessions = fallbackContinuityDegradedSessions;
+    resumeSafeCheckpointSessions = fallbackResumeSafeCheckpointSessions;
   }
 
   const leadTimesSeconds = [];

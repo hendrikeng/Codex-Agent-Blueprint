@@ -226,7 +226,7 @@ Use the manual path when any of these are true:
   - Generates `docs/generated/run-outcomes.json` from `run-events.jsonl`, including `summary.memory` continuity and contact-pack metrics.
   - `npm run outcomes:verify`
   - Fails on derived continuity, thin-pack, resume-safe checkpoint, or repeated handoff-loop threshold breaches when outcome samples exist.
-  - `resumeSafeCheckpointRate` is computed from `session_checkpoint_assessed` events, not raw `session_finished` counts.
+  - `resumeSafeCheckpointRate` prefers `session_checkpoint_assessed` events and falls back to checkpoint fields embedded in `session_finished` events when older runs do not emit the dedicated assessment event.
   - `thinPackRate` only counts sessions that were genuinely missing expected continuity categories from the available candidate set; first-session packs without reusable checkpoints are not thin by default.
 - GitHub interop export scaffold (optional):
   - `npm run interop:github:export`
