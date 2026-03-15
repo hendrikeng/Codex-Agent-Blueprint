@@ -6079,24 +6079,40 @@ function normalizeEvidenceReference(reference, planRel) {
   }
 
   const planDir = toPosix(path.posix.dirname(planRel));
+  const rootScopedPrefixes = ['docs/', 'apps/', 'packages/', 'scripts/', 'prisma/'];
   if (clean.startsWith('./') || clean.startsWith('../')) {
     return toPosix(path.posix.normalize(path.posix.join(planDir, clean)));
   }
   if (clean.startsWith('evidence/')) {
     return toPosix(path.posix.normalize(path.posix.join(planDir, clean)));
   }
-  if (clean.startsWith('docs/')) {
+  if (rootScopedPrefixes.some((prefix) => clean.startsWith(prefix))) {
+    return toPosix(path.posix.normalize(clean));
+  }
+  if (/^[A-Za-z0-9._-]+\.md$/u.test(clean)) {
     return toPosix(path.posix.normalize(clean));
   }
   return null;
 }
 
-function isExecutionPlanEvidenceReference(reference) {
+function isRepoEvidenceReference(reference) {
   const normalized = toPosix(String(reference ?? '').trim());
-  if (!normalized.startsWith('docs/exec-plans/')) {
+  return (
+    normalized.startsWith('docs/') ||
+    normalized.startsWith('apps/') ||
+    normalized.startsWith('packages/') ||
+    normalized.startsWith('scripts/') ||
+    normalized.startsWith('prisma/') ||
+    /^[A-Za-z0-9._-]+\.md$/u.test(normalized)
+  );
+}
+
+function isLikelyEvidenceCommand(reference) {
+  const normalized = String(reference ?? '').trim();
+  if (!normalized) {
     return false;
   }
-  return normalized.includes('/evidence/');
+  return /^(?:npm|pnpm|yarn|bun|npx|node|tsx|vitest|playwright|jest|cargo|go|pytest|uv)\b/u.test(normalized);
 }
 
 function extractEvidenceReferencesFromContent(content, planRel) {
@@ -6104,11 +6120,11 @@ function extractEvidenceReferencesFromContent(content, planRel) {
   const linkRegex = /\[[^\]]+\]\(([^)]+)\)/g;
   const inlineCodeRegex = /`([^`]+)`/g;
   const barePathRegex =
-    /(^|[\s(:>])((?:\.\.\/|\.\/)?evidence\/[A-Za-z0-9._/-]+|(?:\.\.\/|\.\/)?docs\/exec-plans\/(?:active|completed)\/evidence\/[A-Za-z0-9._/-]+)(?=$|[\s),.:;!?])/gm;
+    /(^|[\s(:>])((?:\.\.\/|\.\/)?evidence\/[A-Za-z0-9._/-]+|(?:\.\.\/|\.\/)?(?:docs|apps|packages|scripts|prisma)\/[A-Za-z0-9._/-]+|(?:README|AGENTS|ARCHITECTURE)\.md)(?=$|[\s),.:;!?])/gm;
 
   function recordEvidenceReference(candidate) {
     const normalized = normalizeEvidenceReference(candidate, planRel);
-    if (normalized && isExecutionPlanEvidenceReference(normalized)) {
+    if (normalized && isRepoEvidenceReference(normalized)) {
       found.add(normalized);
     }
   }
@@ -6131,25 +6147,137 @@ function extractEvidenceReferencesFromContent(content, planRel) {
   return [...found];
 }
 
-async function collectEvidenceReferences(paths, planRel, content, maxReferences) {
-  const candidates = extractEvidenceReferencesFromContent(content, planRel);
+function extractEvidenceCommandReferencesFromContent(content) {
+  const found = new Set();
+  const inlineCodeRegex = /`([^`]+)`/g;
+  let codeMatch;
+  while ((codeMatch = inlineCodeRegex.exec(content)) != null) {
+    const candidate = String(codeMatch[1] ?? '').trim();
+    if (isLikelyEvidenceCommand(candidate)) {
+      found.add(candidate);
+    }
+  }
+  return [...found];
+}
+
+function evidenceReferencePriority(reference, planRel, companionEvidenceRel) {
+  const normalized = toPosix(String(reference ?? '').trim());
+  if (!normalized) {
+    return 50;
+  }
+  if (companionEvidenceRel && normalized === companionEvidenceRel) {
+    return 0;
+  }
+  if (normalized === planRel) {
+    return 1;
+  }
+  if (normalized.startsWith('docs/exec-plans/completed/')) {
+    return 2;
+  }
+  if (normalized.startsWith('docs/exec-plans/')) {
+    return 3;
+  }
+  if (normalized.startsWith('docs/')) {
+    return 4;
+  }
+  return 5;
+}
+
+async function collectEvidenceReferences(paths, plan, content, maxReferences) {
+  const candidates = new Map();
+  const planRel = plan.rel;
+  const companionEvidenceRel = toPosix(path.posix.join('docs', 'exec-plans', 'active', 'evidence', `${plan.planId}.md`));
+  const companionEvidenceAbs = path.join(paths.rootDir, companionEvidenceRel);
+
+  function addPathCandidate(relPath) {
+    const normalized = normalizeEvidenceReference(relPath, planRel);
+    if (!normalized || !isRepoEvidenceReference(normalized)) {
+      return;
+    }
+    candidates.set(`path:${normalized}`, {
+      kind: 'path',
+      relPath: normalized,
+      priority: evidenceReferencePriority(normalized, planRel, companionEvidenceRel)
+    });
+  }
+
+  function addLiteralCandidate(value, sourceAbsPath = null) {
+    const normalized = String(value ?? '').trim();
+    if (!isLikelyEvidenceCommand(normalized)) {
+      return;
+    }
+    candidates.set(`literal:${normalized}`, {
+      kind: 'literal',
+      value: normalized,
+      sourceAbsPath,
+      priority: 6
+    });
+  }
+
+  addPathCandidate(planRel);
+  for (const relPath of extractEvidenceReferencesFromContent(content, planRel)) {
+    addPathCandidate(relPath);
+  }
+  for (const command of extractEvidenceCommandReferencesFromContent(content)) {
+    addLiteralCandidate(command, path.join(paths.rootDir, planRel));
+  }
+
+  try {
+    await fs.access(companionEvidenceAbs);
+    addPathCandidate(companionEvidenceRel);
+    const companionContent = await fs.readFile(companionEvidenceAbs, 'utf8');
+    for (const relPath of extractEvidenceReferencesFromContent(companionContent, companionEvidenceRel)) {
+      addPathCandidate(relPath);
+    }
+    for (const command of extractEvidenceCommandReferencesFromContent(companionContent)) {
+      addLiteralCandidate(command, companionEvidenceAbs);
+    }
+  } catch {
+    // Companion evidence is optional; skip when absent.
+  }
+
   const enriched = [];
 
-  for (const relPath of candidates) {
-    const absPath = path.join(paths.rootDir, relPath);
+  for (const candidate of candidates.values()) {
+    if (candidate.kind === 'literal') {
+      let mtimeMs = 0;
+      if (candidate.sourceAbsPath) {
+        try {
+          const stats = await fs.stat(candidate.sourceAbsPath);
+          mtimeMs = stats.mtimeMs;
+        } catch {
+          mtimeMs = 0;
+        }
+      }
+      enriched.push({
+        kind: 'literal',
+        value: candidate.value,
+        mtimeMs,
+        priority: candidate.priority
+      });
+      continue;
+    }
+
+    const absPath = path.join(paths.rootDir, candidate.relPath);
     try {
       const stats = await fs.stat(absPath);
       enriched.push({
-        relPath,
+        kind: 'path',
+        relPath: candidate.relPath,
         absPath,
-        mtimeMs: stats.mtimeMs
+        mtimeMs: stats.mtimeMs,
+        priority: candidate.priority
       });
     } catch {
       // Skip missing references to keep index deterministic and valid.
     }
   }
 
-  enriched.sort((a, b) => b.mtimeMs - a.mtimeMs || a.relPath.localeCompare(b.relPath));
+  enriched.sort((a, b) => (
+    a.priority - b.priority ||
+    b.mtimeMs - a.mtimeMs ||
+    (a.kind === 'path' ? a.relPath : a.value).localeCompare(b.kind === 'path' ? b.relPath : b.value)
+  ));
   const selected = enriched.slice(0, maxReferences);
   return {
     selected,
@@ -6733,7 +6861,7 @@ async function writeEvidenceIndex(paths, plan, content, options, config, overrid
   }
 
   const maxReferences = asInteger(config.evidence?.compaction?.maxReferences, DEFAULT_EVIDENCE_MAX_REFERENCES);
-  const { selected, totalFound } = await collectEvidenceReferences(paths, plan.rel, content, maxReferences);
+  const { selected, totalFound } = await collectEvidenceReferences(paths, plan, content, maxReferences);
   const sourcePlanRel = toPosix(String(overrides.sourcePlanRel ?? plan.rel));
   const indexRel = toPosix(path.relative(paths.rootDir, path.join(paths.evidenceIndexDir, `${plan.planId}.md`)));
   const indexAbs = path.join(paths.rootDir, indexRel);
@@ -6751,9 +6879,13 @@ async function writeEvidenceIndex(paths, plan, content, options, config, overrid
 
   lines.push('## Canonical References', '');
   if (selected.length === 0) {
-    lines.push('- No evidence references detected in the plan content yet.');
+    lines.push('- No canonical evidence references detected in the plan or companion evidence yet.');
   } else {
     for (const ref of selected) {
+      if (ref.kind === 'literal') {
+        lines.push(`- \`${ref.value}\``);
+        continue;
+      }
       const relativeLink = toPosix(path.relative(path.dirname(indexAbs), ref.absPath));
       lines.push(`- [${ref.relPath}](${relativeLink})`);
     }
