@@ -97,3 +97,60 @@ test('evaluateSemanticProofCoverage marks mapped must-land items as covered with
     }
   ]);
 });
+
+test('evaluateSemanticProofCoverage accepts strong repo validation refs when the validation type is strong', () => {
+  const plan = {
+    planId: 'example-plan',
+    deliveryClass: 'product',
+    executionScope: 'slice',
+    content: [
+      '# Example Plan',
+      '',
+      '## Must-Land Checklist',
+      '',
+      '- [x] `ml-example` Ship example capability',
+      '',
+      '## Capability Proof Map',
+      '',
+      '| Capability ID | Must-Land IDs | Claim | Required Strength |',
+      '| --- | --- | --- | --- |',
+      '| cap-example | ml-example | Example capability ships | strong |',
+      '',
+      '| Proof ID | Capability ID | Type | Lane | Validation ID / Artifact | Freshness |',
+      '| --- | --- | --- | --- | --- | --- |',
+      '| proof-example | cap-example | host-required | host-required | repo:verify-full | same-run |',
+      ''
+    ].join('\n')
+  };
+  const state = {
+    implementationState: {
+      'example-plan': {
+        lastRecordedAt: '2026-03-15T10:00:00Z'
+      }
+    },
+    validationResults: {
+      'example-plan': {
+        always: [],
+        'host-required': [
+          {
+            validationId: 'repo:verify-full',
+            status: 'passed',
+            finishedAt: '2026-03-15T10:05:00Z',
+            evidenceRefs: [],
+            artifactRefs: []
+          }
+        ]
+      }
+    }
+  };
+
+  const report = evaluateSemanticProofCoverage(plan, state, {
+    semanticProof: {
+      mode: 'required'
+    }
+  });
+
+  assert.equal(report.applicable, true);
+  assert.equal(report.satisfied, true);
+  assert.deepEqual(report.issues, []);
+});

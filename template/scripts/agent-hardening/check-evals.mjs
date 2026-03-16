@@ -27,7 +27,7 @@ function toIsoDate(value) {
 }
 
 function daysBetween(a, b) {
-  return Math.floor(Math.abs(b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function normalizePath(value) {
@@ -155,6 +155,9 @@ async function main() {
     fail("Config field 'maxAgeDays' must be a positive integer.");
   }
   const ageDays = daysBetween(generatedAt, new Date());
+  if (ageDays < 0) {
+    fail(`Eval report generatedAtUtc is in the future: ${generatedAtRaw}`);
+  }
   if (ageDays > maxAgeDays) {
     fail(`Eval report is stale (${ageDays} days old, max ${maxAgeDays}).`);
   }
@@ -307,6 +310,9 @@ async function main() {
       fail(`Continuity eval report generatedAtUtc is invalid: ${String(continuityReport.generatedAtUtc)}`);
     }
     const continuityAgeDays = daysBetween(continuityGeneratedAt, new Date());
+    if (continuityAgeDays < 0) {
+      fail(`Continuity eval report generatedAtUtc is in the future: ${String(continuityReport.generatedAtUtc)}`);
+    }
     if (continuityAgeDays > maxAgeDays) {
       fail(`Continuity eval report is stale (${continuityAgeDays} days old, max ${maxAgeDays}).`);
     }

@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { resolveRepoOrAbsolutePath } from './lib/orchestrator-shared.mjs';
 
 const PLAN_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const READ_ONLY_ORCH_ROLES = new Set(['planner', 'explorer', 'reviewer']);
@@ -95,7 +96,10 @@ async function writeValidationResult(payload) {
   if (!aggregateResultPath) {
     return;
   }
-  const absPath = path.join(rootDir, aggregateResultPath);
+  const absPath = resolveRepoOrAbsolutePath(rootDir, aggregateResultPath)?.abs;
+  if (!absPath) {
+    return;
+  }
   await fs.mkdir(path.dirname(absPath), { recursive: true });
   await fs.writeFile(absPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
@@ -113,7 +117,11 @@ async function readJsonIfExists(filePath) {
     return null;
   }
   try {
-    const raw = await fs.readFile(path.join(rootDir, filePath), 'utf8');
+    const resolved = resolveRepoOrAbsolutePath(rootDir, filePath);
+    if (!resolved) {
+      return null;
+    }
+    const raw = await fs.readFile(resolved.abs, 'utf8');
     return JSON.parse(raw);
   } catch {
     return null;

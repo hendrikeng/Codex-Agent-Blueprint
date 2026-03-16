@@ -4,8 +4,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = '/Users/hendrik/Projects/agent-orchestration-harness';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const templateRoot = path.join(repoRoot, 'template');
 
 async function copyTemplate(targetDir) {

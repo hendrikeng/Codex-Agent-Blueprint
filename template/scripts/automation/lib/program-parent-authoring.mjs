@@ -444,6 +444,10 @@ function extractCoverageItems(content) {
     if (headerCells.length === 0 || !isMarkdownTableSeparator(separatorCells)) {
       continue;
     }
+    const thisPlanColumnIndex = headerCells.findIndex((cell) => /\bthis (?:plan|phase)\b/i.test(cell));
+    if (thisPlanColumnIndex <= 0) {
+      continue;
+    }
 
     const items = [];
     for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
@@ -458,7 +462,7 @@ function extractCoverageItems(content) {
         continue;
       }
       const title = String(rowCells[0] ?? '').replace(/`/g, '').trim();
-      const selected = rowCells.slice(1).some((cell) => /\byes\b/i.test(cell) || /\bthis (?:plan|phase)\b/i.test(cell));
+      const selected = /\byes\b/i.test(String(rowCells[thisPlanColumnIndex] ?? ''));
       if (!title || !selected) {
         continue;
       }

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const rootDir = process.cwd();
 const configPath = path.join(rootDir, 'docs/governance/architecture-rules.json');
@@ -309,7 +310,7 @@ async function checkRequiredProjectTags(check, violations, info) {
   }
 }
 
-async function walkTsFiles(baseDir) {
+export async function walkTsFiles(baseDir) {
   const files = [];
 
   async function walk(current) {
@@ -328,7 +329,12 @@ async function walkTsFiles(baseDir) {
       const nextPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
         await walk(nextPath);
-      } else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+      } else if (
+        entry.isFile() &&
+        (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+        !entry.name.endsWith('.test.ts') &&
+        !entry.name.endsWith('.test.tsx')
+      ) {
         files.push(nextPath);
       }
     }
@@ -617,7 +623,7 @@ function formatViolation(violation) {
   return `- [${violation.code}] ${violation.message} (${violation.file})`;
 }
 
-try {
+async function main() {
   const raw = await fs.readFile(configPath, 'utf8');
   const config = JSON.parse(raw);
   const violations = [];
@@ -674,6 +680,11 @@ try {
   }
 
   console.log('\n[architecture-verify] passed');
-} catch (error) {
-  fail(error instanceof Error ? error.stack : String(error));
+}
+
+const isCliEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isCliEntrypoint) {
+  main().catch((error) => {
+    fail(error instanceof Error ? error.stack : String(error));
+  });
 }

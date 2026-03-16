@@ -113,6 +113,43 @@ test('scaffoldProgramChildDefinitions derives deterministic draft children from 
   assert.match(result.updatedContent, /REVIEW-REQUIRED/);
 });
 
+test('scaffoldProgramChildDefinitions ignores coverage rows marked for later only', () => {
+  const result = scaffoldProgramChildDefinitions(`# Parent Program
+
+## Metadata
+
+- Plan-ID: parent-program
+- Status: draft
+- Priority: p1
+- Owner: planner
+- Acceptance-Criteria: Build the child graph.
+- Delivery-Class: product
+- Execution-Scope: program
+- Dependencies: none
+- Spec-Targets: docs/spec.md, src/app
+- Done-Evidence: pending
+
+## Must-Land Checklist
+
+- [ ] Build the parent graph.
+
+## Master Plan Coverage
+
+| Capability | Current Status | This Plan | Later |
+| --- | --- | --- | --- |
+| Deferred Capability | foundation only | no | yes |
+| Active Capability | not shipped | yes | no |
+`, {
+    validationIds: {
+      always: ['repo:verify-fast'],
+      'host-required': ['repo:verify-full']
+    }
+  });
+
+  assert.equal(result.definitions.length, 1);
+  assert.equal(result.definitions[0].planId, 'active-capability');
+});
+
 test('scaffoldProgramChildDefinitions rejects legacy child heading parents', () => {
   assert.throws(
     () => scaffoldProgramChildDefinitions(`# Parent Program

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(scriptDir, '..');
 const sourceManifestPath = path.join(rootDir, 'distribution', 'harness-ownership-manifest.json');
+const sourceManifestId = toPosix(path.relative(rootDir, sourceManifestPath));
 const defaultDownstreamManifestRel = path.join('docs', 'ops', 'automation', 'harness-manifest.json');
 
 function parseArgs(argv) {
@@ -81,16 +82,29 @@ function matchesExcludePattern(relativePath, pattern) {
   if (!normalizedPattern) {
     return false;
   }
-  if (normalizedPattern.startsWith('**/')) {
-    const suffix = normalizedPattern.slice(3);
-    return normalizedPath === suffix || normalizedPath.endsWith(`/${suffix}`);
+  if (normalizedPattern === '**' || normalizedPattern === '**/*') {
+    return true;
+  }
+  if (typeof path.posix.matchesGlob === 'function') {
+    return path.posix.matchesGlob(normalizedPath, normalizedPattern);
   }
   return normalizedPath === normalizedPattern || normalizedPath.endsWith(`/${normalizedPattern}`);
+}
+
+function matchesManagedPattern(relativePath, pattern) {
+  return matchesExcludePattern(relativePath, pattern);
 }
 
 function isExcluded(relativePath, manifest) {
   const patterns = Array.isArray(manifest?.excludeGlobs) ? manifest.excludeGlobs : [];
   return patterns.some((pattern) => matchesExcludePattern(relativePath, pattern));
+}
+
+function isManaged(relativePath, manifest) {
+  const patterns = Array.isArray(manifest?.managedGlobs) && manifest.managedGlobs.length > 0
+    ? manifest.managedGlobs
+    : ['**/*'];
+  return patterns.some((pattern) => matchesManagedPattern(relativePath, pattern));
 }
 
 async function sha256(filePath) {
@@ -117,6 +131,9 @@ async function collectSourceFiles(manifest) {
   const entries = [];
   for (const absPath of files) {
     const relFromSource = toPosix(path.relative(sourceRoot, absPath));
+    if (!isManaged(relFromSource, manifest)) {
+      continue;
+    }
     if (isExcluded(relFromSource, manifest)) {
       continue;
     }
@@ -135,12 +152,91 @@ function downstreamManifestRel(manifest) {
   return String(manifest?.downstreamManifestPath ?? defaultDownstreamManifestRel).trim() || defaultDownstreamManifestRel;
 }
 
-async function readDownstreamManifest(targetDir, manifest) {
+async function loadDownstreamManifest(targetDir, manifest) {
+  const filePath = path.join(targetDir, downstreamManifestRel(manifest));
   try {
-    return await readJson(path.join(targetDir, downstreamManifestRel(manifest)));
-  } catch {
-    return null;
+    return {
+      exists: true,
+      valid: true,
+      filePath,
+      manifest: await readJson(filePath)
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return {
+        exists: false,
+        valid: false,
+        filePath,
+        manifest: null,
+        errorCode: 'ENOENT',
+        error
+      };
+    }
+    return {
+      exists: true,
+      valid: false,
+      filePath,
+      manifest: null,
+      errorCode: error?.code ?? 'INVALID_JSON',
+      error
+    };
   }
+}
+
+function isCompatibleSourceManifestRef(value) {
+  const normalized = toPosix(String(value ?? '').trim());
+  if (!normalized) {
+    return false;
+  }
+  return normalized === sourceManifestId || normalized.endsWith(`/${sourceManifestId}`);
+}
+
+function validateDownstreamManifest(manifestState, sourceManifest) {
+  if (!manifestState?.exists) {
+    return {
+      ok: false,
+      code: 'DOWNSTREAM_MANIFEST_MISSING',
+      message: `Missing downstream harness manifest at ${downstreamManifestRel(sourceManifest)}.`
+    };
+  }
+  if (!manifestState.valid) {
+    return {
+      ok: false,
+      code: 'DOWNSTREAM_MANIFEST_INVALID',
+      message: `Invalid downstream harness manifest at ${downstreamManifestRel(sourceManifest)}.`
+    };
+  }
+
+  const payload = manifestState.manifest;
+  if (payload?.schemaVersion !== 1) {
+    return {
+      ok: false,
+      code: 'DOWNSTREAM_MANIFEST_SCHEMA_MISMATCH',
+      message: `Unsupported downstream harness manifest schema '${payload?.schemaVersion ?? 'unknown'}'.`
+    };
+  }
+  if (payload?.ownershipMode !== sourceManifest.ownershipMode) {
+    return {
+      ok: false,
+      code: 'DOWNSTREAM_MANIFEST_OWNERSHIP_MISMATCH',
+      message: `Downstream harness manifest ownershipMode '${payload?.ownershipMode ?? 'unknown'}' does not match expected '${sourceManifest.ownershipMode}'.`
+    };
+  }
+  if (!Array.isArray(payload?.managedFiles)) {
+    return {
+      ok: false,
+      code: 'DOWNSTREAM_MANIFEST_MANAGED_FILES_INVALID',
+      message: 'Downstream harness manifest must include a managedFiles array.'
+    };
+  }
+  if (payload.sourceManifest && !isCompatibleSourceManifestRef(payload.sourceManifest)) {
+    return {
+      ok: false,
+      code: 'DOWNSTREAM_MANIFEST_SOURCE_MISMATCH',
+      message: `Downstream harness manifest source '${payload.sourceManifest}' does not reference '${sourceManifestId}'.`
+    };
+  }
+  return { ok: true, manifest: payload };
 }
 
 async function compareTarget(targetDir, sourceEntries, installedManifest = null) {
@@ -182,7 +278,8 @@ async function writeDownstreamManifest(targetDir, manifest, sourceEntries) {
   const payload = {
     schemaVersion: 1,
     ownershipMode: manifest.ownershipMode,
-    sourceManifest: toPosix(path.relative(targetDir, sourceManifestPath)),
+    sourceManifest: sourceManifestId,
+    sourceManifestSha256: await sha256(sourceManifestPath),
     sourceRevision: gitHeadRevision(),
     installedAt: new Date().toISOString(),
     managedFiles: sourceEntries
@@ -191,7 +288,42 @@ async function writeDownstreamManifest(targetDir, manifest, sourceEntries) {
   await fs.writeFile(downstreamManifestPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
-async function installOrUpdate(targetDir, manifest, sourceEntries) {
+async function pruneEmptyDirectories(baseDir, directoryPath) {
+  const normalizedBase = path.resolve(baseDir);
+  let current = directoryPath;
+  while (current.startsWith(normalizedBase) && current !== normalizedBase) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(current);
+    } catch {
+      return;
+    }
+    if (entries.length > 0) {
+      return;
+    }
+    await fs.rmdir(current).catch(() => {});
+    current = path.dirname(current);
+  }
+}
+
+async function removeRetiredManagedFiles(targetDir, sourceEntries, installedManifest) {
+  const currentManaged = new Set(sourceEntries.map((entry) => entry.targetPath));
+  const removed = [];
+  for (const entry of installedManifest?.managedFiles ?? []) {
+    const targetPathRel = toPosix(String(entry?.targetPath ?? '').trim());
+    if (!targetPathRel || currentManaged.has(targetPathRel)) {
+      continue;
+    }
+    const targetPathAbs = path.join(targetDir, targetPathRel);
+    await fs.rm(targetPathAbs, { force: true }).catch(() => {});
+    await pruneEmptyDirectories(targetDir, path.dirname(targetPathAbs));
+    removed.push(targetPathRel);
+  }
+  return removed.sort((left, right) => left.localeCompare(right));
+}
+
+async function installOrUpdate(targetDir, manifest, sourceEntries, installedManifest = null) {
+  const removed = await removeRetiredManagedFiles(targetDir, sourceEntries, installedManifest);
   const copied = [];
   for (const entry of sourceEntries) {
     const sourcePath = path.join(rootDir, entry.sourcePath);
@@ -201,7 +333,7 @@ async function installOrUpdate(targetDir, manifest, sourceEntries) {
     copied.push(entry.targetPath);
   }
   await writeDownstreamManifest(targetDir, manifest, sourceEntries);
-  return copied;
+  return { copied, removed };
 }
 
 async function main() {
@@ -221,7 +353,8 @@ async function main() {
   const jsonOutput = asBoolean(options.json, false);
   const sourceManifest = await readJson(sourceManifestPath);
   const sourceEntries = await collectSourceFiles(sourceManifest);
-  const installedManifest = await readDownstreamManifest(targetDir, sourceManifest);
+  const manifestState = await loadDownstreamManifest(targetDir, sourceManifest);
+  const installedManifest = manifestState.valid ? manifestState.manifest : null;
   const drift = await compareTarget(targetDir, sourceEntries, installedManifest);
 
   if (command === 'drift') {
@@ -242,18 +375,28 @@ async function main() {
     process.exit(payload.driftDetected ? 2 : 0);
   }
 
+  if (command === 'update') {
+    const manifestValidation = validateDownstreamManifest(manifestState, sourceManifest);
+    if (!manifestValidation.ok) {
+      throw new Error(`[${manifestValidation.code}] ${manifestValidation.message}`);
+    }
+  }
+
   await fs.mkdir(targetDir, { recursive: true });
-  const copied = await installOrUpdate(targetDir, sourceManifest, sourceEntries);
+  const writeResult = await installOrUpdate(targetDir, sourceManifest, sourceEntries, installedManifest);
   const payload = {
     command,
     target: targetDir,
-    filesCopied: copied.length,
+    filesCopied: writeResult.copied.length,
+    filesRemoved: writeResult.removed.length,
     manifestPath: toPosix(path.join(targetDir, downstreamManifestRel(sourceManifest)))
   };
   if (jsonOutput) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
-    process.stdout.write(`[harness-sync] ${command} target=${payload.target} filesCopied=${payload.filesCopied}\n`);
+    process.stdout.write(
+      `[harness-sync] ${command} target=${payload.target} filesCopied=${payload.filesCopied} filesRemoved=${payload.filesRemoved}\n`
+    );
   }
 }
 

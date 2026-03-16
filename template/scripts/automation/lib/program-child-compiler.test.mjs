@@ -199,6 +199,90 @@ Validation-Ready: no
   assert.equal(checkResult.parentOutcomes[0]?.status, 'blocked-generated-child-drift');
 });
 
+test('compileProgramChildren derives new child filenames from the parent plan date prefix', async () => {
+  const rootDir = await createHarnessFixture();
+  const parentPath = path.join(rootDir, 'docs', 'future', '2024-12-31-parent-program.md');
+  await fs.writeFile(parentPath, `# Parent Program
+
+Status: ready-for-promotion
+Validation-Ready: no
+
+## Metadata
+
+- Plan-ID: parent-program
+- Status: ready-for-promotion
+- Priority: p1
+- Owner: planner
+- Acceptance-Criteria: Complete the child queue.
+- Delivery-Class: product
+- Execution-Scope: program
+- Authoring-Intent: executable-default
+- Dependencies: none
+- Autonomy-Allowed: guarded
+- Risk-Tier: medium
+- Security-Approval: not-required
+- Spec-Targets: docs/spec.md
+- Done-Evidence: pending
+
+## Already-True Baseline
+
+- Parent baseline.
+
+## Must-Land Checklist
+
+- [ ] Keep the parent active while children execute.
+
+## Deferred Follow-Ons
+
+- Later.
+
+## Master Plan Coverage
+
+| Capability | Current Status | This Plan | Later |
+| --- | --- | --- | --- |
+| Parent queue | foundation only | yes | no |
+
+## Prior Completed Plan Reconciliation
+
+- None.
+
+## Promotion Blockers
+
+- None.
+
+## Child Slice Definitions
+
+### child-slice-one
+- Title: Child Slice One
+- Dependencies: none
+- Spec-Targets: docs/spec.md, src/feature
+- Implementation-Targets: src/feature
+- Validation-Lanes: always
+
+#### Must-Land Checklist
+- [ ] \`ml-child-slice-one\` Land the slice
+
+#### Already-True Baseline
+- Child baseline.
+
+#### Deferred Follow-Ons
+- Child follow on.
+
+#### Capability Proof Map
+| Capability ID | Must-Land IDs | Claim | Required Strength |
+| --- | --- | --- | --- |
+| cap-child | ml-child-slice-one | Claim | strong |
+
+| Proof ID | Capability ID | Type | Lane | Validation ID / Artifact | Freshness |
+| --- | --- | --- | --- | --- | --- |
+| proof-fast | cap-child | integration | always | repo:verify-fast | same-run |
+`, 'utf8');
+
+  const result = await compileProgramChildren(rootDir, { write: true });
+  assert.equal(result.issues.length, 0);
+  assert.equal(result.writes[0].filePath, 'docs/future/2024-12-31-child-slice-one.md');
+});
+
 test('compileProgramChildren fails on legacy heading-only parent schemas', async () => {
   const rootDir = await createHarnessFixture();
   await fs.writeFile(path.join(rootDir, 'docs', 'future', '2026-03-15-parent-program.md'), `# Parent Program

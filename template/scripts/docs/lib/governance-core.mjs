@@ -137,7 +137,7 @@ function parseDateByStrategy(content, strategy) {
 }
 
 function daysBetween(a, b) {
-  return Math.floor(Math.abs(b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.floor((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function makeFinding(level, code, message, file = null) {
@@ -400,6 +400,17 @@ export async function runGovernanceAnalysis({
         }
 
         const age = daysBetween(parsedDate, now);
+        if (age < 0) {
+          errors.push(
+            makeFinding(
+              'error',
+              'FUTURE_DOC_TIMESTAMP',
+              `Freshness timestamp is in the future for ${filePath}`,
+              filePath
+            )
+          );
+          continue;
+        }
         if (age > maxAgeDays) {
           errors.push(
             makeFinding(
@@ -628,6 +639,17 @@ export async function runGovernanceAnalysis({
     }
 
     const age = daysBetween(parsedDate, now);
+    if (age < 0) {
+      errors.push(
+        makeFinding(
+          'error',
+          'FUTURE_GENERATED_ARTIFACT_TIMESTAMP',
+          `Generated artifact timestamp is in the future for ${artifact.path}`,
+          artifact.path
+        )
+      );
+      continue;
+    }
     if (age > maxAgeDays) {
       errors.push(
         makeFinding(

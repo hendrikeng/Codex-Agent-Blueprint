@@ -140,6 +140,18 @@ export function resolveSafeRepoPath(rootDir, relPath, label = 'Repository path')
   };
 }
 
+export function resolveRepoOrAbsolutePath(rootDir, filePath) {
+  const rendered = String(filePath ?? '').trim();
+  if (!rendered) {
+    return null;
+  }
+  const abs = path.resolve(rootDir, rendered);
+  return {
+    abs,
+    rel: isWithinRoot(rootDir, abs) ? toPosix(path.relative(rootDir, abs)) : null
+  };
+}
+
 export async function exists(filePath) {
   try {
     await fs.access(filePath);

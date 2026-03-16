@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runGovernanceAnalysis } from './lib/governance-core.mjs';
+import { resolveRepoOrAbsolutePath } from '../automation/lib/orchestrator-shared.mjs';
 
 const rootDir = process.cwd();
 const configPath = path.join(rootDir, 'docs/governance/doc-checks.config.json');
@@ -24,7 +25,10 @@ async function writeValidationResult(payload) {
   if (!resultPath) {
     return;
   }
-  const absPath = path.join(rootDir, resultPath);
+  const absPath = resolveRepoOrAbsolutePath(rootDir, resultPath)?.abs;
+  if (!absPath) {
+    return;
+  }
   await fs.promises.mkdir(path.dirname(absPath), { recursive: true }).catch(() => {});
   await fs.promises.writeFile(absPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }

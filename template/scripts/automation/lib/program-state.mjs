@@ -48,14 +48,31 @@ function reconciliationReady(parent) {
   if (!body) {
     return false;
   }
-  const normalized = body.toLowerCase();
-  if (
-    normalized.includes('tbd') ||
-    normalized.includes('todo') ||
-    normalized.includes('pending') ||
-    normalized.includes('unresolved')
-  ) {
+  const lines = String(body)
+    .split(/\r?\n/)
+    .map((line) => line.trim().toLowerCase())
+    .filter(Boolean);
+  if (lines.length === 0) {
     return false;
+  }
+
+  const unresolvedPatterns = [/\btbd\b/, /\btodo\b/, /\bpending\b/, /\bunresolved\b/];
+  const resolvedContexts = [
+    /\bno pending\b/,
+    /\bwithout pending\b/,
+    /\bno unresolved\b/,
+    /\bwithout unresolved\b/,
+    /\bunresolved .* (?:is|are) now (?:closed|resolved)\b/,
+    /\bpreviously unresolved\b/
+  ];
+
+  for (const line of lines) {
+    if (resolvedContexts.some((pattern) => pattern.test(line))) {
+      continue;
+    }
+    if (unresolvedPatterns.some((pattern) => pattern.test(line))) {
+      return false;
+    }
   }
   return true;
 }

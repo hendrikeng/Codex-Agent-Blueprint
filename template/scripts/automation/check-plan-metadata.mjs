@@ -33,6 +33,7 @@ import {
   inferPlanId
 } from './lib/plan-metadata.mjs';
 import { compileProgramChildren } from './lib/program-child-compiler.mjs';
+import { resolveRepoOrAbsolutePath } from './lib/orchestrator-shared.mjs';
 
 const PLAN_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const rootDir = process.cwd();
@@ -332,7 +333,10 @@ async function writeValidationResult(payload) {
   if (!validationResultPath) {
     return;
   }
-  const absPath = path.join(rootDir, validationResultPath);
+  const absPath = resolveRepoOrAbsolutePath(rootDir, validationResultPath)?.abs;
+  if (!absPath) {
+    return;
+  }
   await fs.mkdir(path.dirname(absPath), { recursive: true });
   await fs.writeFile(absPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }

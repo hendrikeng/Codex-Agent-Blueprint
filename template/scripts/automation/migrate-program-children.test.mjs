@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { migrateProgramChildDefinitions } from './migrate-program-children.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 test('migrateProgramChildDefinitions converts legacy headings into structured child definitions', () => {
   const source = `# Parent Program
@@ -58,7 +61,7 @@ test('cli write mode rewrites the plan file in place', async () => {
     '--write',
     'true'
   ], {
-    cwd: '/Users/hendrik/Projects/agent-orchestration-harness',
+    cwd: repoRoot,
     stdio: 'pipe'
   });
 

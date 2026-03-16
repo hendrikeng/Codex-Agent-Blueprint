@@ -4,8 +4,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = '/Users/hendrik/Projects/agent-orchestration-harness';
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const cliPath = path.join(repoRoot, 'template', 'scripts', 'automation', 'check-plan-metadata.mjs');
 
 async function createFixtureRoot() {

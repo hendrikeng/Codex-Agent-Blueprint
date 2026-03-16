@@ -118,3 +118,44 @@ test('deriveProgramStates marks active program closeout eligible when all childr
   assert.deepEqual(states['parent-program'].closeoutBlockedReasons, []);
   assert.equal(states['parent-program'].summary.includes('2/2 completed'), true);
 });
+
+test('deriveProgramStates treats negated reconciliation blockers as resolved', () => {
+  const catalog = {
+    future: [],
+    active: [
+      plan({
+        planId: 'parent-program',
+        executionScope: 'program',
+        content: [
+          '## Prior Completed Plan Reconciliation',
+          '',
+          '- No pending overlap remains.',
+          '- Previously unresolved issues are now closed.'
+        ].join('\n')
+      })
+    ],
+    completed: [
+      plan({
+        planId: 'child-a',
+        phase: 'completed',
+        status: 'completed',
+        rel: 'docs/exec-plans/completed/2026-03-16-child-a.md',
+        parentPlanId: 'parent-program'
+      })
+    ]
+  };
+
+  const states = deriveProgramStates(catalog, {
+    parentOutcomesByParent: new Map([
+      ['parent-program', {
+        planId: 'parent-program',
+        status: 'compiled-current',
+        reason: 'Compiled child plans are current.',
+        authoringIntent: 'executable-default'
+      }]
+    ])
+  });
+
+  assert.equal(states['parent-program'].reconciliationReady, true);
+  assert.equal(states['parent-program'].closeoutEligible, true);
+});

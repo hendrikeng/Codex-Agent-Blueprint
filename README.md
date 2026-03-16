@@ -153,9 +153,10 @@ Canonical policy and lifecycle docs:
 
 Harness distribution/update commands:
 - Install the harness into a downstream repo: `node ./scripts/harness-sync.mjs install --target /path/to/repo`
-- Update an existing downstream repo to the current harness revision: `node ./scripts/harness-sync.mjs update --target /path/to/repo`
+- Update an existing managed downstream repo to the current harness revision: `node ./scripts/harness-sync.mjs update --target /path/to/repo`
 - Report downstream drift without rewriting files: `node ./scripts/harness-sync.mjs drift --target /path/to/repo`
-- Install/update writes a downstream ownership record at `docs/ops/automation/harness-manifest.json` with the managed file list, hashes, and source revision used for the sync; that revision is the harness version stamp.
+- `update` now requires an existing valid downstream harness manifest and removes retired managed files before rewriting the manifest.
+- Install/update writes a downstream ownership record at `docs/ops/automation/harness-manifest.json` with the managed file list, hashes, manifest fingerprint, and source revision used for the sync; that revision is the harness version stamp.
 
 ## README Lifecycle
 

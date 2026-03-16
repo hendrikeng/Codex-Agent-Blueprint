@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
   metadataValue,
   parseDeliveryClass,
@@ -229,6 +229,7 @@ function normalizeContinuityPayload(raw) {
     summary: String(source.summary ?? '').trim(),
     goal: String(source.goal ?? '').trim(),
     currentSubtask: String(source.currentSubtask ?? '').trim(),
+    nextAction: String(source.nextAction ?? reasoning.nextAction ?? '').trim(),
     status: String(source.status ?? '').trim(),
     acceptedFacts: summarizeList(source.acceptedFacts, DEFAULT_MAX_STATE_LIST_ITEMS, 12),
     decisions: summarizeList(source.decisions, DEFAULT_MAX_STATE_LIST_ITEMS, 12),
@@ -239,7 +240,7 @@ function normalizeContinuityPayload(raw) {
     artifacts: summarizeList(source.artifacts, DEFAULT_MAX_STATE_LIST_ITEMS, 12),
     risks: summarizeList(source.risks, DEFAULT_MAX_STATE_LIST_ITEMS, 12),
     reasoning: {
-      nextAction: String(reasoning.nextAction ?? '').trim(),
+      nextAction: String(reasoning.nextAction ?? source.nextAction ?? '').trim(),
       blockers: summarizeList(reasoning.blockers, DEFAULT_MAX_STATE_LIST_ITEMS, 12),
       rationale: summarizeList(reasoning.rationale, DEFAULT_MAX_STATE_LIST_ITEMS, 12)
     },
@@ -320,7 +321,7 @@ function buildStateCandidate(planId, latestState, runId) {
     stageIndex: asInteger(latestState.stageIndex, 1),
     runId: String(latestState.runId ?? runId ?? '').trim(),
     recencyRank: 0,
-    value: `status=${latestState.status || 'none'} subtask=${latestState.currentSubtask || 'none'} next=${latestState.reasoning.nextAction || 'none'}`,
+    value: `status=${latestState.status || 'none'} subtask=${latestState.currentSubtask || 'none'} next=${latestState.nextAction || latestState.reasoning.nextAction || 'none'}`,
     source: latestState
   };
 }
@@ -447,6 +448,45 @@ function selectScoredInputs(candidates, maxItems, role, stageIndex) {
     seen.add(entry.itemId);
   }
   return selected.slice(0, maxItems);
+}
+
+function applyCheckpointCap(selectedInputs, scoredInputs, maxItems, maxCheckpointItems) {
+  const checkpointLimit = Math.max(0, maxCheckpointItems);
+  const retained = [];
+  const seen = new Set();
+  let checkpointCount = 0;
+
+  for (const entry of selectedInputs) {
+    if (entry.category === 'checkpoint') {
+      if (checkpointCount >= checkpointLimit) {
+        continue;
+      }
+      checkpointCount += 1;
+    }
+    retained.push(entry);
+    seen.add(entry.itemId);
+  }
+
+  if (retained.length >= maxItems) {
+    return retained.slice(0, maxItems);
+  }
+
+  const sorted = [...scoredInputs].sort((a, b) => b.score - a.score || a.recencyRank - b.recencyRank);
+  for (const entry of sorted) {
+    if (retained.length >= maxItems || seen.has(entry.itemId)) {
+      continue;
+    }
+    if (entry.category === 'checkpoint') {
+      if (checkpointCount >= checkpointLimit) {
+        continue;
+      }
+      checkpointCount += 1;
+    }
+    retained.push(entry);
+    seen.add(entry.itemId);
+  }
+
+  return retained;
 }
 
 function thinPackSummary(selectedInputs, availableCategories = []) {
@@ -679,7 +719,12 @@ export async function compileTaskContactPack(input) {
     ...checkpointCandidates,
     ...evidenceCandidates
   ].map((entry) => scoreCandidate(entry, analyticsStore, { role, stageIndex, runId }, selectionWeights));
-  const selectedInputs = selectScoredInputs(scoredInputs, selectionMaxItems, role, stageIndex);
+  const selectedInputs = applyCheckpointCap(
+    selectScoredInputs(scoredInputs, selectionMaxItems, role, stageIndex),
+    scoredInputs,
+    selectionMaxItems,
+    maxRecentCheckpointItems
+  );
   const thinPack = thinPackSummary(
     selectedInputs,
     [
@@ -754,7 +799,7 @@ export async function compileTaskContactPack(input) {
   } else {
     lines.push(`- status: ${latestState.status || 'none'}`);
     lines.push(`- current subtask: ${latestState.currentSubtask || 'none'}`);
-    lines.push(`- next action: ${latestState.reasoning.nextAction || 'none'}`);
+    lines.push(`- next action: ${latestState.nextAction || latestState.reasoning.nextAction || 'none'}`);
     lines.push(renderSummaryBullet('pending actions', summarizeList(latestState.pendingActions, maxStateListItems, 12)));
     lines.push(renderSummaryBullet('open questions', summarizeList(latestState.openQuestions, maxStateListItems, 12)));
     lines.push(renderSummaryBullet('risks', summarizeList(latestState.risks, maxStateListItems, 12)));
@@ -890,7 +935,16 @@ async function main() {
   );
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+async function isCliEntrypoint() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  const modulePath = await fs.realpath(fileURLToPath(import.meta.url)).catch(() => fileURLToPath(import.meta.url));
+  const argvPath = await fs.realpath(path.resolve(process.argv[1])).catch(() => path.resolve(process.argv[1]));
+  return argvPath === modulePath;
+}
+
+if (await isCliEntrypoint()) {
   main().catch((error) => {
     console.error('[contact-pack] failed.');
     console.error(error instanceof Error ? error.stack : String(error));

@@ -167,6 +167,7 @@ function classifyRepairableReference(normalizedRef) {
 async function loadPlanCatalog(rootDir) {
   const activeDir = path.join(rootDir, 'docs/exec-plans/active');
   const completedDir = path.join(rootDir, 'docs/exec-plans/completed');
+  const futureDir = path.join(rootDir, 'docs/future');
   const planById = new Map();
   const existingPaths = new Set();
 
@@ -185,6 +186,7 @@ async function loadPlanCatalog(rootDir) {
       }
       const abs = path.join(directoryAbs, entry.name);
       const rel = toPosix(path.relative(rootDir, abs));
+      existingPaths.add(rel);
       const content = await fs.readFile(abs, 'utf8');
       const metadata = parseMetadata(content);
       const parsedPlanId = parsePlanId(metadataValue(metadata, 'Plan-ID'), null) ?? inferPlanId(content, abs);
@@ -199,7 +201,6 @@ async function loadPlanCatalog(rootDir) {
         relPath: rel,
         mtimeMs: stat.mtimeMs
       });
-      existingPaths.add(rel);
     }
 
     return records;
@@ -207,10 +208,12 @@ async function loadPlanCatalog(rootDir) {
 
   const active = await readPlanDirectory(activeDir, 'active');
   const completed = await readPlanDirectory(completedDir, 'completed');
-  const all = [...active, ...completed];
+  const future = await readPlanDirectory(futureDir, 'future');
+  const all = [...active, ...completed, ...future];
   all.sort((a, b) => {
     if (a.phase !== b.phase) {
-      return a.phase === 'active' ? -1 : 1;
+      const phasePriority = { active: 0, completed: 1, future: 2 };
+      return (phasePriority[a.phase] ?? 99) - (phasePriority[b.phase] ?? 99);
     }
     if (a.mtimeMs !== b.mtimeMs) {
       return b.mtimeMs - a.mtimeMs;

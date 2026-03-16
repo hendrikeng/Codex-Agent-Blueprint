@@ -4,9 +4,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { parseStructuredProgramChildDefinitions } from './program-child-compiler.mjs';
 import { migrateLegacyProgramChildDefinitions } from './program-child-migration.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
 async function createFixtureRoot() {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'program-child-migration-'));
@@ -161,7 +164,7 @@ test('migrate-program-children CLI previews to stdout and writes only with --wri
   const rootDir = await createFixtureRoot();
   const planFile = path.join(rootDir, 'docs', 'future', '2026-03-16-parent-program.md');
   await fs.writeFile(planFile, legacyParentContent(), 'utf8');
-  const cliPath = path.join('/Users/hendrik/Projects/agent-orchestration-harness', 'template', 'scripts', 'automation', 'migrate-program-children.mjs');
+  const cliPath = path.join(repoRoot, 'template', 'scripts', 'automation', 'migrate-program-children.mjs');
 
   const preview = spawnSync(
     'node',

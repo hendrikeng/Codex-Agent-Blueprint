@@ -177,6 +177,11 @@ function datedPlanFileName(datePrefix, stem) {
   return `${datePrefix}-${stem}.md`;
 }
 
+function datePrefixFromPlanPath(planPath) {
+  const match = path.basename(String(planPath ?? '')).match(/^(\d{4}-\d{2}-\d{2})-/);
+  return match?.[1] ?? '1970-01-01';
+}
+
 function expectedPhaseForParent(parent) {
   return parent.phase === 'future' ? 'future' : 'active';
 }
@@ -406,8 +411,8 @@ function renderChildDocument(parent, definition, preserved, validationIds) {
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
-function relativeTargetPath(rootDir, directoryPath, planId) {
-  const targetName = datedPlanFileName(new Date().toISOString().slice(0, 10), planId);
+function relativeTargetPath(directoryPath, planId, sourcePlanPath) {
+  const targetName = datedPlanFileName(datePrefixFromPlanPath(sourcePlanPath), planId);
   return path.join(directoryPath, targetName);
 }
 
@@ -575,7 +580,7 @@ export async function compileProgramChildren(rootDir, options = {}) {
           existing,
           preserveExistingState(existing.content, initialStatusForParent(parent))
         );
-        const nextPath = relativeTargetPath(rootDir, targetDirectoryForPhase(rootDir, 'active'), definition.planId);
+        const nextPath = relativeTargetPath(targetDirectoryForPhase(rootDir, 'active'), definition.planId, parent.rel);
         await ensureDirectory(nextPath);
         await fs.writeFile(nextPath, renderChildDocument(parent, definition, preserved, validationIds), 'utf8');
         await fs.unlink(existing.filePath);
@@ -598,7 +603,11 @@ export async function compileProgramChildren(rootDir, options = {}) {
 
       const targetPath = existing?.phase === 'completed'
         ? existing.filePath
-        : existing?.filePath ?? relativeTargetPath(rootDir, targetDirectoryForPhase(rootDir, desiredPhase), definition.planId);
+        : existing?.filePath ?? relativeTargetPath(
+          targetDirectoryForPhase(rootDir, desiredPhase),
+          definition.planId,
+          parent.rel
+        );
       const preserved = alignPreservedStateForPhase(
         parent,
         existing,

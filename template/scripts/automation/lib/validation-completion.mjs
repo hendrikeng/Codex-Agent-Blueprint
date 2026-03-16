@@ -238,9 +238,6 @@ export function classifyValidationFailureScope(failedResult, plan, pathMatchesRo
 }
 
 export function proofTypeIsStrong(type, validationRef = '') {
-  if (String(validationRef ?? '').trim().startsWith('repo:')) {
-    return false;
-  }
   return type === 'integration' || type === 'contract' || type === 'end-to-end' || type === 'host-required';
 }
 
