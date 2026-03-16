@@ -159,6 +159,9 @@ function validateRunState(payload) {
   asObjectRecord(payload.implementationState, contractId, 'implementationState');
   asObjectRecord(payload.programState, contractId, 'programState');
   asObjectRecord(payload.roleState, contractId, 'roleState');
+  if (payload.orchestrationState != null) {
+    asObjectRecord(payload.orchestrationState, contractId, 'orchestrationState');
+  }
   const parallelState = asObjectRecord(payload.parallelState, contractId, 'parallelState');
   asObjectRecord(parallelState.activeWorkers, contractId, 'parallelState.activeWorkers');
   asObjectRecord(parallelState.lastResults, contractId, 'parallelState.lastResults');

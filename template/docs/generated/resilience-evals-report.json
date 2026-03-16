@@ -1,0 +1,343 @@
+{
+  "generatedAtUtc": "2026-03-16T13:13:04.785Z",
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "passRate": 1,
+    "criticalTotal": 5,
+    "criticalPassed": 5,
+    "criticalPassRate": 1
+  },
+  "suites": [
+    {
+      "id": "resilience-critical-faults",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "status": "pass"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "worker-no-touch-retry",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "status": "pass",
+      "score": 1,
+      "checks": [
+        {
+          "id": "replay",
+          "pass": true,
+          "observed": "legal transition sequence",
+          "expected": "legal transition sequence"
+        },
+        {
+          "id": "finalState.planState",
+          "pass": true,
+          "observed": "pending",
+          "expected": "pending"
+        },
+        {
+          "id": "finalState.stageState",
+          "pass": true,
+          "observed": "pending",
+          "expected": "pending"
+        },
+        {
+          "id": "finalState.validationState",
+          "pass": true,
+          "observed": "not-ready",
+          "expected": "not-ready"
+        },
+        {
+          "id": "lastTransitionCode",
+          "pass": true,
+          "observed": "stage.retry",
+          "expected": "stage.retry"
+        },
+        {
+          "id": "eventType",
+          "pass": true,
+          "observed": "session_pending_no_touch_retry",
+          "expected": "session_pending_no_touch_retry"
+        },
+        {
+          "id": "faultCode",
+          "pass": true,
+          "observed": "worker.pending.no-touch",
+          "expected": "worker.pending.no-touch"
+        },
+        {
+          "id": "recoveryAction",
+          "pass": true,
+          "observed": "retry-worker-edit-first",
+          "expected": "retry-worker-edit-first"
+        }
+      ],
+      "replayedState": {
+        "planState": "pending",
+        "stageState": "pending",
+        "validationState": "not-ready",
+        "currentRole": "worker",
+        "currentStageIndex": 1,
+        "currentStageTotal": 1,
+        "lastTransitionEvent": "session_pending_no_touch_retry",
+        "lastTransitionCode": "stage.retry",
+        "transitionCount": 3,
+        "lastUpdatedAt": "2026-03-16T13:13:04.787Z"
+      }
+    },
+    {
+      "id": "validation-external-blocker",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "status": "pass",
+      "score": 1,
+      "checks": [
+        {
+          "id": "replay",
+          "pass": true,
+          "observed": "legal transition sequence",
+          "expected": "legal transition sequence"
+        },
+        {
+          "id": "finalState.planState",
+          "pass": true,
+          "observed": "validation-pending",
+          "expected": "validation-pending"
+        },
+        {
+          "id": "finalState.validationState",
+          "pass": true,
+          "observed": "host-pending",
+          "expected": "host-pending"
+        },
+        {
+          "id": "lastTransitionCode",
+          "pass": true,
+          "observed": "validation.external-pending",
+          "expected": "validation.external-pending"
+        },
+        {
+          "id": "eventType",
+          "pass": true,
+          "observed": "validation_residual_external",
+          "expected": "validation_residual_external"
+        },
+        {
+          "id": "faultCode",
+          "pass": true,
+          "observed": "validation.always.external-blocker",
+          "expected": "validation.always.external-blocker"
+        },
+        {
+          "id": "recoveryAction",
+          "pass": true,
+          "observed": "resume-after-external-validation",
+          "expected": "resume-after-external-validation"
+        }
+      ],
+      "replayedState": {
+        "planState": "validation-pending",
+        "stageState": "completed",
+        "validationState": "host-pending",
+        "currentRole": "worker",
+        "currentStageIndex": 1,
+        "currentStageTotal": 1,
+        "lastTransitionEvent": "validation_residual_external",
+        "lastTransitionCode": "validation.external-pending",
+        "transitionCount": 5,
+        "lastUpdatedAt": "2026-03-16T13:13:04.788Z"
+      }
+    },
+    {
+      "id": "host-validation-pending",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "status": "pass",
+      "score": 1,
+      "checks": [
+        {
+          "id": "replay",
+          "pass": true,
+          "observed": "legal transition sequence",
+          "expected": "legal transition sequence"
+        },
+        {
+          "id": "finalState.planState",
+          "pass": true,
+          "observed": "validation-pending",
+          "expected": "validation-pending"
+        },
+        {
+          "id": "finalState.validationState",
+          "pass": true,
+          "observed": "host-pending",
+          "expected": "host-pending"
+        },
+        {
+          "id": "lastTransitionCode",
+          "pass": true,
+          "observed": "validation.host-pending",
+          "expected": "validation.host-pending"
+        },
+        {
+          "id": "eventType",
+          "pass": true,
+          "observed": "host_validation_blocked",
+          "expected": "host_validation_blocked"
+        },
+        {
+          "id": "faultCode",
+          "pass": true,
+          "observed": "validation.host.pending",
+          "expected": "validation.host.pending"
+        },
+        {
+          "id": "recoveryAction",
+          "pass": true,
+          "observed": "resume-after-host-validation",
+          "expected": "resume-after-host-validation"
+        }
+      ],
+      "replayedState": {
+        "planState": "validation-pending",
+        "stageState": "completed",
+        "validationState": "host-pending",
+        "currentRole": "worker",
+        "currentStageIndex": 1,
+        "currentStageTotal": 1,
+        "lastTransitionEvent": "host_validation_blocked",
+        "lastTransitionCode": "validation.host-pending",
+        "transitionCount": 6,
+        "lastUpdatedAt": "2026-03-16T13:13:04.788Z"
+      }
+    },
+    {
+      "id": "session-failed-retry",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "status": "pass",
+      "score": 1,
+      "checks": [
+        {
+          "id": "replay",
+          "pass": true,
+          "observed": "legal transition sequence",
+          "expected": "legal transition sequence"
+        },
+        {
+          "id": "finalState.planState",
+          "pass": true,
+          "observed": "failed",
+          "expected": "failed"
+        },
+        {
+          "id": "finalState.stageState",
+          "pass": true,
+          "observed": "failed",
+          "expected": "failed"
+        },
+        {
+          "id": "lastTransitionCode",
+          "pass": true,
+          "observed": "stage.failed",
+          "expected": "stage.failed"
+        },
+        {
+          "id": "eventType",
+          "pass": true,
+          "observed": "session_failed",
+          "expected": "session_failed"
+        },
+        {
+          "id": "faultCode",
+          "pass": true,
+          "observed": "session.failed",
+          "expected": "session.failed"
+        },
+        {
+          "id": "recoveryAction",
+          "pass": true,
+          "observed": "retry-plan",
+          "expected": "retry-plan"
+        }
+      ],
+      "replayedState": {
+        "planState": "failed",
+        "stageState": "failed",
+        "validationState": "not-ready",
+        "currentRole": "worker",
+        "currentStageIndex": 1,
+        "currentStageTotal": 1,
+        "lastTransitionEvent": "session_finished",
+        "lastTransitionCode": "stage.failed",
+        "transitionCount": 2,
+        "lastUpdatedAt": "2026-03-16T13:13:04.788Z"
+      }
+    },
+    {
+      "id": "retry-armed-after-failure",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "status": "pass",
+      "score": 1,
+      "checks": [
+        {
+          "id": "replay",
+          "pass": true,
+          "observed": "legal transition sequence",
+          "expected": "legal transition sequence"
+        },
+        {
+          "id": "finalState.planState",
+          "pass": true,
+          "observed": "queued",
+          "expected": "queued"
+        },
+        {
+          "id": "finalState.stageState",
+          "pass": true,
+          "observed": "failed",
+          "expected": "failed"
+        },
+        {
+          "id": "lastTransitionCode",
+          "pass": true,
+          "observed": "plan.retry.armed",
+          "expected": "plan.retry.armed"
+        },
+        {
+          "id": "eventType",
+          "pass": true,
+          "observed": "plan_retry_armed",
+          "expected": "plan_retry_armed"
+        },
+        {
+          "id": "recoveryAction",
+          "pass": true,
+          "observed": "retry-plan",
+          "expected": "retry-plan"
+        }
+      ],
+      "replayedState": {
+        "planState": "queued",
+        "stageState": "failed",
+        "validationState": "not-ready",
+        "currentRole": "worker",
+        "currentStageIndex": 1,
+        "currentStageTotal": 1,
+        "lastTransitionEvent": "plan_retry_armed",
+        "lastTransitionCode": "plan.retry.armed",
+        "transitionCount": 3,
+        "lastUpdatedAt": "2026-03-16T13:13:04.788Z"
+      }
+    }
+  ],
+  "evidence": [
+    "docs/agent-hardening/resilience-fixtures.json"
+  ]
+}

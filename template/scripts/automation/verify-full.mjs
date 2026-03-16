@@ -34,7 +34,9 @@ function fullCommands() {
     'node ./scripts/agent-hardening/check-evals.mjs',
     'node ./scripts/automation/check-harness-alignment.mjs',
     'node ./scripts/automation/summarize-run-outcomes.mjs',
-    'node ./scripts/automation/check-outcomes-thresholds.mjs --warn-only',
+    'node ./scripts/automation/check-outcomes-thresholds.mjs',
+    'node ./scripts/automation/check-performance-budgets.mjs',
+    'node ./scripts/automation/verify-orchestration-state.mjs',
     resolvedPlanMetadataCommand()
   ];
 }

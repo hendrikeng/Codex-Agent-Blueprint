@@ -33,6 +33,7 @@ Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
 - `docs/ops/automation/orchestrator.config.json`: executor and validation command configuration.
 - `run-state.json` (under `docs/ops/automation/`): latest resumable queue and plan progress snapshot.
 - `run-events.jsonl` (under `docs/ops/automation/`): append-only JSON line event log.
+- `run-state.json.orchestrationState[*]`: canonical per-plan control-plane state snapshot derived from replayable transitions.
 - `docs/exec-plans/evidence-index/`: canonical compact evidence indexes by plan ID.
 - `run-state.json`, `run-events.jsonl`, `runtime/`, and `handoffs/` are transient runtime artifacts; they are ignored by dirty preflight.
 - `docs/ops/automation/handoffs/`: per-plan rollover handoff notes.
@@ -46,6 +47,7 @@ Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
 ## Runtime Contract Posture
 
 - `harness-manifest.json`, `run-state.json`, `run-events.jsonl`, continuity state, checkpoint records, contact-pack manifests, and validation result payloads are versioned machine-readable contracts.
+- `run-events.jsonl` transition-bearing entries also carry canonical orchestration fields (`machine`, `fromState`, `toState`, `transitionCode`) and may attach `faultCode` plus `recoveryAction` when the harness classifies a failure path.
 - Shared structured writes are expected to use the harness helpers so overwrite-style files are written atomically and append-only logs stay single-writer.
 - Readers should fail closed on incompatible, malformed, or truncated structured state instead of silently treating it as valid runtime data.
 - Downstream repos should treat manual edits to runtime contract files as exceptional operational recovery, not normal workflow.
@@ -91,6 +93,7 @@ Use the manual path when any of these are true:
 - `node ./scripts/automation/orchestrator.mjs run-parallel --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty`
 - `node ./scripts/automation/orchestrator.mjs resume`
 - `node ./scripts/automation/orchestrator.mjs audit --json true`
+- `node ./scripts/automation/verify-orchestration-state.mjs`
 - `node ./scripts/automation/orchestrator.mjs curate-evidence [--scope active|completed|all] [--plan-id <value>]`
 - `node ./scripts/automation/compile-program-children.mjs --write true [--plan-id <value>]`
 - `node ./scripts/automation/scaffold-program-children.mjs --plan-file <path> [--write true]`
@@ -254,6 +257,9 @@ Use the manual path when any of these are true:
   - Runs all required repository gates.
   - When run inside orchestration sessions, `verify:full` receives `ORCH_PLAN_ID` and scopes `check-plan-metadata` to the in-flight plan to avoid unrelated plan-metadata auto-heal edits during host validation.
   - When orchestration provides `ORCH_VALIDATION_RESULT_PATH`, `verify:full` aggregates child-checker finding files into a structured result payload for host-lane reporting.
+- State replay verifier:
+  - `npm run state:verify`
+  - Replays orchestration state from `run-events.jsonl`, compares it with `run-state.json`, and fails on illegal transitions or persisted-state drift.
 - Metrics capture:
   - `npm run perf:baseline`
   - `npm run perf:after`
@@ -262,9 +268,13 @@ Use the manual path when any of these are true:
   - `npm run outcomes:report`
   - Generates `docs/generated/run-outcomes.json` from `run-events.jsonl`, including `summary.memory` continuity and contact-pack metrics.
   - `npm run outcomes:verify`
-  - Fails on derived continuity, thin-pack, resume-safe checkpoint, or repeated handoff-loop threshold breaches when outcome samples exist.
+  - Warns locally when samples are too thin, and blocks CI/merge flows when derived continuity, thin-pack, resume-safe checkpoint, or repeated handoff-loop thresholds are breached.
   - `resumeSafeCheckpointRate` prefers `session_checkpoint_assessed` per session and falls back to checkpoint fields embedded in that session's `session_finished` event when no dedicated assessment event exists.
   - `thinPackRate` only counts sessions that were genuinely missing expected continuity categories from the available candidate set; first-session packs without reusable checkpoints are not thin by default.
+- Perf budget verification:
+  - `node ./scripts/automation/check-performance-budgets.mjs`
+  - Warns locally when baseline/sample evidence is insufficient, and blocks CI/merge flows when comparable metrics regress past the configured budgets.
+  - Budgets cover runtime-context size, `verify:fast`, `verify:full`, median time-to-first-worker-edit, and average sessions per completed plan.
 - GitHub interop export scaffold (optional):
   - `npm run interop:github:export`
   - Generates `docs/generated/github-agent-export.json` and can emit `.agent.md` plus JSON scaffolds under `.github/agents/`.

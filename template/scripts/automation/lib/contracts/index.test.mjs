@@ -29,6 +29,7 @@ test('run-state migrates legacy versioned payloads to schemaVersion 1', () => {
     implementationState: {},
     programState: {},
     roleState: {},
+    orchestrationState: {},
     parallelState: { activeWorkers: {}, lastResults: {} },
     inProgress: null,
     stats: {

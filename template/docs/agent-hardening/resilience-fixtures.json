@@ -1,0 +1,251 @@
+{
+  "scenarios": [
+    {
+      "id": "worker-no-touch-retry",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "events": [
+        {
+          "type": "session_started",
+          "details": {
+            "planId": "plan-a",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "session_finished",
+          "details": {
+            "planId": "plan-a",
+            "status": "pending",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "session_pending_no_touch_retry",
+          "details": {
+            "planId": "plan-a",
+            "faultCode": "worker.pending.no-touch",
+            "recoveryAction": "retry-worker-edit-first"
+          }
+        }
+      ],
+      "expected": {
+        "finalState": {
+          "planState": "pending",
+          "stageState": "pending",
+        "validationState": "not-ready"
+        },
+        "lastTransitionCode": "stage.retry",
+        "eventType": "session_pending_no_touch_retry",
+        "faultCode": "worker.pending.no-touch",
+        "recoveryAction": "retry-worker-edit-first"
+      }
+    },
+    {
+      "id": "validation-external-blocker",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "events": [
+        {
+          "type": "plan_started",
+          "details": {
+            "planId": "plan-b"
+          }
+        },
+        {
+          "type": "session_started",
+          "details": {
+            "planId": "plan-b",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "completion_gate_opened",
+          "details": {
+            "planId": "plan-b",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "validation_started",
+          "details": {
+            "planId": "plan-b"
+          }
+        },
+        {
+          "type": "validation_residual_external",
+          "details": {
+            "planId": "plan-b",
+            "faultCode": "validation.always.external-blocker",
+            "recoveryAction": "resume-after-external-validation"
+          }
+        }
+      ],
+      "expected": {
+        "finalState": {
+          "planState": "validation-pending",
+          "validationState": "host-pending"
+        },
+        "lastTransitionCode": "validation.external-pending",
+        "eventType": "validation_residual_external",
+        "faultCode": "validation.always.external-blocker",
+        "recoveryAction": "resume-after-external-validation"
+      }
+    },
+    {
+      "id": "host-validation-pending",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "events": [
+        {
+          "type": "plan_started",
+          "details": {
+            "planId": "plan-c"
+          }
+        },
+        {
+          "type": "session_started",
+          "details": {
+            "planId": "plan-c",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "completion_gate_opened",
+          "details": {
+            "planId": "plan-c",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "validation_started",
+          "details": {
+            "planId": "plan-c"
+          }
+        },
+        {
+          "type": "validation_always_passed",
+          "details": {
+            "planId": "plan-c"
+          }
+        },
+        {
+          "type": "host_validation_blocked",
+          "details": {
+            "planId": "plan-c",
+            "faultCode": "validation.host.pending",
+            "recoveryAction": "resume-after-host-validation"
+          }
+        }
+      ],
+      "expected": {
+        "finalState": {
+          "planState": "validation-pending",
+          "validationState": "host-pending"
+        },
+        "lastTransitionCode": "validation.host-pending",
+        "eventType": "host_validation_blocked",
+        "faultCode": "validation.host.pending",
+        "recoveryAction": "resume-after-host-validation"
+      }
+    },
+    {
+      "id": "session-failed-retry",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "events": [
+        {
+          "type": "session_started",
+          "details": {
+            "planId": "plan-d",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "session_finished",
+          "details": {
+            "planId": "plan-d",
+            "status": "failed",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "session_failed",
+          "details": {
+            "planId": "plan-d",
+            "faultCode": "session.failed",
+            "recoveryAction": "retry-plan"
+          }
+        }
+      ],
+      "expected": {
+        "finalState": {
+          "planState": "failed",
+          "stageState": "failed"
+        },
+        "lastTransitionCode": "stage.failed",
+        "eventType": "session_failed",
+        "faultCode": "session.failed",
+        "recoveryAction": "retry-plan"
+      }
+    },
+    {
+      "id": "retry-armed-after-failure",
+      "suite": "resilience-critical-faults",
+      "critical": true,
+      "events": [
+        {
+          "type": "session_started",
+          "details": {
+            "planId": "plan-e",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "session_finished",
+          "details": {
+            "planId": "plan-e",
+            "status": "failed",
+            "role": "worker",
+            "stageIndex": 1,
+            "stageTotal": 1
+          }
+        },
+        {
+          "type": "plan_retry_armed",
+          "details": {
+            "planId": "plan-e",
+            "recoveryAction": "retry-plan"
+          }
+        }
+      ],
+      "expected": {
+        "finalState": {
+          "planState": "queued",
+          "stageState": "failed"
+        },
+        "lastTransitionCode": "plan.retry.armed",
+        "eventType": "plan_retry_armed",
+        "recoveryAction": "retry-plan"
+      }
+    }
+  ]
+}

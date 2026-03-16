@@ -478,6 +478,13 @@ export function createValidationCompletionOps(deps = {}) {
     }
   }
 
+  async function logValidationTransition(paths, state, type, transitionCode, details, options, patch = {}) {
+    if (typeof deps.logPlanTransition === 'function') {
+      return deps.logPlanTransition(paths, state, type, details.planId, transitionCode, details, options.dryRun, patch);
+    }
+    return deps.logEvent(paths, state, type, details, options.dryRun);
+  }
+
   async function runValidationCommands(paths, commands, options, label, state = null, plan = null) {
     if (commands.length === 0) {
       return {
@@ -1148,6 +1155,19 @@ export function createValidationCompletionOps(deps = {}) {
     }
 
     await deps.setPlanStatus(plan.filePath, 'validation', options.dryRun);
+    await logValidationTransition(paths, state, 'validation_started', 'validation_started', {
+      planId: plan.planId,
+      session,
+      role: roleState?.stages?.[Math.min(asInteger(roleState?.currentIndex, 0), Math.max(0, (roleState?.stages?.length ?? 1) - 1))] ?? 'worker',
+      effectiveRiskTier: assessment.effectiveRiskTier
+    }, options, {
+      currentRole: roleState?.stages?.[Math.min(asInteger(roleState?.currentIndex, 0), Math.max(0, (roleState?.stages?.length ?? 1) - 1))] ?? 'worker',
+      currentStageIndex: Math.min(asInteger(roleState?.currentIndex, 0) + 1, roleState?.stages?.length ?? 1),
+      currentStageTotal: roleState?.stages?.length ?? 1,
+      declaredRiskTier: assessment.declaredRiskTier,
+      computedRiskTier: assessment.computedRiskTier,
+      effectiveRiskTier: assessment.effectiveRiskTier
+    });
     deps.progressLog(options, `validation start ${plan.planId} lane=always`);
     const alwaysValidation = await runAlwaysValidation(paths, options, config, state, plan);
     updatePlanValidationResults(state, plan.planId, 'always', alwaysValidation.results ?? []);
@@ -1166,13 +1186,17 @@ export function createValidationCompletionOps(deps = {}) {
           alwaysValidation.reason ?? `Validation blocked by residual external failure: ${alwaysValidation.failedCommand}`,
           options.dryRun
         );
-        await deps.logEvent(paths, state, 'validation_residual_external', {
+        await logValidationTransition(paths, state, 'validation_residual_external', 'validation_always_passed', {
           planId: plan.planId,
           command: alwaysValidation.failedCommand,
           reason: alwaysValidation.reason ?? null,
           findingFiles: alwaysValidation.failedResult?.findingFiles ?? [],
-          outputLogPath: alwaysValidation.outputLogPath ?? null
-        }, options.dryRun);
+          outputLogPath: alwaysValidation.outputLogPath ?? null,
+          faultCode: 'validation.always.external-blocker',
+          recoveryAction: 'resume-after-external-validation'
+        }, options, {
+          lastReason: alwaysValidation.reason ?? `Validation blocked by residual external failure: ${alwaysValidation.failedCommand}`
+        });
         deps.progressLog(
           options,
           `validation residual blocker ${plan.planId}: ${alwaysValidation.reason ?? alwaysValidation.failedCommand}`
@@ -1188,12 +1212,16 @@ export function createValidationCompletionOps(deps = {}) {
         reason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`
       });
       await deps.setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      await deps.logEvent(paths, state, 'validation_failed', {
+      await logValidationTransition(paths, state, 'validation_failed', 'validation_failed', {
         planId: plan.planId,
         command: alwaysValidation.failedCommand,
         reason: alwaysValidation.reason ?? null,
-        outputLogPath: alwaysValidation.outputLogPath ?? null
-      }, options.dryRun);
+        outputLogPath: alwaysValidation.outputLogPath ?? null,
+        faultCode: 'validation.always.failed',
+        recoveryAction: 'fix-and-rerun-validation'
+      }, options, {
+        lastReason: alwaysValidation.reason ?? `Validation failed: ${alwaysValidation.failedCommand}`
+      });
       deps.progressLog(options, `validation failed ${plan.planId}: ${alwaysValidation.reason ?? alwaysValidation.failedCommand}`);
       if (alwaysValidation.outputLogPath) {
         deps.progressLog(options, `validation log: ${alwaysValidation.outputLogPath}`);
@@ -1210,13 +1238,26 @@ export function createValidationCompletionOps(deps = {}) {
     }
 
     deps.updatePlanValidationState(state, plan.planId, { always: 'passed', reason: null });
+    await logValidationTransition(paths, state, 'validation_always_passed', 'validation_always_passed', {
+      planId: plan.planId,
+      session,
+      effectiveRiskTier: assessment.effectiveRiskTier
+    }, options, {
+      declaredRiskTier: assessment.declaredRiskTier,
+      computedRiskTier: assessment.computedRiskTier,
+      effectiveRiskTier: assessment.effectiveRiskTier
+    });
     deps.progressLog(options, `validation passed ${plan.planId} lane=always`);
 
-    await deps.logEvent(paths, state, 'host_validation_requested', {
+    await logValidationTransition(paths, state, 'host_validation_requested', 'validation_host_started', {
       planId: plan.planId,
       mode: resolveHostValidationMode(config),
       commands: resolveHostRequiredValidationCommands(config)
-    }, options.dryRun);
+    }, options, {
+      declaredRiskTier: assessment.declaredRiskTier,
+      computedRiskTier: assessment.computedRiskTier,
+      effectiveRiskTier: assessment.effectiveRiskTier
+    });
     deps.progressLog(options, `validation start ${plan.planId} lane=host mode=${resolveHostValidationMode(config)}`);
 
     const hostValidation = await runHostValidation(paths, state, plan, options, config);
@@ -1237,13 +1278,17 @@ export function createValidationCompletionOps(deps = {}) {
           hostValidation.reason ?? 'Host validation blocked by residual external failure.',
           options.dryRun
         );
-        await deps.logEvent(paths, state, 'host_validation_residual_external', {
+        await logValidationTransition(paths, state, 'host_validation_residual_external', 'validation_host_pending', {
           planId: plan.planId,
           provider: hostValidation.provider ?? null,
           reason: hostValidation.reason ?? 'Host validation blocked by residual external failure.',
           findingFiles: hostValidation.failedResult?.findingFiles ?? [],
-          outputLogPath: hostValidation.outputLogPath ?? null
-        }, options.dryRun);
+          outputLogPath: hostValidation.outputLogPath ?? null,
+          faultCode: 'validation.host.external-blocker',
+          recoveryAction: 'resume-after-external-validation'
+        }, options, {
+          lastReason: hostValidation.reason ?? 'Host validation blocked by residual external failure.'
+        });
         deps.progressLog(
           options,
           `host validation residual blocker ${plan.planId}: ${hostValidation.reason ?? 'Host validation blocked.'}`
@@ -1260,12 +1305,16 @@ export function createValidationCompletionOps(deps = {}) {
         reason: hostValidation.reason ?? 'Host validation failed.'
       });
       await deps.setPlanStatus(plan.filePath, 'failed', options.dryRun);
-      await deps.logEvent(paths, state, 'host_validation_failed', {
+      await logValidationTransition(paths, state, 'host_validation_failed', 'validation_failed', {
         planId: plan.planId,
         provider: hostValidation.provider ?? null,
         reason: hostValidation.reason ?? 'Host validation failed.',
-        outputLogPath: hostValidation.outputLogPath ?? null
-      }, options.dryRun);
+        outputLogPath: hostValidation.outputLogPath ?? null,
+        faultCode: 'validation.host.failed',
+        recoveryAction: 'fix-and-rerun-host-validation'
+      }, options, {
+        lastReason: hostValidation.reason ?? 'Host validation failed.'
+      });
       deps.progressLog(options, `host validation failed ${plan.planId}: ${hostValidation.reason ?? 'Host validation failed.'}`);
       if (hostValidation.outputLogPath) {
         deps.progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
@@ -1295,12 +1344,16 @@ export function createValidationCompletionOps(deps = {}) {
         hostValidation.reason ?? 'Host validation pending.',
         options.dryRun
       );
-      await deps.logEvent(paths, state, 'host_validation_blocked', {
+      await logValidationTransition(paths, state, 'host_validation_blocked', 'validation_host_pending', {
         planId: plan.planId,
         provider: hostValidation.provider ?? null,
         reason: hostValidation.reason ?? 'Host validation pending.',
-        outputLogPath: hostValidation.outputLogPath ?? null
-      }, options.dryRun);
+        outputLogPath: hostValidation.outputLogPath ?? null,
+        faultCode: 'validation.host.pending',
+        recoveryAction: 'resume-after-host-validation'
+      }, options, {
+        lastReason: hostValidation.reason ?? 'Host validation pending.'
+      });
       deps.progressLog(options, `host validation pending ${plan.planId}: ${hostValidation.reason ?? 'Host validation pending.'}`);
       if (hostValidation.outputLogPath) {
         deps.progressLog(options, `host validation log: ${hostValidation.outputLogPath}`);
@@ -1328,10 +1381,10 @@ export function createValidationCompletionOps(deps = {}) {
       'Host-required validations passed.',
       options.dryRun
     );
-    await deps.logEvent(paths, state, 'host_validation_passed', {
+    await logValidationTransition(paths, state, 'host_validation_passed', 'validation_host_passed', {
       planId: plan.planId,
       provider: hostValidation.provider ?? null
-    }, options.dryRun);
+    }, options);
     deps.progressLog(options, `host validation passed ${plan.planId} provider=${hostValidation.provider ?? 'n/a'}`);
 
     const semanticProofReport = evaluateSemanticProofCoverage(plan, state, config);

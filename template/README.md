@@ -83,9 +83,7 @@ Reference: `docs/ops/automation/LITE_QUICKSTART.md`.
 
 The harness treats machine-readable runtime artifacts as explicit contracts, not informal JSON:
 
-- `docs/ops/automation/harness-manifest.json` is the downstream ownership and version-stamp record for sync/update.
-- `docs/ops/automation/run-state.json` is the resumable queue/session snapshot.
-- `docs/ops/automation/run-events.jsonl` is the append-only event envelope stream.
+- `docs/ops/automation/` holds the downstream ownership manifest, resumable run-state, append-only run-events, and generated runtime state once the harness has been installed and executed.
 - `docs/ops/automation/runtime/state/<plan-id>/latest.json` and `checkpoints.jsonl` are the continuity contracts used by resume/handoff/contact-pack selection.
 - Contact-pack manifests and validation result payloads are versioned contracts and should be consumed through harness scripts, not hand-authored assumptions.
 
@@ -135,6 +133,7 @@ Start with:
 
 - Runtime context build: `npm run context:compile`
 - Governance checks: `npm run docs:verify`, `npm run conformance:verify`, `npm run architecture:verify`, `npm run agent:verify`, `npm run eval:verify`, `npm run plans:verify`, `npm run harness:verify`
+- Control-plane and resilience checks: `npm run state:verify`, `npm run eval:resilience`, `npm run outcomes:verify`
 - Plan metadata drift self-heal (local default): `plans:verify` auto-aligns top-level `Status:` with metadata `- Status`; disable via `ORCH_PLAN_METADATA_AUTO_HEAL_STATUS=0` (CI defaults to disabled).
 - Broad future-native parents that still need decomposition should use `npm run plans:scaffold-children -- --plan-file <path>` instead of staying childless; legacy heading parents should use `npm run plans:migrate -- --plan-file <path>` first.
 - Generated future/active child slices from `plans:compile` are still real plans. Review and fill future-specific sections before expecting stricter repos to pass `plans:verify` on the first compile.
@@ -147,6 +146,7 @@ Start with:
 - During implementation loops: `npm run verify:fast`.
 - Before merge: `npm run verify:full`.
 - Capture baseline and post-change metrics: `npm run perf:baseline`, `npm run perf:after`.
+- Re-run resilience fixtures when failure handling changes: `npm run eval:resilience`.
 
 ## Automation Conveyor Commands
 

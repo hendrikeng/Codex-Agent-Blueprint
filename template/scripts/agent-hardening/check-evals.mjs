@@ -334,6 +334,45 @@ async function main() {
     );
   }
 
+  const resilienceReportRel = String(config.resilienceReportPath ?? '').trim();
+  if (resilienceReportRel) {
+    const resilienceReportAbs = path.join(rootDir, resilienceReportRel);
+    if (!(await exists(resilienceReportAbs))) {
+      fail(`Missing resilience eval report file: ${resilienceReportRel}`);
+    }
+    const resilienceReport = parseJson(await fs.readFile(resilienceReportAbs, 'utf8'), resilienceReportAbs);
+    if (!isObject(resilienceReport)) {
+      fail('Resilience eval report must be a JSON object.');
+    }
+    const resilienceGeneratedAt = toIsoDate(resilienceReport.generatedAtUtc);
+    if (!resilienceGeneratedAt) {
+      fail(`Resilience eval report generatedAtUtc is invalid: ${String(resilienceReport.generatedAtUtc)}`);
+    }
+    const resilienceAgeDays = daysBetween(resilienceGeneratedAt, new Date());
+    if (resilienceAgeDays < 0) {
+      fail(`Resilience eval report generatedAtUtc is in the future: ${String(resilienceReport.generatedAtUtc)}`);
+    }
+    if (resilienceAgeDays > maxAgeDays) {
+      fail(`Resilience eval report is stale (${resilienceAgeDays} days old, max ${maxAgeDays}).`);
+    }
+    const resilienceSummary = resilienceReport.summary;
+    if (!isObject(resilienceSummary)) {
+      fail("Resilience eval report field 'summary' must be an object.");
+    }
+    const resiliencePassRate = Number(resilienceSummary.passRate);
+    const resilienceMinimumPassRate = Number(config.resilienceMinimumPassRate ?? minimumPassRate);
+    if (!Number.isFinite(resiliencePassRate) || resiliencePassRate < resilienceMinimumPassRate) {
+      fail(
+        `Resilience eval passRate ${resiliencePassRate.toFixed(3)} is below minimum ${resilienceMinimumPassRate.toFixed(3)}.`
+      );
+    }
+    validateSuites(
+      resilienceReport,
+      Array.isArray(config.requiredResilienceSuites) ? config.requiredResilienceSuites : [],
+      'resilience eval'
+    );
+  }
+
   console.log(
     `[eval-verify] passed (age=${ageDays}d passRate=${passRate.toFixed(3)} suites=${report.suites.length} criticalOpen=${criticalOpen} highOpen=${highOpen}).`
   );

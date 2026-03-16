@@ -229,7 +229,9 @@ function buildCommandSet(changedFiles) {
   ));
   if (changedAutomation) {
     selected.add('node ./scripts/automation/check-harness-alignment.mjs');
-    selected.add('node ./scripts/automation/check-outcomes-thresholds.mjs --warn-only');
+    selected.add('node ./scripts/automation/check-outcomes-thresholds.mjs');
+    selected.add('node ./scripts/automation/check-performance-budgets.mjs');
+    selected.add('node ./scripts/automation/verify-orchestration-state.mjs');
   }
 
   const changedPlanContracts = anyMatch(changedFiles, (file) => (

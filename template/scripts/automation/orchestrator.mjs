@@ -96,6 +96,14 @@ import {
 } from './lib/program-child-refresh.mjs';
 import { deriveProgramStates } from './lib/program-state.mjs';
 import {
+  applyOrchestrationTransition,
+  createOrchestrationState,
+  inferOrchestrationTransition,
+  normalizeOrchestrationState,
+  replayOrchestrationTransitions,
+  summarizeOrchestrationState
+} from './lib/orchestration-state-machine.mjs';
+import {
   CONTRACT_IDS,
   parseContractPayload,
   prepareContractPayload
@@ -3549,6 +3557,41 @@ function pendingSignalSignature(role, nextRole, reason) {
   return `${normalizedRole}->${normalizedNextRole}|${normalizedReason}`;
 }
 
+function sessionFaultDetails(status, reason = null) {
+  switch (String(status ?? '').trim().toLowerCase()) {
+    case 'pending':
+      return {
+        faultCode: 'session.pending',
+        recoveryAction: 'continue-session',
+        recoveryReason: reason
+      };
+    case 'handoff_required':
+      return {
+        faultCode: 'session.handoff-required',
+        recoveryAction: 'create-handoff',
+        recoveryReason: reason
+      };
+    case 'blocked':
+      return {
+        faultCode: 'session.blocked',
+        recoveryAction: 'operator-unblock',
+        recoveryReason: reason
+      };
+    case 'failed':
+      return {
+        faultCode: 'session.failed',
+        recoveryAction: 'retry-plan',
+        recoveryReason: reason
+      };
+    default:
+      return {
+        faultCode: null,
+        recoveryAction: null,
+        recoveryReason: null
+      };
+  }
+}
+
 function approvalEnvPrefixForRiskTier(riskTier) {
   const normalized = parseRiskTier(riskTier, 'low');
   if (normalized === 'high') {
@@ -3739,6 +3782,7 @@ function createInitialState(runId, requestedMode, effectiveMode) {
     implementationState: {},
     programState: {},
     roleState: {},
+    orchestrationState: {},
     parallelState: {
       activeWorkers: {},
       lastResults: {}
@@ -3789,6 +3833,18 @@ function normalizePersistedState(state) {
       : {};
   normalized.roleState =
     normalized.roleState && typeof normalized.roleState === 'object' ? normalized.roleState : {};
+  normalized.orchestrationState =
+    normalized.orchestrationState && typeof normalized.orchestrationState === 'object'
+      ? normalized.orchestrationState
+      : {};
+  normalized.orchestrationState = Object.fromEntries(
+    Object.entries(normalized.orchestrationState)
+      .filter(([planId]) => String(planId ?? '').trim().length > 0)
+      .map(([planId, orchestrationState]) => [
+        planId,
+        normalizeOrchestrationState(orchestrationState, { planId })
+      ])
+  );
   normalized.parallelState =
     normalized.parallelState && typeof normalized.parallelState === 'object'
       ? normalized.parallelState
@@ -3897,6 +3953,78 @@ function updatePlanValidationState(state, planId, patch) {
     ...patch,
     updatedAt: nowIso()
   };
+}
+
+function ensurePlanOrchestrationState(state, planId, patch = {}) {
+  if (!state.orchestrationState || typeof state.orchestrationState !== 'object') {
+    state.orchestrationState = {};
+  }
+  if (!state.orchestrationState[planId] || typeof state.orchestrationState[planId] !== 'object') {
+    state.orchestrationState[planId] = createOrchestrationState(planId, patch.planType);
+  } else if (patch && Object.keys(patch).length > 0) {
+    state.orchestrationState[planId] = normalizeOrchestrationState(state.orchestrationState[planId], {
+      ...patch,
+      planId
+    });
+  } else {
+    state.orchestrationState[planId] = normalizeOrchestrationState(state.orchestrationState[planId], { planId });
+  }
+  return state.orchestrationState[planId];
+}
+
+function orchestrationTransitionPatch(details, patch = {}) {
+  const nextRole = details.nextRole ?? patch.currentRole ?? null;
+  const nextStageIndex =
+    Number.isInteger(details.nextStageIndex) ? details.nextStageIndex : (Number.isInteger(patch.currentStageIndex) ? patch.currentStageIndex : null);
+  const nextStageTotal =
+    Number.isInteger(details.nextStageTotal) ? details.nextStageTotal : (Number.isInteger(patch.currentStageTotal) ? patch.currentStageTotal : null);
+  return {
+    ...patch,
+    role: details.role ?? patch.currentRole ?? null,
+    nextRole,
+    stageIndex: Number.isInteger(details.stageIndex) ? details.stageIndex : nextStageIndex,
+    stageTotal: Number.isInteger(details.stageTotal) ? details.stageTotal : nextStageTotal,
+    nextStageIndex,
+    nextStageTotal
+  };
+}
+
+function applyPlanOrchestrationTransition(state, type, details = {}, patch = {}) {
+  const planId = String(details.planId ?? '').trim();
+  if (!planId || !inferOrchestrationTransition(type, details)) {
+    return null;
+  }
+  const current = ensurePlanOrchestrationState(state, planId, patch.initialState ?? {});
+  const next = applyOrchestrationTransition(current, type, orchestrationTransitionPatch(details, patch));
+  state.orchestrationState[planId] = next;
+  return {
+    current,
+    next
+  };
+}
+
+function orchestrationTransitionDetails(transition) {
+  return {
+    machine: 'orchestration.v1',
+    planId: transition.next.planId,
+    transitionCode: transition.next.lastTransitionCode,
+    fromState: summarizeOrchestrationState(transition.current),
+    toState: summarizeOrchestrationState(transition.next),
+    transitionCount: transition.next.transitionCount,
+    lastTransitionAt: transition.next.lastUpdatedAt
+  };
+}
+
+async function logPlanTransition(paths, state, type, planId, transitionCode, details, dryRun, patch = {}) {
+  void planId;
+  void transitionCode;
+  const eventDetails = {
+    ...details,
+    planId: details?.planId ?? planId,
+    ...orchestrationTransitionPatch(details ?? {}, patch)
+  };
+  await logEvent(paths, state, type, eventDetails, dryRun);
+  return state.orchestrationState?.[eventDetails.planId] ?? null;
 }
 
 function proofTypeIsStrong(type, validationRef = '') {
@@ -4351,7 +4479,15 @@ function sanitizeEventDetails(value, parentKey = '') {
 }
 
 async function logEvent(paths, state, type, details, dryRun) {
-  const sanitizedDetails = sanitizeEventDetails(details ?? {});
+  let enrichedDetails = details ?? {};
+  const transition = applyPlanOrchestrationTransition(state, type, enrichedDetails);
+  if (transition) {
+    enrichedDetails = {
+      ...enrichedDetails,
+      ...orchestrationTransitionDetails(transition)
+    };
+  }
+  const sanitizedDetails = sanitizeEventDetails(enrichedDetails);
   const nextSequence = Math.max(0, asInteger(state.eventSequence, 0)) + 1;
   state.eventSequence = nextSequence;
   const event = {
@@ -5346,7 +5482,7 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
   const captureOutput = shouldCaptureCommandOutput(options);
   const sessionLogPath = captureOutput ? sessionLogPathRel : null;
 
-  await logEvent(paths, state, 'session_started', {
+  await logPlanTransition(paths, state, 'session_started', plan.planId, 'role_session_started', {
     planId: plan.planId,
     session: sessionNumber,
     role,
@@ -5369,7 +5505,13 @@ async function executePlanSession(plan, paths, state, options, config, sessionNu
     contactPackThin: contactPack?.thinPack ?? false,
     executorCommandConfigured: true,
     commandLogPath: sessionLogPath
-  }, options.dryRun);
+  }, options.dryRun, {
+    currentRole: role,
+    currentStageIndex: stageIndex,
+    currentStageTotal: stageTotal,
+    declaredRiskTier,
+    effectiveRiskTier
+  });
 
   if (options.dryRun) {
     return {
@@ -7841,11 +7983,15 @@ async function announceStageReuse(paths, state, plan, roleState, options) {
   }
   roleState.reuseAnnouncedAtRunId = state.runId;
   state.roleState[plan.planId] = roleState;
-  await logEvent(paths, state, 'role_stage_reused', {
+  await logPlanTransition(paths, state, 'role_stage_reused', plan.planId, 'role_stage_reused', {
     planId: plan.planId,
     reusedStages: roleState.reusedPrefixStages,
     nextRole: roleState.stages[Math.min(roleState.currentIndex, roleState.stages.length - 1)] ?? ROLE_WORKER
-  }, options.dryRun);
+  }, options.dryRun, {
+    currentRole: roleState.stages[Math.min(roleState.currentIndex, roleState.stages.length - 1)] ?? ROLE_WORKER,
+    currentStageIndex: Math.min(roleState.currentIndex + 1, roleState.stages.length),
+    currentStageTotal: roleState.stages.length
+  });
   progressLog(options, `role stage reuse ${plan.planId}: skipped ${roleState.reusedPrefixStages.join(' -> ')}`);
 }
 
@@ -7989,6 +8135,7 @@ async function processPlan(plan, paths, state, options, config) {
     );
     const sessionContinuityMetrics = continuityMetrics(checkpointRecord.stateDelta);
     const continuityDegraded = continuityDegradationReasons(sessionResult, checkpointRecord).length > 0;
+    const sessionFault = sessionFaultDetails(sessionResult.status, sessionResult.reason ?? null);
     await logEvent(paths, state, 'session_finished', {
       planId: plan.planId,
       session,
@@ -8038,7 +8185,10 @@ async function processPlan(plan, paths, state, options, config) {
       touchScansSkipped: sessionResult.touchMonitor?.scansSkipped ?? 0,
       liveActivity: sessionResult.liveActivity?.message ?? null,
       liveActivityUpdatedAt: sessionResult.liveActivity?.updatedAt ?? null,
-      liveActivityUpdates: sessionResult.liveActivityUpdates ?? 0
+      liveActivityUpdates: sessionResult.liveActivityUpdates ?? 0,
+      faultCode: sessionFault.faultCode,
+      recoveryAction: sessionFault.recoveryAction,
+      recoveryReason: sessionFault.recoveryReason
     }, options.dryRun);
     if (options.liveActivityEmitEventLines && sessionResult.liveActivity?.message) {
       await logEvent(paths, state, 'provider_activity', {
@@ -8186,7 +8336,7 @@ async function processPlan(plan, paths, state, options, config) {
         }
       );
       state.stats.handoffs += 1;
-      await logEvent(paths, state, 'handoff_created', {
+      await logPlanTransition(paths, state, 'handoff_created', plan.planId, 'role_session_handoff_required', {
         planId: plan.planId,
         session,
         role: currentRole,
@@ -8195,7 +8345,15 @@ async function processPlan(plan, paths, state, options, config) {
         handoffPath: toPosix(path.relative(paths.rootDir, handoffPaths.markdownPath)),
         handoffJsonPath: toPosix(path.relative(paths.rootDir, handoffPaths.jsonPath)),
         reason: sessionResult.reason ?? 'executor-requested'
-      }, options.dryRun);
+      }, options.dryRun, {
+        currentRole,
+        currentStageIndex: stageIndex,
+        currentStageTotal: stageTotal,
+        declaredRiskTier: lastAssessment.declaredRiskTier,
+        computedRiskTier: lastAssessment.computedRiskTier,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        lastReason: sessionResult.reason ?? 'executor-requested'
+      });
       progressLog(
         options,
         `handoff created for ${plan.planId}: ${toPosix(path.relative(paths.rootDir, handoffPaths.markdownPath))}`
@@ -8219,7 +8377,7 @@ async function processPlan(plan, paths, state, options, config) {
     if (sessionResult.status === 'blocked') {
       await setPlanStatus(plan.filePath, 'blocked', options.dryRun);
       clearPlanContinuationState(state, plan.planId);
-      await logEvent(paths, state, 'session_blocked', {
+      await logPlanTransition(paths, state, 'session_blocked', plan.planId, 'role_session_blocked', {
         planId: plan.planId,
         session,
         role: currentRole,
@@ -8227,7 +8385,15 @@ async function processPlan(plan, paths, state, options, config) {
         stageTotal,
         effectiveRiskTier: lastAssessment.effectiveRiskTier,
         reason: sessionResult.reason ?? 'executor blocked'
-      }, options.dryRun);
+      }, options.dryRun, {
+        currentRole,
+        currentStageIndex: stageIndex,
+        currentStageTotal: stageTotal,
+        declaredRiskTier: lastAssessment.declaredRiskTier,
+        computedRiskTier: lastAssessment.computedRiskTier,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        lastReason: sessionResult.reason ?? 'executor blocked'
+      });
       progressLog(options, `session blocked for ${plan.planId}: ${sessionResult.reason ?? 'executor blocked'}`);
       return {
         outcome: 'blocked',
@@ -8239,6 +8405,23 @@ async function processPlan(plan, paths, state, options, config) {
     if (sessionResult.status === 'failed') {
       await setPlanStatus(plan.filePath, 'failed', options.dryRun);
       clearPlanContinuationState(state, plan.planId);
+      await logPlanTransition(paths, state, 'session_failed', plan.planId, 'role_session_failed', {
+        planId: plan.planId,
+        session,
+        role: currentRole,
+        stageIndex,
+        stageTotal,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        reason: sessionResult.reason ?? 'executor failed'
+      }, options.dryRun, {
+        currentRole,
+        currentStageIndex: stageIndex,
+        currentStageTotal: stageTotal,
+        declaredRiskTier: lastAssessment.declaredRiskTier,
+        computedRiskTier: lastAssessment.computedRiskTier,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        lastReason: sessionResult.reason ?? 'executor failed'
+      });
       progressLog(options, `session failed for ${plan.planId}: ${sessionResult.reason ?? 'executor failed'}`);
       return {
         outcome: 'failed',
@@ -8413,7 +8596,9 @@ async function processPlan(plan, paths, state, options, config) {
           durationSeconds: Math.round(sessionDurationSeconds * 100) / 100,
           stageBudgetSeconds,
           touchCount: pendingTouchCount,
-          reason: budgetReason
+          reason: budgetReason,
+          faultCode: 'role.stage-budget.exceeded',
+          recoveryAction: 'narrow-role-scope'
         }, options.dryRun);
         progressLog(options, `session stage-budget fail-fast ${plan.planId}: ${budgetReason}`);
         storeContinuationState();
@@ -8450,7 +8635,9 @@ async function processPlan(plan, paths, state, options, config) {
           touchCount: pendingTouchCount,
           retryAttempt: workerNoTouchRetryCount,
           retryLimit: workerNoTouchRetryLimit,
-          reason: retryReason
+          reason: retryReason,
+          faultCode: 'worker.pending.no-touch',
+          recoveryAction: 'retry-worker-edit-first'
         }, options.dryRun);
         progressLog(options, `session retry ${plan.planId}: ${retryReason}`);
         lastPendingSignal = null;
@@ -8479,7 +8666,9 @@ async function processPlan(plan, paths, state, options, config) {
           nextRole,
           effectiveRiskTier: lastAssessment.effectiveRiskTier,
           touchCount: pendingTouchCount,
-          reason: failFastReason
+          reason: failFastReason,
+          faultCode: 'worker.pending.no-touch.exhausted',
+          recoveryAction: 'narrow-and-edit'
         }, options.dryRun);
         progressLog(options, `session fail-fast ${plan.planId}: ${failFastReason}`);
         storeContinuationState();
@@ -8522,7 +8711,9 @@ async function processPlan(plan, paths, state, options, config) {
           effectiveRiskTier: lastAssessment.effectiveRiskTier,
           pendingStreak: workerPendingStreak,
           pendingStreakLimit: workerPendingStreakLimit,
-          reason: failFastReason
+          reason: failFastReason,
+          faultCode: 'worker.pending.streak.exceeded',
+          recoveryAction: 'narrow-and-resume'
         }, options.dryRun);
         progressLog(options, `session fail-fast ${plan.planId}: ${failFastReason}`);
         storeContinuationState();
@@ -8550,7 +8741,9 @@ async function processPlan(plan, paths, state, options, config) {
           effectiveRiskTier: lastAssessment.effectiveRiskTier,
           pendingStreak: readOnlyPendingStreak,
           pendingStreakLimit: DEFAULT_READ_ONLY_PENDING_STREAK_LIMIT,
-          reason: failFastReason
+          reason: failFastReason,
+          faultCode: 'role.pending.same-role.exhausted',
+          recoveryAction: 'handoff-or-complete-role'
         }, options.dryRun);
         progressLog(options, `session fail-fast ${plan.planId}: ${failFastReason}`);
         storeContinuationState();
@@ -8570,7 +8763,9 @@ async function processPlan(plan, paths, state, options, config) {
           role: currentRole,
           nextRole,
           effectiveRiskTier: lastAssessment.effectiveRiskTier,
-          reason: failFastReason
+          reason: failFastReason,
+          faultCode: 'role.pending.repeated-signal',
+          recoveryAction: 'change-role-or-edit-scope'
         }, options.dryRun);
         progressLog(options, `session fail-fast ${plan.planId}: ${failFastReason}`);
         storeContinuationState();
@@ -8595,7 +8790,7 @@ async function processPlan(plan, paths, state, options, config) {
           riskTier: lastAssessment.effectiveRiskTier
         };
       }
-      await logEvent(paths, state, 'session_continued', {
+      await logPlanTransition(paths, state, 'session_continued', plan.planId, 'role_session_pending', {
         planId: plan.planId,
         session,
         role: currentRole,
@@ -8603,7 +8798,15 @@ async function processPlan(plan, paths, state, options, config) {
         effectiveRiskTier: lastAssessment.effectiveRiskTier,
         nextSession: session + 1,
         reason: pendingReason
-      }, options.dryRun);
+      }, options.dryRun, {
+        currentRole: nextRole,
+        currentStageIndex: Math.min(roleState.currentIndex + 1, roleState.stages.length),
+        currentStageTotal: roleState.stages.length,
+        declaredRiskTier: lastAssessment.declaredRiskTier,
+        computedRiskTier: lastAssessment.computedRiskTier,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier,
+        lastReason: pendingReason
+      });
       progressLog(
         options,
         `session pending ${plan.planId}: nextRole=${nextRole} reason=${pendingReason}`
@@ -8623,7 +8826,7 @@ async function processPlan(plan, paths, state, options, config) {
 
     if (roleIndex < roleState.stages.length - 1) {
       const nextRole = roleState.stages[Math.min(roleIndex + 1, roleState.stages.length - 1)];
-      await logEvent(paths, state, 'role_stage_advanced', {
+      await logPlanTransition(paths, state, 'role_stage_advanced', plan.planId, 'role_stage_advanced', {
         planId: plan.planId,
         session,
         completedRole: currentRole,
@@ -8631,7 +8834,14 @@ async function processPlan(plan, paths, state, options, config) {
         stageIndexCompleted: stageIndex,
         stageTotal,
         effectiveRiskTier: lastAssessment.effectiveRiskTier
-      }, options.dryRun);
+      }, options.dryRun, {
+        currentRole: nextRole,
+        currentStageIndex: Math.min(roleIndex + 2, roleState.stages.length),
+        currentStageTotal: roleState.stages.length,
+        declaredRiskTier: lastAssessment.declaredRiskTier,
+        computedRiskTier: lastAssessment.computedRiskTier,
+        effectiveRiskTier: lastAssessment.effectiveRiskTier
+      });
       progressLog(options, `role transition ${plan.planId}: ${currentRole} -> ${nextRole}`);
       continue;
     }
@@ -8715,6 +8925,19 @@ async function processPlan(plan, paths, state, options, config) {
       continue;
     }
 
+    await logPlanTransition(paths, state, 'completion_gate_opened', plan.planId, 'completion_gate_opened', {
+      planId: plan.planId,
+      session,
+      role: currentRole,
+      effectiveRiskTier: lastAssessment.effectiveRiskTier
+    }, options.dryRun, {
+      currentRole,
+      currentStageIndex: stageIndex,
+      currentStageTotal: stageTotal,
+      declaredRiskTier: lastAssessment.declaredRiskTier,
+      computedRiskTier: lastAssessment.computedRiskTier,
+      effectiveRiskTier: lastAssessment.effectiveRiskTier
+    });
     return validationCompletionOps.runValidationAndFinalize(plan, paths, state, options, config, lastAssessment, roleState, {
       session,
       sessionsExecuted: sessionAttempt,
@@ -8910,7 +9133,8 @@ async function runLoop(paths, state, options, config, runMode) {
       await logEvent(paths, state, 'plan_retry_armed', {
         planId,
         attempts: details.attempts,
-        maxAttempts: details.maxAttempts
+        maxAttempts: details.maxAttempts,
+        recoveryAction: 'retry-plan'
       }, options.dryRun);
       progressLog(options, `retry armed ${planId}: attempt ${details.attempts + 1}/${details.maxAttempts}`);
     }
@@ -8921,7 +9145,8 @@ async function runLoop(paths, state, options, config, runMode) {
       recoveryAnnounced.add(`unblock:${planId}`);
       await logEvent(paths, state, 'plan_unblock_armed', {
         planId,
-        reason: details.reason
+        reason: details.reason,
+        recoveryAction: 'auto-unblock-plan'
       }, options.dryRun);
       progressLog(options, `auto-unblock armed ${planId}: ${details.reason}`);
     }
@@ -8981,7 +9206,7 @@ async function runLoop(paths, state, options, config, runMode) {
       registerPlanRetryAttempt(state, nextPlan.planId);
     }
     const nextPlanRisk = computeRiskAssessment(nextPlan, state, config);
-    await logEvent(paths, state, 'plan_started', {
+    await logPlanTransition(paths, state, 'plan_started', nextPlan.planId, 'plan_selected', {
       planId: nextPlan.planId,
       planFile: nextPlan.rel,
       runMode,
@@ -8990,7 +9215,11 @@ async function runLoop(paths, state, options, config, runMode) {
       effectiveRiskTier: nextPlanRisk.effectiveRiskTier,
       riskScore: nextPlanRisk.score,
       sensitive: nextPlanRisk.sensitive
-    }, options.dryRun);
+    }, options.dryRun, {
+      declaredRiskTier: nextPlanRisk.declaredRiskTier,
+      computedRiskTier: nextPlanRisk.computedRiskTier,
+      effectiveRiskTier: nextPlanRisk.effectiveRiskTier
+    });
     progressLog(
       options,
       `plan start ${nextPlan.planId} declared=${nextPlanRisk.declaredRiskTier} effective=${nextPlanRisk.effectiveRiskTier} score=${nextPlanRisk.score}`
@@ -10086,9 +10315,12 @@ async function auditCommand(paths, options) {
   const raw = await fs.readFile(paths.runEventsPath, 'utf8');
   const events = parseEventLines(raw);
   const filtered = options.runId ? events.filter((event) => event.runId === options.runId) : events;
+  const persisted = await readContractIfExists(paths.runStatePath, CONTRACT_IDS.runState, null);
+  const persistedState = persisted ? normalizePersistedState(persisted) : null;
 
   const countsByType = new Map();
   const latestPerPlan = new Map();
+  const eventsByPlan = new Map();
   const runIds = new Set();
 
   for (const event of filtered) {
@@ -10097,6 +10329,12 @@ async function auditCommand(paths, options) {
 
     const planId = event.details?.planId || event.taskId;
     if (planId) {
+      const planEvents = eventsByPlan.get(planId) ?? [];
+      planEvents.push({
+        type: event.type,
+        details: event.details ?? {}
+      });
+      eventsByPlan.set(planId, planEvents);
       latestPerPlan.set(planId, {
         planId,
         type: event.type,
@@ -10106,11 +10344,48 @@ async function auditCommand(paths, options) {
     }
   }
 
+  const orchestrationPlanIds = new Set([
+    ...eventsByPlan.keys(),
+    ...Object.keys(persistedState?.orchestrationState ?? {})
+  ]);
+  const orchestrationStates = [...orchestrationPlanIds]
+    .map((planId) => {
+      const eventEntries = eventsByPlan.get(planId) ?? [];
+      const persistedSummary = persistedState?.orchestrationState?.[planId]
+        ? summarizeOrchestrationState(persistedState.orchestrationState[planId])
+        : null;
+      try {
+        const replayed = replayOrchestrationTransitions(eventEntries);
+        const replayedSummary = replayed?.planId ? summarizeOrchestrationState(replayed) : null;
+        const matchesPersisted =
+          !persistedSummary || !replayedSummary
+            ? persistedSummary == null && replayedSummary == null
+            : JSON.stringify(persistedSummary) === JSON.stringify(replayedSummary);
+        return {
+          planId,
+          persisted: persistedSummary,
+          replayed: replayedSummary,
+          matchesPersisted,
+          replayError: null
+        };
+      } catch (error) {
+        return {
+          planId,
+          persisted: persistedSummary,
+          replayed: null,
+          matchesPersisted: false,
+          replayError: error instanceof Error ? error.message : String(error)
+        };
+      }
+    })
+    .sort((a, b) => a.planId.localeCompare(b.planId));
+
   const payload = {
     runs: [...runIds].sort(),
     eventCount: filtered.length,
     countsByType: Object.fromEntries([...countsByType.entries()].sort(([a], [b]) => a.localeCompare(b))),
-    planStatuses: [...latestPerPlan.values()].sort((a, b) => a.planId.localeCompare(b.planId))
+    planStatuses: [...latestPerPlan.values()].sort((a, b) => a.planId.localeCompare(b.planId)),
+    orchestrationStates
   };
 
   try {
@@ -10159,6 +10434,24 @@ async function auditCommand(paths, options) {
   for (const status of payload.planStatuses) {
     const reasonSuffix = status.reason ? ` (${status.reason})` : '';
     console.log(`  - ${status.planId}: ${status.type} @ ${status.timestamp}${reasonSuffix}`);
+  }
+  if (Array.isArray(payload.orchestrationStates) && payload.orchestrationStates.length > 0) {
+    console.log('- orchestration state by plan:');
+    for (const status of payload.orchestrationStates) {
+      if (status.replayError) {
+        console.log(`  - ${status.planId}: replay-error=${status.replayError}`);
+        continue;
+      }
+      const replayed = status.replayed
+        ? `${status.replayed.planState}/${status.replayed.stageState}/${status.replayed.validationState}`
+        : 'none';
+      const persistedSummary = status.persisted
+        ? `${status.persisted.planState}/${status.persisted.stageState}/${status.persisted.validationState}`
+        : 'none';
+      console.log(
+        `  - ${status.planId}: replayed=${replayed} persisted=${persistedSummary} match=${status.matchesPersisted ? 'yes' : 'no'}`
+      );
+    }
   }
   if (Array.isArray(payload.programStatuses) && payload.programStatuses.length > 0) {
     console.log('- derived program status:');

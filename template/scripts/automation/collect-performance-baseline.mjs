@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 const DEFAULT_OUTPUT = 'docs/generated/perf-comparison.json';
 const DEFAULT_RUNTIME_CONTEXT = 'docs/generated/AGENT-RUNTIME-CONTEXT.md';
 const DEFAULT_EVENTS = 'docs/ops/automation/run-events.jsonl';
+const DEFAULT_OUTCOMES = 'docs/generated/run-outcomes.json';
 const DEFAULT_STAGE = 'baseline';
 
 function parseArgs(argv) {
@@ -191,6 +192,15 @@ function summarizeRunEvents(events) {
   };
 }
 
+function summarizeOutcomeMetrics(report) {
+  return {
+    completedPlansSampleSize: asNumber(report?.summary?.completion?.completedPlans, null),
+    sessionSampleSize: asNumber(report?.summary?.memory?.sessions, null),
+    timeToFirstWorkerEditMedianSeconds: asNumber(report?.summary?.speed?.timeToFirstWorkerEditSeconds?.median, null),
+    timeToFirstWorkerEditSampleSize: asNumber(report?.summary?.speed?.timeToFirstWorkerEditSeconds?.sampleSize, null)
+  };
+}
+
 function computeDelta(from, to) {
   if (from == null || to == null) {
     return null;
@@ -231,6 +241,10 @@ function buildComparison(samples) {
     verifyFullDurationMs: computeDelta(
       asNumber(baseline.validation?.verifyFullDurationMs, null),
       asNumber(after.validation?.verifyFullDurationMs, null)
+    ),
+    timeToFirstWorkerEditMedianSeconds: computeDelta(
+      asNumber(baseline.orchestration?.timeToFirstWorkerEditMedianSeconds, null),
+      asNumber(after.orchestration?.timeToFirstWorkerEditMedianSeconds, null)
     )
   };
 }
@@ -249,6 +263,7 @@ async function main() {
   const configuredRuntimeContext = String(config?.context?.runtimeContextPath ?? DEFAULT_RUNTIME_CONTEXT);
   const runtimeContextPath = path.resolve(rootDir, String(options['runtime-context'] ?? configuredRuntimeContext));
   const eventsPath = path.resolve(rootDir, String(options.events ?? DEFAULT_EVENTS));
+  const outcomesPath = path.resolve(rootDir, String(options.outcomes ?? DEFAULT_OUTCOMES));
   const runMeasurements = asBoolean(options.measure, false);
 
   const compileResult = runCommandTimed('node ./scripts/automation/compile-runtime-context.mjs', { allowFailure: false });
@@ -266,6 +281,8 @@ async function main() {
 
   const events = parseEventLines(eventsPath);
   const orchestration = summarizeRunEvents(events);
+  const outcomes = readJsonIfExists(outcomesPath, {});
+  const outcomeMetrics = summarizeOutcomeMetrics(outcomes);
 
   let verifyFastDurationMs = null;
   let verifyFastStatus = null;
@@ -283,7 +300,10 @@ async function main() {
   const nextSample = {
     capturedAtUtc: new Date().toISOString(),
     runtimeContext: runtimeStats,
-    orchestration,
+    orchestration: {
+      ...orchestration,
+      ...outcomeMetrics
+    },
     validation: {
       verifyFastDurationMs,
       verifyFastStatus,

@@ -1,9 +1,11 @@
 {
   "reportPath": "docs/generated/evals-report.json",
   "continuityReportPath": "docs/generated/continuity-evals-report.json",
+  "resilienceReportPath": "docs/generated/resilience-evals-report.json",
   "maxAgeDays": 14,
   "minimumPassRate": 0.95,
   "continuityMinimumPassRate": 0.95,
+  "resilienceMinimumPassRate": 1,
   "maxCriticalRegressions": 0,
   "maxHighRegressions": 0,
   "requiredSuites": [
@@ -19,6 +21,12 @@
   "requiredContinuitySuites": [
     {
       "id": "continuity-fixture-resume",
+      "status": "pass"
+    }
+  ],
+  "requiredResilienceSuites": [
+    {
+      "id": "resilience-critical-faults",
       "status": "pass"
     }
   ],
