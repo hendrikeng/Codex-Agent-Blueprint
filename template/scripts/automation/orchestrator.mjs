@@ -6561,15 +6561,67 @@ function titleCaseFromSlug(value) {
     .join(' ');
 }
 
-function defaultEvidenceReadmePreamble(directoryRel) {
-  const folderName = path.posix.basename(directoryRel);
-  const title = titleCaseFromSlug(folderName || 'evidence');
+function canonicalDirectoryPreamble(title) {
   return [
-    `# ${title} Evidence`,
+    `# ${title}`,
     '',
-    `Path: \`${directoryRel}\``,
-    'Purpose: Canonical evidence artifacts for this execution area.'
+    'Status: canonical',
+    'Owner: {{DOC_OWNER}}',
+    'Last Updated: {{LAST_UPDATED_ISO_DATE}}',
+    'Source of Truth: This directory.'
   ].join('\n');
+}
+
+function evidenceDirectoryTitle(directoryRel) {
+  const normalized = toPosix(directoryRel);
+  if (normalized === 'docs/exec-plans/active/evidence') {
+    return 'Active Evidence';
+  }
+  if (normalized === 'docs/exec-plans/completed/evidence') {
+    return 'Completed Evidence';
+  }
+
+  const parts = normalized.split('/').filter(Boolean);
+  const leaf = parts.at(-1) ?? 'evidence';
+  if (leaf === 'evidence' && parts.length >= 2) {
+    return `${titleCaseFromSlug(parts.at(-2) ?? 'evidence')} Evidence`;
+  }
+  return `${titleCaseFromSlug(leaf)} Evidence`;
+}
+
+function canonicalEvidenceDirectoryPreamble(directoryRel) {
+  return canonicalDirectoryPreamble(evidenceDirectoryTitle(directoryRel));
+}
+
+function isCanonicalDirectoryPreamble(content) {
+  return /^Status:\s+canonical$/m.test(content) && /^Source of Truth:\s+This directory\.$/m.test(content);
+}
+
+function selectCanonicalDirectoryPreamble(rawReadme, fallbackTitleOrPreamble) {
+  const existingPreamble = sectionlessPreamble(rawReadme).trim();
+  if (existingPreamble && isCanonicalDirectoryPreamble(existingPreamble)) {
+    return existingPreamble;
+  }
+  if (fallbackTitleOrPreamble.includes('\n')) {
+    return fallbackTitleOrPreamble;
+  }
+  return canonicalDirectoryPreamble(fallbackTitleOrPreamble);
+}
+
+function defaultEvidencePurposeLines(directoryRel) {
+  const normalized = toPosix(directoryRel);
+  if (normalized === 'docs/exec-plans/active/evidence') {
+    return [
+      '- Canonical evidence artifacts for active execution plans.',
+      '- Keep only recent, decision-relevant evidence in this directory.',
+      '- Move older session detail into linked `*-session-archive.md` files when active evidence becomes noisy.'
+    ];
+  }
+  return [];
+}
+
+function defaultEvidenceReadmePreamble(directoryRel) {
+  return canonicalEvidenceDirectoryPreamble(directoryRel);
 }
 
 function renderEvidenceDirectoryReadme(rawReadme, directoryRel, keptFiles) {
@@ -6585,16 +6637,19 @@ function renderEvidenceDirectoryReadme(rawReadme, directoryRel, keptFiles) {
     '- Canonicalized: true'
   ];
 
-  const preamble = sectionlessPreamble(rawReadme) || defaultEvidenceReadmePreamble(directoryRel);
+  const preamble = selectCanonicalDirectoryPreamble(rawReadme, defaultEvidenceReadmePreamble(directoryRel));
+  const purposeBody = sectionBody(rawReadme, 'Purpose');
+  const purposeLines = purposeBody
+    ? purposeBody.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    : defaultEvidencePurposeLines(directoryRel);
   const resultSummary = sectionBody(rawReadme, 'Result Summary');
   const rebuilt = [
     preamble,
-    '',
-    '## Evidence Artifacts',
-    '',
-    ...artifactLines,
-    ''
   ];
+  if (purposeLines.length > 0) {
+    rebuilt.push('', '## Purpose', '', ...purposeLines);
+  }
+  rebuilt.push('', '## Evidence Artifacts', '', ...artifactLines, '');
   if (resultSummary) {
     rebuilt.push('## Result Summary', '', resultSummary, '');
   }
@@ -6610,10 +6665,15 @@ async function writeEvidenceIndexReadme(paths, options) {
   await fs.mkdir(paths.evidenceIndexDir, { recursive: true });
   const indexFiles = await listMarkdownFiles(paths.evidenceIndexDir, ['README.md', '.gitkeep']);
   const readmeAbs = path.join(paths.evidenceIndexDir, 'README.md');
+  let rawReadme = '';
+  try {
+    rawReadme = await fs.readFile(readmeAbs, 'utf8');
+  } catch {
+    rawReadme = '';
+  }
+  const preamble = selectCanonicalDirectoryPreamble(rawReadme, 'Evidence Index');
   const lines = [
-    '# Evidence Index',
-    '',
-    'Purpose: Canonical, plan-scoped evidence references after curation/completion.',
+    preamble,
     '',
     '## Usage',
     '',
@@ -6639,13 +6699,7 @@ async function writeEvidenceIndexReadme(paths, options) {
   lines.push('');
 
   const rendered = `${lines.join('\n')}\n`;
-  let existing = null;
-  try {
-    existing = await fs.readFile(readmeAbs, 'utf8');
-  } catch {
-    existing = null;
-  }
-  if (existing !== rendered) {
+  if (rawReadme !== rendered) {
     await fs.writeFile(readmeAbs, rendered, 'utf8');
   }
 }

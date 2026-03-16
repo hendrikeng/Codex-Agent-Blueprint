@@ -456,3 +456,69 @@ test('supervisor dirty recovery continues unresolved work on a dirty workspace',
   const completedChildPath = await findPlanFile(rootDir, 'completed', 'child-a');
   assert.ok(completedChildPath);
 });
+
+test('curate-evidence restores canonical evidence readme contracts', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'orchestrator-evidence-'));
+  await copyTemplate(rootDir);
+
+  const activeEvidenceDir = path.join(rootDir, 'docs', 'exec-plans', 'active', 'evidence');
+  const evidenceIndexDir = path.join(rootDir, 'docs', 'exec-plans', 'evidence-index');
+  await fs.mkdir(activeEvidenceDir, { recursive: true });
+  await fs.mkdir(evidenceIndexDir, { recursive: true });
+
+  await fs.writeFile(
+    path.join(activeEvidenceDir, 'README.md'),
+    [
+      '# Evidence Evidence',
+      '',
+      'Path: `docs/exec-plans/active/evidence`',
+      'Purpose: Canonical evidence artifacts for this execution area.',
+      '',
+      '## Result Summary',
+      '',
+      '- Keep this note.'
+    ].join('\n'),
+    'utf8'
+  );
+  await fs.writeFile(path.join(activeEvidenceDir, 'sample-plan.md'), '# Sample Evidence\n', 'utf8');
+  await fs.writeFile(
+    path.join(evidenceIndexDir, 'README.md'),
+    [
+      '# Evidence Index',
+      '',
+      'Purpose: Canonical, plan-scoped evidence references after curation/completion.'
+    ].join('\n'),
+    'utf8'
+  );
+  await fs.writeFile(path.join(evidenceIndexDir, 'sample-plan.md'), '# Evidence Index: sample-plan\n', 'utf8');
+
+  const result = run(
+    'node',
+    ['./scripts/automation/orchestrator.mjs', 'curate-evidence', '--scope', 'active'],
+    rootDir
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+  const activeReadme = await fs.readFile(path.join(activeEvidenceDir, 'README.md'), 'utf8');
+  const indexReadme = await fs.readFile(path.join(evidenceIndexDir, 'README.md'), 'utf8');
+
+  assert.match(activeReadme, /^# Active Evidence$/m);
+  assert.match(activeReadme, /^Status: canonical$/m);
+  assert.match(activeReadme, /^Owner: \{\{DOC_OWNER\}\}$/m);
+  assert.match(activeReadme, /^Last Updated: \{\{LAST_UPDATED_ISO_DATE\}\}$/m);
+  assert.match(activeReadme, /^Source of Truth: This directory\.$/m);
+  assert.match(activeReadme, /^## Purpose$/m);
+  assert.match(activeReadme, /Canonical evidence artifacts for active execution plans\./);
+  assert.match(activeReadme, /^## Result Summary$/m);
+  assert.match(activeReadme, /- Keep this note\./);
+  assert.doesNotMatch(activeReadme, /^Path:/m);
+
+  assert.match(indexReadme, /^# Evidence Index$/m);
+  assert.match(indexReadme, /^Status: canonical$/m);
+  assert.match(indexReadme, /^Owner: \{\{DOC_OWNER\}\}$/m);
+  assert.match(indexReadme, /^Last Updated: \{\{LAST_UPDATED_ISO_DATE\}\}$/m);
+  assert.match(indexReadme, /^Source of Truth: This directory\.$/m);
+  assert.match(indexReadme, /^## Usage$/m);
+  assert.match(indexReadme, /\[`sample-plan\.md`\]\(\.\/sample-plan\.md\)/);
+  assert.doesNotMatch(indexReadme, /^Purpose: Canonical, plan-scoped evidence references after curation\/completion\.$/m);
+});
