@@ -1,6 +1,7 @@
 import {
   CHILD_SLICE_DEFINITIONS_SECTION,
   extractProgramChildUnitDeclarations,
+  parseAuthoringIntent,
   metadataValue,
   parseDeliveryClass,
   parseListField,
@@ -10,11 +11,13 @@ import {
   parseSecurityApproval,
   slugify
 } from './plan-metadata.mjs';
+import { setPlanDocumentFields } from './plan-document-state.mjs';
 
 const LEGACY_PROGRAM_CHILD_SECTION_PATTERNS = [
   /^Remaining Execution Slices$/i,
   /Portfolio Units$/i
 ];
+const AUTHORING_INTENT_EXECUTABLE_DEFAULT = 'executable-default';
 const SOURCE_LIKE_ROOT_PATTERN = /^(?:src|app|apps|packages|services|server|client|web|ui|api|lib|libs|tests?|test-utils|config)\b/i;
 
 function toPosix(value) {
@@ -255,6 +258,8 @@ export function migrateLegacyProgramChildDefinitions(content, options = {}) {
   const metadata = parseMetadata(content);
   const parentPlanId = parsePlanId(metadataValue(metadata, 'Plan-ID'), null) || 'parent-program';
   const deliveryClass = parseDeliveryClass(metadataValue(metadata, 'Delivery-Class'), '');
+  const authoringIntentRaw = String(metadataValue(metadata, 'Authoring-Intent') ?? '').trim();
+  const authoringIntent = parseAuthoringIntent(authoringIntentRaw, '');
   const parent = {
     planId: parentPlanId,
     deliveryClass,
@@ -270,6 +275,17 @@ export function migrateLegacyProgramChildDefinitions(content, options = {}) {
   };
   const legacyUnits = extractProgramChildUnitDeclarations(content);
   const ranges = findLegacySectionRanges(content);
+
+  if (authoringIntentRaw && !authoringIntent) {
+    throw new Error(
+      `Plan '${parentPlanId}' uses invalid 'Authoring-Intent: ${authoringIntentRaw}'. Fix the metadata before migrating legacy child headings.`
+    );
+  }
+  if (authoringIntent === 'blueprint-only') {
+    throw new Error(
+      `Plan '${parentPlanId}' is marked 'Authoring-Intent: blueprint-only'. Change intent before migrating executable children.`
+    );
+  }
 
   if (legacyUnits.length === 0 || ranges.length === 0) {
     return {
@@ -302,7 +318,12 @@ export function migrateLegacyProgramChildDefinitions(content, options = {}) {
   });
 
   const renderedSection = renderChildSliceDefinitionsSection(definitions);
-  const updatedContent = replaceLegacySections(content, renderedSection, ranges);
+  let updatedContent = replaceLegacySections(content, renderedSection, ranges);
+  if (!authoringIntentRaw) {
+    updatedContent = setPlanDocumentFields(updatedContent, {
+      'Authoring-Intent': AUTHORING_INTENT_EXECUTABLE_DEFAULT
+    });
+  }
   return {
     changed: updatedContent !== String(content ?? ''),
     legacyUnits,

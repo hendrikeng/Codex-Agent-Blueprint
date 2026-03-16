@@ -64,6 +64,65 @@ async function configureFixtureRepo(rootDir, scenario) {
   );
 }
 
+function fullGraphScenario() {
+  return {
+    providerActions: {
+      'child-a': {
+        planner: [{ status: 'completed', summary: 'Planner complete for child-a.' }],
+        worker: [
+          {
+            status: 'pending',
+            summary: 'Child A implementation started.',
+            reason: 'Continue child A implementation.',
+            writeFiles: [{ path: 'src/feature-a.js', content: 'export const featureA = "pending";\n' }]
+          },
+          {
+            status: 'completed',
+            summary: 'Child A implementation complete.',
+            writeFiles: [{ path: 'src/feature-a.js', content: 'export const featureA = "done";\n' }],
+            plan: {
+              checkMustLand: true,
+              status: 'validation',
+              validationReady: 'yes',
+              validationEvidence: ['fixture child-a ready']
+            }
+          }
+        ],
+        reviewer: [{ status: 'completed', summary: 'Reviewer complete for child-a.' }]
+      },
+      'child-b': {
+        planner: [{ status: 'completed', summary: 'Planner complete for child-b.' }],
+        worker: [
+          {
+            status: 'failed',
+            summary: 'Transient worker failure for child-b.',
+            reason: 'simulated transient worker failure',
+            writeFiles: [{ path: 'src/feature-b.js', content: 'export const featureB = "draft";\n' }]
+          },
+          {
+            status: 'completed',
+            summary: 'Child B implementation complete.',
+            writeFiles: [{ path: 'src/feature-b.js', content: 'export const featureB = "ready";\n' }],
+            plan: {
+              checkMustLand: true,
+              status: 'validation',
+              validationReady: 'host-required-only',
+              validationEvidence: ['fixture child-b ready']
+            }
+          }
+        ],
+        reviewer: [{ status: 'completed', summary: 'Reviewer complete for child-b.' }]
+      }
+    },
+    hostValidationActions: {
+      'child-b': [
+        { status: 'pending', reason: 'host validation pending', evidence: ['host pending'] },
+        { status: 'passed', reason: null, evidence: ['host passed'], results: [{ validationId: 'fixture:host', status: 'passed' }] }
+      ]
+    }
+  };
+}
+
 function programParentDocument(options = {}) {
   const includeChildB = options.includeChildB !== false;
   const childAHostRequired = options.childAHostRequired === true;
@@ -231,62 +290,7 @@ function orchestratorArgsAllowDirty(subcommand, maxPlans) {
 
 test('orchestrator end-to-end fixture covers resume, retry, host pending/pass, stale child recompilation, and parent closeout', async () => {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'orchestrator-e2e-'));
-  const scenario = {
-    providerActions: {
-      'child-a': {
-        planner: [{ status: 'completed', summary: 'Planner complete for child-a.' }],
-        worker: [
-          {
-            status: 'pending',
-            summary: 'Child A implementation started.',
-            reason: 'Continue child A implementation.',
-            writeFiles: [{ path: 'src/feature-a.js', content: 'export const featureA = "pending";\n' }]
-          },
-          {
-            status: 'completed',
-            summary: 'Child A implementation complete.',
-            writeFiles: [{ path: 'src/feature-a.js', content: 'export const featureA = "done";\n' }],
-            plan: {
-              checkMustLand: true,
-              status: 'validation',
-              validationReady: 'yes',
-              validationEvidence: ['fixture child-a ready']
-            }
-          }
-        ],
-        reviewer: [{ status: 'completed', summary: 'Reviewer complete for child-a.' }]
-      },
-      'child-b': {
-        planner: [{ status: 'completed', summary: 'Planner complete for child-b.' }],
-        worker: [
-          {
-            status: 'failed',
-            summary: 'Transient worker failure for child-b.',
-            reason: 'simulated transient worker failure',
-            writeFiles: [{ path: 'src/feature-b.js', content: 'export const featureB = "draft";\n' }]
-          },
-          {
-            status: 'completed',
-            summary: 'Child B implementation complete.',
-            writeFiles: [{ path: 'src/feature-b.js', content: 'export const featureB = "ready";\n' }],
-            plan: {
-              checkMustLand: true,
-              status: 'validation',
-              validationReady: 'host-required-only',
-              validationEvidence: ['fixture child-b ready']
-            }
-          }
-        ],
-        reviewer: [{ status: 'completed', summary: 'Reviewer complete for child-b.' }]
-      }
-    },
-    hostValidationActions: {
-      'child-b': [
-        { status: 'pending', reason: 'host validation pending', evidence: ['host pending'] },
-        { status: 'passed', reason: null, evidence: ['host passed'], results: [{ validationId: 'fixture:host', status: 'passed' }] }
-      ]
-    }
-  };
+  const scenario = fullGraphScenario();
 
   await configureFixtureRepo(rootDir, scenario);
   await writeFutureParent(rootDir);
@@ -320,6 +324,8 @@ test('orchestrator end-to-end fixture covers resume, retry, host pending/pass, s
   assert.ok(pendingProgram);
   assert.equal(pendingProgram.completedChildren, 1);
   assert.equal(pendingProgram.validationChildren, 1);
+  assert.deepEqual(pendingProgram.validationPendingChildPlanIds, ['child-b']);
+  assert.ok(pendingProgram.closeoutBlockedReasons.some((entry) => entry.includes('Validation pending for child slices: child-b')));
 
   result = run('node', orchestratorArgsAllowDirty('resume', 3), rootDir, { ORCH_APPROVED_MEDIUM: '1' });
   assert.equal(result.status, 0, String(result.stderr));
@@ -340,6 +346,51 @@ test('orchestrator end-to-end fixture covers resume, retry, host pending/pass, s
   const completedProgram = auditCompletedPayload.programStatuses.find((entry) => entry.planId === 'parent-program');
   assert.ok(completedProgram);
   assert.equal(completedProgram.percentComplete, 100);
+});
+
+test('supervised grind drains the full program queue and auto-closes the parent', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'orchestrator-grind-'));
+  await configureFixtureRepo(rootDir, fullGraphScenario());
+  await writeFutureParent(rootDir);
+  await initGitRepo(rootDir);
+
+  const result = run(
+    'node',
+    [
+      './scripts/automation/supervise-orchestrator.mjs',
+      'run',
+      '--mode',
+      'guarded',
+      '--retry-failed',
+      'true',
+      '--auto-unblock',
+      'true',
+      '--max-failed-retries',
+      '2',
+      '--output',
+      'minimal',
+      '--allow-dirty',
+      'false',
+      '--commit',
+      'false',
+      '--max-plans',
+      '1'
+    ],
+    rootDir,
+    {
+      ORCH_APPROVED_MEDIUM: '1',
+      ORCH_SUPERVISOR_ALLOW_DIRTY_RECOVERY: '1',
+      ORCH_SUPERVISOR_MAX_CYCLES: '8',
+      ORCH_SUPERVISOR_STABLE_LIMIT: '2'
+    }
+  );
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const completedParentPath = await findPlanFile(rootDir, 'completed', 'parent-program');
+  assert.ok(completedParentPath, 'expected grind to drain the full queue and close the parent');
+
+  const runState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  assert.equal(runState.programState['parent-program'].percentComplete, 100);
 });
 
 test('host validation failure keeps parent incomplete and surfaces derived blockers', async () => {
@@ -383,6 +434,7 @@ test('host validation failure keeps parent incomplete and surfaces derived block
   const payload = JSON.parse(String(audit.stdout));
   const parentStatus = payload.programStatuses.find((entry) => entry.planId === 'parent-program');
   assert.ok(parentStatus.closeoutBlockedReasons.some((entry) => entry.includes('Incomplete child slices remain')));
+  assert.ok(parentStatus.closeoutBlockedReasons.some((entry) => entry.includes('Failed child slices require retry or unblock')));
 });
 
 test('supervisor dirty recovery continues unresolved work on a dirty workspace', async () => {

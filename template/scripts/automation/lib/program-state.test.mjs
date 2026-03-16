@@ -63,7 +63,9 @@ test('deriveProgramStates summarizes child progress and closeout blockers', () =
   assert.equal(states['parent-program'].percentComplete, 50);
   assert.equal(states['parent-program'].closeoutEligible, false);
   assert.match(states['parent-program'].closeoutBlockedReasons[0], /Incomplete child slices remain/);
+  assert.match(states['parent-program'].closeoutBlockedReasons[1], /Validation pending for child slices/);
   assert.equal(states['parent-program'].authoringIntent, 'executable-default');
+  assert.deepEqual(states['parent-program'].validationPendingChildPlanIds, ['child-b']);
   assert.equal(states['parent-program'].lastDerivedAt, '2026-03-16T10:00:00.000Z');
 });
 

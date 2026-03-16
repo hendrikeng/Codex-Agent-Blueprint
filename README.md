@@ -115,7 +115,7 @@ flowchart TD
 | Command | Use When |
 | --- | --- |
 | `npm run plans:verify` | You want a fast plan-state check only. |
-| `npm run plans:scaffold-children -- --plan-file <path>` | A broad future needs reviewable child definitions instead of a dead program parent. |
+| `npm run plans:scaffold-children -- --plan-file <path>` | A future-native broad parent needs reviewable child definitions; legacy heading parents should use `plans:migrate` first. |
 | `npm run verify:fast` | You want standard local preflight before grind/resume/commit. |
 | `npm run verify:full` | You are preparing merge-level validation. |
 | `npm run automation:run:grind` | You want supervised low-risk grind until queue is stable/drained. |
@@ -123,11 +123,12 @@ flowchart TD
 | `npm run automation:run:grind:high` | Same as above, but allow medium+high risk plans too. |
 | `npm run automation:resume:grind` | Continue the last run in supervised loop mode. |
 | `npm run automation:resume:high:non-atomic` | Run one direct medium+high non-atomic continuation when the worktree must stay dirty. |
-| `npm run automation:audit` | Inspect blocked/failed/pending plans and suggested next steps. |
+| `npm run automation:audit` | Inspect blocked/failed/pending plans, derived program-parent state, and suggested next steps. |
 
 Future blueprint promotion rule:
 - Before setting `Status: ready-for-promotion`, add `## Master Plan Coverage` or `## Capability Coverage Matrix`, add `## Prior Completed Plan Reconciliation`, add `## Promotion Blockers`, and run `npm run plans:verify`.
 - Broad `Execution-Scope: program` futures must also declare `Authoring-Intent`; use `executable-default` plus `## Child Slice Definitions` by default, and reserve `blueprint-only` for explicit blueprint-only requests.
+- `plans:scaffold-children` backfills missing `Authoring-Intent: executable-default`, but it refuses legacy `## Remaining Execution Slices` / `## Portfolio Units` parents; use `npm run plans:migrate -- --plan-file <path>` for that one migration path.
 
 For full command contracts, flags, and policy behavior, use `template/docs/ops/automation/README.md`.
 
@@ -154,7 +155,7 @@ Harness distribution/update commands:
 - Install the harness into a downstream repo: `node ./scripts/harness-sync.mjs install --target /path/to/repo`
 - Update an existing downstream repo to the current harness revision: `node ./scripts/harness-sync.mjs update --target /path/to/repo`
 - Report downstream drift without rewriting files: `node ./scripts/harness-sync.mjs drift --target /path/to/repo`
-- Install/update writes a downstream ownership record at `docs/ops/automation/harness-manifest.json` with the managed file list, hashes, and source revision used for the sync.
+- Install/update writes a downstream ownership record at `docs/ops/automation/harness-manifest.json` with the managed file list, hashes, and source revision used for the sync; that revision is the harness version stamp.
 
 ## README Lifecycle
 

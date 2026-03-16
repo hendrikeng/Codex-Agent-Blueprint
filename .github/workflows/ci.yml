@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Harness Sync Tests
+        run: node --test scripts/harness-sync.test.mjs
+
+      - name: Automation Contract Tests
+        run: |
+          node --test \
+            template/scripts/automation/lib/*.test.mjs \
+            template/scripts/automation/migrate-program-children.test.mjs \
+            template/scripts/automation/orchestrator-import-guard.test.mjs \
+            template/scripts/automation/check-plan-metadata.test.mjs
+
+      - name: Orchestrator Proving Fixture
+        run: node --test template/scripts/automation/orchestrator-e2e.test.mjs

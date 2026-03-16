@@ -92,7 +92,9 @@ export function deriveProgramStates(catalog, options = {}) {
     }
     const children = childrenByParent.get(parent.planId) ?? [];
     const counts = childCountsTemplate();
-    const blockingChildPlanIds = [];
+    const blockedChildPlanIds = [];
+    const failedChildPlanIds = [];
+    const validationPendingChildPlanIds = [];
     const incompleteChildPlanIds = [];
     const unresolvedDependencies = new Set();
     const childStatuses = [];
@@ -112,8 +114,14 @@ export function deriveProgramStates(catalog, options = {}) {
       if (childStatus !== 'completed') {
         incompleteChildPlanIds.push(child.planId);
       }
-      if (childStatus === 'blocked' || childStatus === 'failed') {
-        blockingChildPlanIds.push(child.planId);
+      if (childStatus === 'validation') {
+        validationPendingChildPlanIds.push(child.planId);
+      }
+      if (childStatus === 'blocked') {
+        blockedChildPlanIds.push(child.planId);
+      }
+      if (childStatus === 'failed') {
+        failedChildPlanIds.push(child.planId);
       }
       for (const dependency of child.dependencies ?? []) {
         const dependencyPlan = byId.get(dependency);
@@ -134,6 +142,15 @@ export function deriveProgramStates(catalog, options = {}) {
     }
     if (incompleteChildPlanIds.length > 0) {
       closeoutBlockedReasons.push(`Incomplete child slices remain: ${incompleteChildPlanIds.join(', ')}`);
+    }
+    if (validationPendingChildPlanIds.length > 0) {
+      closeoutBlockedReasons.push(`Validation pending for child slices: ${validationPendingChildPlanIds.join(', ')}`);
+    }
+    if (blockedChildPlanIds.length > 0) {
+      closeoutBlockedReasons.push(`Blocked child slices require unblock: ${blockedChildPlanIds.join(', ')}`);
+    }
+    if (failedChildPlanIds.length > 0) {
+      closeoutBlockedReasons.push(`Failed child slices require retry or unblock: ${failedChildPlanIds.join(', ')}`);
     }
     if (unresolvedDependencies.size > 0) {
       closeoutBlockedReasons.push(`Unresolved child dependencies remain: ${[...unresolvedDependencies].join(', ')}`);
@@ -183,7 +200,10 @@ export function deriveProgramStates(catalog, options = {}) {
       percentComplete,
       childStatuses,
       incompleteChildPlanIds,
-      blockingChildPlanIds,
+      blockingChildPlanIds: [...new Set([...blockedChildPlanIds, ...failedChildPlanIds])],
+      blockedChildPlanIds,
+      failedChildPlanIds,
+      validationPendingChildPlanIds,
       unresolvedDependencies: [...unresolvedDependencies].sort((left, right) => left.localeCompare(right)),
       reconciliationReady: isReconciliationReady,
       childCompilationCurrent: compilationIssues.length === 0,

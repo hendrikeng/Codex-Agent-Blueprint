@@ -79,7 +79,6 @@ test('scaffoldProgramChildDefinitions derives deterministic draft children from 
 - Acceptance-Criteria: Build the child graph.
 - Delivery-Class: product
 - Execution-Scope: program
-- Authoring-Intent: executable-default
 - Dependencies: none
 - Spec-Targets: docs/spec.md, src/app
 - Done-Evidence: pending
@@ -108,7 +107,37 @@ test('scaffoldProgramChildDefinitions derives deterministic draft children from 
   assert.equal(result.definitions.length, 2);
   assert.equal(result.definitions[0].planId, 'search-inbox');
   assert.equal(result.definitions[1].planId, 'tour-builder');
+  assert.match(result.updatedContent, /- Authoring-Intent: executable-default/);
   assert.match(result.updatedContent, new RegExp(DRAFT_CHILD_DEFINITION_MARKER));
   assert.match(result.updatedContent, /## Child Slice Definitions/);
   assert.match(result.updatedContent, /REVIEW-REQUIRED/);
+});
+
+test('scaffoldProgramChildDefinitions rejects legacy child heading parents', () => {
+  assert.throws(
+    () => scaffoldProgramChildDefinitions(`# Parent Program
+
+## Metadata
+
+- Plan-ID: parent-program
+- Status: draft
+- Priority: p1
+- Owner: planner
+- Acceptance-Criteria: Build the child graph.
+- Delivery-Class: product
+- Execution-Scope: program
+- Dependencies: none
+- Spec-Targets: docs/spec.md, src/app
+- Done-Evidence: pending
+
+## Promotion Blockers
+
+- None.
+
+## Remaining Execution Slices
+
+### 1. Legacy Child Slice
+`),
+    /plans:migrate/
+  );
 });

@@ -53,7 +53,7 @@ Default rule: future authoring must produce executable shapes, not blueprint-onl
 
 - Concrete ask: author a direct `Execution-Scope: slice`.
 - Broad multi-slice ask: author `Execution-Scope: program` with `Authoring-Intent: executable-default` and complete `## Child Slice Definitions`.
-- If child decomposition is not safe yet, run `npm run plans:scaffold-children -- --plan-file <path>` and review the generated draft child definitions instead of leaving the parent without children.
+- If child decomposition is not safe yet, run `npm run plans:scaffold-children -- --plan-file <path>` and review the generated draft child definitions instead of leaving the parent without children. The scaffold command auto-writes missing `Authoring-Intent: executable-default`.
 - Only use `Authoring-Intent: blueprint-only` when the user explicitly asked for a blueprint-only artifact. Blueprint-only parents must stay `Status: draft`, stay in `docs/future/`, and must not declare child definitions.
 
 Minimal examples:
@@ -93,7 +93,7 @@ Create or update a future blueprint as `Status: draft` only when these checks pa
 - [ ] Future `Execution-Scope: program` plans declare `Authoring-Intent`.
 - [ ] Future `Execution-Scope: program` plans with `Authoring-Intent: executable-default` include `## Child Slice Definitions`; legacy `## Remaining Execution Slices` / `## Portfolio Units` headings are migration-only and do not trigger child compilation.
 - [ ] Future `Execution-Scope: program` plans with `Authoring-Intent: blueprint-only` stay `Status: draft`, remain in `docs/future/`, and do not declare child definitions.
-- [ ] If decomposition is not safe yet, use `npm run plans:scaffold-children -- --plan-file <path>` and review the draft child definitions before promotion.
+- [ ] If decomposition is not safe yet, use `npm run plans:scaffold-children -- --plan-file <path>` and review the draft child definitions before promotion. This command is for future-native parents only and will refuse legacy heading parents.
 - [ ] Use `node ./scripts/automation/migrate-program-children.mjs --plan-file <path>` to turn legacy `## Remaining Execution Slices` / `## Portfolio Units` headings into reviewable `## Child Slice Definitions` before expecting automatic child compilation.
 - [ ] `npm run plans:verify` passes.
 

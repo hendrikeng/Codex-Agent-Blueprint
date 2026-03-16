@@ -28,6 +28,8 @@ test('harness-sync install writes target files and downstream manifest', async (
   );
   assert.equal(Array.isArray(manifest.managedFiles), true);
   assert.equal(manifest.managedFiles.length > 10, true);
+  assert.equal(typeof manifest.sourceRevision, 'string');
+  assert.notEqual(manifest.sourceRevision.length, 0);
 });
 
 test('harness-sync drift reports modified managed files', async () => {

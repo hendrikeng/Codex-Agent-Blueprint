@@ -90,6 +90,7 @@ test('migrateLegacyProgramChildDefinitions replaces legacy sections with structu
 
   assert.equal(result.changed, true);
   assert.equal(result.legacyUnits.length, 2);
+  assert.match(result.updatedContent, /- Authoring-Intent: executable-default/);
   assert.match(result.updatedContent, /## Child Slice Definitions/);
   assert.doesNotMatch(result.updatedContent, /## Remaining Execution Slices/);
 
@@ -135,6 +136,25 @@ test('migrateLegacyProgramChildDefinitions preserves explicit plan-id hints from
   );
   assert.equal(parsed.definitions[0].title, 'Organizer Wizard V2 Step Ia And Progress');
   assert.deepEqual(parsed.definitions[0].validationLanes, ['always']);
+});
+
+test('migrateLegacyProgramChildDefinitions rejects blueprint-only parents', () => {
+  assert.throws(
+    () => migrateLegacyProgramChildDefinitions(`
+## Metadata
+
+- Plan-ID: parent-program
+- Delivery-Class: product
+- Execution-Scope: program
+- Authoring-Intent: blueprint-only
+- Spec-Targets: src/workflow
+
+## Remaining Execution Slices
+
+### 1. Legacy Child Slice
+`),
+    /blueprint-only/
+  );
 });
 
 test('migrate-program-children CLI previews to stdout and writes only with --write true', async () => {

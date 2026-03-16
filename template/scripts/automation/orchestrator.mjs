@@ -4561,10 +4561,22 @@ function uniqueByPlanId(records) {
   return map;
 }
 
+function programParentReadyForPromotion(outcome) {
+  return outcome?.status === 'compiled-current';
+}
+
 async function promoteFuturePlans(paths, state, options) {
   const futures = await loadPlanRecords(paths.rootDir, paths.futureDir, 'future');
   const active = await loadPlanRecords(paths.rootDir, paths.activeDir, 'active');
   const completed = await loadPlanRecords(paths.rootDir, paths.completedDir, 'completed');
+  const programCompileCheck = await compileProgramChildren(paths.rootDir, {
+    write: false,
+    dryRun: true,
+    planId: options.planId ?? null
+  });
+  const programOutcomesByPlanId = new Map(
+    (programCompileCheck.parentOutcomes ?? []).map((entry) => [entry.planId, entry])
+  );
 
   const takenPlanIds = new Set([...active, ...completed].map((plan) => plan.planId));
   let promoted = 0;
@@ -4580,6 +4592,20 @@ async function promoteFuturePlans(paths, state, options) {
         reason: 'Plan-ID already present in active/completed plans'
       }, options.dryRun);
       continue;
+    }
+
+    if (isProgramPlan(future)) {
+      const outcome = programOutcomesByPlanId.get(future.planId) ?? null;
+      if (!programParentReadyForPromotion(outcome)) {
+        const reason = outcome
+          ? `${outcome.reason} (authoringStatus=${outcome.status}).`
+          : 'Program parent is missing structured child compilation state.';
+        await logEvent(paths, state, 'promotion_skipped', {
+          planId: future.planId,
+          reason
+        }, options.dryRun);
+        continue;
+      }
     }
 
     const targetDate = todayIsoDate();

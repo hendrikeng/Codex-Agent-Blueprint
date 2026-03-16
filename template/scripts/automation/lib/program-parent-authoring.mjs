@@ -16,6 +16,7 @@ import {
   sectionBody,
   slugify
 } from './plan-metadata.mjs';
+import { setPlanDocumentFields } from './plan-document-state.mjs';
 
 export const AUTHORING_INTENT_EXECUTABLE_DEFAULT = 'executable-default';
 export const AUTHORING_INTENT_BLUEPRINT_ONLY = 'blueprint-only';
@@ -577,10 +578,22 @@ export function scaffoldProgramChildDefinitions(content, options = {}) {
   const metadata = parseMetadata(content);
   const planId = parsePlanId(metadataValue(metadata, 'Plan-ID'), null) || 'program-parent';
   const deliveryClass = parseDeliveryClass(metadataValue(metadata, 'Delivery-Class'), '');
-  const authoringIntent = parseAuthoringIntent(metadataValue(metadata, 'Authoring-Intent'), '');
+  const authoringIntentRaw = String(metadataValue(metadata, 'Authoring-Intent') ?? '').trim();
+  const authoringIntent = parseAuthoringIntent(authoringIntentRaw, '');
   const existing = parseStructuredProgramChildDefinitions(content);
+  const legacyUnits = extractProgramChildUnitDeclarations(content);
   if (existing.definitions.length > 0 || sectionBody(content, CHILD_SLICE_DEFINITIONS_SECTION)) {
     throw new Error(`Plan '${planId}' already declares '## ${CHILD_SLICE_DEFINITIONS_SECTION}'.`);
+  }
+  if (legacyUnits.length > 0) {
+    throw new Error(
+      `Plan '${planId}' still uses legacy child-unit headings. Run 'plans:migrate' before scaffolding structured children.`
+    );
+  }
+  if (authoringIntentRaw && !authoringIntent) {
+    throw new Error(
+      `Plan '${planId}' uses invalid 'Authoring-Intent: ${authoringIntentRaw}'. Fix the metadata before scaffolding executable children.`
+    );
   }
   if (authoringIntent === AUTHORING_INTENT_BLUEPRINT_ONLY) {
     throw new Error(`Plan '${planId}' is marked 'Authoring-Intent: blueprint-only'. Change intent before scaffolding executable children.`);
@@ -621,7 +634,12 @@ export function scaffoldProgramChildDefinitions(content, options = {}) {
   });
 
   const renderedSection = renderChildDefinitions(definitions);
-  const updatedContent = insertSectionAfter(content, 'Promotion Blockers', renderedSection);
+  let updatedContent = insertSectionAfter(content, 'Promotion Blockers', renderedSection);
+  if (!authoringIntentRaw) {
+    updatedContent = setPlanDocumentFields(updatedContent, {
+      'Authoring-Intent': AUTHORING_INTENT_EXECUTABLE_DEFAULT
+    });
+  }
 
   return {
     definitions,
