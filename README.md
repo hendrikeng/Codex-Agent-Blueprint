@@ -42,6 +42,17 @@ The current harness revision assumes these behaviors are part of the public cont
 
 This matters for downstream upgrades: old future/program-parent shapes that previously “kind of worked” may now fail closed until they are migrated or scaffolded into the structured child-definition format.
 
+## Current CI Signal
+
+The current GitHub Actions `ci` workflow proves a narrow but useful baseline:
+
+- `npm run test:root`
+- `npm run test:template-smoke`
+
+That means the badge, if added, should be read as "root harness tests plus downstream template smoke are passing on the current matrix."
+
+It does not yet prove the full hardening surface described elsewhere in this repo, such as `verify:full`, continuity/eval thresholds, performance budgets, or a longer supervised grind lane. Add a separate nightly or hardening workflow before using CI status as shorthand for the entire automation posture.
+
 ## Adoption Lanes
 
 Use the least process that still protects correctness.
