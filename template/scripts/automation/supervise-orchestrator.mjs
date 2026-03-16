@@ -169,6 +169,9 @@ function unresolvedActivePlanIds(state, activePlans) {
   const completed = new Set(Array.isArray(state?.completedPlanIds) ? state.completedPlanIds : []);
   const blocked = new Set(Array.isArray(state?.blockedPlanIds) ? state.blockedPlanIds : []);
   const failed = new Set(Array.isArray(state?.failedPlanIds) ? state.failedPlanIds : []);
+  const validationState = state?.validationState && typeof state.validationState === 'object'
+    ? state.validationState
+    : {};
 
   return activePlans
     .filter((plan) => {
@@ -180,6 +183,18 @@ function unresolvedActivePlanIds(state, activePlans) {
       }
       // Only treat validation plans as externally gated when readiness is explicit.
       if (plan.status !== 'validation') {
+        return true;
+      }
+      const runtimeValidation = validationState[plan.planId];
+      const hasResidualPending =
+        runtimeValidation &&
+        typeof runtimeValidation === 'object' &&
+        (
+          String(runtimeValidation.always ?? '').trim().toLowerCase() === 'pending' ||
+          String(runtimeValidation.host ?? '').trim().toLowerCase() === 'pending'
+        ) &&
+        String(runtimeValidation.reason ?? '').trim().length > 0;
+      if (hasResidualPending) {
         return true;
       }
       return plan.validationReady !== 'yes' && plan.validationReady !== 'host-required-only';

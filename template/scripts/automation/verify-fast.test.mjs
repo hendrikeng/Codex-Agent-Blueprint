@@ -62,3 +62,26 @@ test('verify-fast includes Program 3 gates for automation changes', async () => 
   assert.match(result.stdout, /verify-orchestration-state\.mjs/);
   assert.doesNotMatch(result.stdout, /check-outcomes-thresholds\.mjs --warn-only/);
 });
+
+test('verify-fast ignores transient orchestration runtime artifacts from explicit file scopes', async () => {
+  const rootDir = await createFixtureRoot();
+
+  const result = spawnSync(
+    'node',
+    ['./scripts/automation/verify-fast.mjs', '--dry-run', 'true'],
+    {
+      cwd: rootDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        VERIFY_FAST_FILES: 'docs/ops/automation/run-events.jsonl'
+      }
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout, /verify-orchestration-state\.mjs/);
+  assert.doesNotMatch(result.stdout, /check-harness-alignment\.mjs/);
+  assert.doesNotMatch(result.stdout, /check-outcomes-thresholds\.mjs/);
+  assert.doesNotMatch(result.stdout, /check-performance-budgets\.mjs/);
+});

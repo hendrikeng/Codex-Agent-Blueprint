@@ -14,6 +14,14 @@ import {
 
 const PLAN_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const READ_ONLY_ORCH_ROLES = new Set(['planner', 'explorer', 'reviewer']);
+const TRANSIENT_AUTOMATION_FILES = new Set([
+  'docs/ops/automation/run-state.json',
+  'docs/ops/automation/run-events.jsonl'
+]);
+const TRANSIENT_AUTOMATION_DIR_PREFIXES = [
+  'docs/ops/automation/runtime/',
+  'docs/ops/automation/handoffs/'
+];
 const rootDir = process.cwd();
 const aggregateResultPath = String(process.env.ORCH_VALIDATION_RESULT_PATH ?? '').trim();
 
@@ -82,6 +90,17 @@ function asBoolean(value, fallback = false) {
 
 function toPosix(value) {
   return String(value ?? '').replace(/\\/g, '/');
+}
+
+function isTransientAutomationPath(filePath) {
+  const normalized = toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
+  if (!normalized) {
+    return false;
+  }
+  if (TRANSIENT_AUTOMATION_FILES.has(normalized)) {
+    return true;
+  }
+  return TRANSIENT_AUTOMATION_DIR_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function runShell(command) {
@@ -156,7 +175,9 @@ function detectChangedFiles() {
         .split(',')
         .map((entry) => toPosix(entry.trim()))
         .filter(Boolean)
-    )].sort((a, b) => a.localeCompare(b));
+    )]
+      .filter((file) => !isTransientAutomationPath(file))
+      .sort((a, b) => a.localeCompare(b));
   }
 
   const collected = new Set();
@@ -180,7 +201,9 @@ function detectChangedFiles() {
     }
   }
 
-  return [...collected].sort((a, b) => a.localeCompare(b));
+  return [...collected]
+    .filter((file) => !isTransientAutomationPath(file))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function anyMatch(files, matcher) {

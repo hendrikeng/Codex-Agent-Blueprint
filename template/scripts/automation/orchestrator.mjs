@@ -197,6 +197,7 @@ const DEFAULT_CONTINUITY_MAX_REPEATED_HANDOFF_LOOP_PLANS = 0;
 const DEFAULT_RETRY_FAILED_PLANS = true;
 const DEFAULT_AUTO_UNBLOCK_PLANS = true;
 const DEFAULT_MAX_FAILED_RETRIES = 2;
+const DEFAULT_BLOCKED_COOLDOWN_MINUTES = 30;
 const DEFAULT_PARALLEL_PLANS = 1;
 const DEFAULT_PARALLEL_WORKTREE_ROOT = 'docs/ops/automation/runtime/worktrees';
 const DEFAULT_PARALLEL_BRANCH_PREFIX = 'orch';
@@ -218,6 +219,10 @@ const DEFAULT_EVIDENCE_PRUNE_ON_COMPLETE = true;
 const DEFAULT_EVIDENCE_KEEP_MAX_PER_BLOCKER = 1;
 const DEFAULT_EVIDENCE_SESSION_CURATION_MODE = 'on-change';
 const DEFAULT_EVIDENCE_SESSION_INDEX_REFRESH_MODE = 'on-change';
+const DEFAULT_EXTERNAL_RUNTIME_ARTIFACTS = [
+  'docs/ops/automation/run-state.json',
+  'docs/ops/automation/run-events.jsonl'
+];
 const DEFAULT_CONTACT_PACK_CACHE_MODE = 'run-memory';
 const DEFAULT_SEMANTIC_PROOF_MODE = 'advisory';
 const DEFAULT_ROLE_ORCHESTRATION_ENABLED = true;
@@ -4241,6 +4246,16 @@ function ensurePlanRecoveryState(state, planId) {
       lastFailureReason: null,
       lastFailedAt: null,
       lastRetriedAt: null,
+      blockerClass: null,
+      blockerFingerprint: null,
+      dependencyStateFingerprint: null,
+      trackedFiles: [],
+      trackedFileFingerprint: null,
+      approvalState: null,
+      cooldownUntil: null,
+      lastBlockedAt: null,
+      lastParkedAt: null,
+      lastMaterialChangeAt: null,
       updatedAt: null
     };
   }
@@ -4268,6 +4283,7 @@ function registerPlanRetryAttempt(state, planId) {
   state.recoveryState[planId] = {
     ...current,
     lastRetriedAt: nowIso(),
+    cooldownUntil: null,
     updatedAt: nowIso()
   };
 }
@@ -4277,6 +4293,168 @@ function clearPlanRecoveryState(state, planId) {
     return;
   }
   delete state.recoveryState[planId];
+}
+
+function recoveryCooldownMs(config) {
+  const minutes = Math.max(0, asInteger(config?.recovery?.blockedCooldownMinutes, DEFAULT_BLOCKED_COOLDOWN_MINUTES));
+  return minutes * 60 * 1000;
+}
+
+function stableHash(value) {
+  return createHash('sha1').update(JSON.stringify(value)).digest('hex');
+}
+
+function normalizeTrackedFilePath(filePath) {
+  return toPosix(String(filePath ?? '').trim()).replace(/^\.?\//, '');
+}
+
+function normalizeTrackedFileList(paths = []) {
+  return [...new Set((Array.isArray(paths) ? paths : []).map(normalizeTrackedFilePath).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function collectValidationFindingFiles(state, planId) {
+  const planResults = state?.validationResults?.[planId];
+  const buckets = [
+    ...(Array.isArray(planResults?.always) ? planResults.always : []),
+    ...(Array.isArray(planResults?.['host-required']) ? planResults['host-required'] : [])
+  ];
+  return normalizeTrackedFileList(
+    buckets.flatMap((entry) => Array.isArray(entry?.findingFiles) ? entry.findingFiles : [])
+  );
+}
+
+function blockerReasonForPlan(plan, state) {
+  const validation = state?.validationState?.[plan.planId] ?? {};
+  return trimmedString(
+    validation.reason ??
+    state?.recoveryState?.[plan.planId]?.lastFailureReason ??
+    null,
+    ''
+  );
+}
+
+function blockerClassForPlan(plan, state, reason = '') {
+  const validation = state?.validationState?.[plan.planId] ?? {};
+  const reasonLower = String(reason ?? '').trim().toLowerCase();
+  if (
+    plan.status === 'validation' &&
+    (String(validation.always ?? '').trim().toLowerCase() === 'pending' ||
+      String(validation.host ?? '').trim().toLowerCase() === 'pending')
+  ) {
+    return 'residual-external';
+  }
+  if (reasonLower.includes('run-events') || reasonLower.includes('run-state') || reasonLower.includes('orchestration')) {
+    return 'external-runtime';
+  }
+  if (
+    reasonLower.includes('compiled child') ||
+    reasonLower.includes('child recompilation') ||
+    reasonLower.includes('parent compile') ||
+    reasonLower.includes('stale child') ||
+    reasonLower.includes('generated child')
+  ) {
+    return 'parent-child-drift';
+  }
+  if (reasonLower.includes('approval')) {
+    return 'approval';
+  }
+  if (reasonLower.includes('dependency')) {
+    return 'dependency';
+  }
+  return plan.status === 'failed' ? 'failed' : 'blocked';
+}
+
+function trackedFilesForBlocker(plan, activePlansById, state, blockerClass) {
+  if (blockerClass === 'parent-child-drift') {
+    return normalizeTrackedFileList(
+      parentScopeIdsForPlan(plan)
+        .map((planId) => activePlansById.get(planId)?.rel ?? null)
+        .filter(Boolean)
+    );
+  }
+  if (blockerClass === 'external-runtime') {
+    return [...DEFAULT_EXTERNAL_RUNTIME_ARTIFACTS];
+  }
+  if (blockerClass === 'residual-external') {
+    const findingFiles = collectValidationFindingFiles(state, plan.planId);
+    return findingFiles.length > 0 ? findingFiles : [...DEFAULT_EXTERNAL_RUNTIME_ARTIFACTS];
+  }
+  return [];
+}
+
+async function fingerprintTrackedFiles(rootDir, trackedFiles) {
+  const normalized = normalizeTrackedFileList(trackedFiles);
+  if (normalized.length === 0) {
+    return stableHash([]);
+  }
+  const entries = [];
+  for (const relPath of normalized) {
+    const absPath = path.join(rootDir, relPath);
+    try {
+      const content = await fs.readFile(absPath, 'utf8');
+      entries.push({ path: relPath, exists: true, content });
+    } catch {
+      entries.push({ path: relPath, exists: false, content: null });
+    }
+  }
+  return stableHash(entries);
+}
+
+function dependencyStateFingerprint(plan, activePlansById, completedPlanIds) {
+  return stableHash(
+    plan.dependencies
+      .map((dependency) => ({
+        planId: dependency,
+        completed: completedPlanIds.has(dependency),
+        status: activePlansById.get(dependency)?.status ?? null
+      }))
+      .sort((left, right) => left.planId.localeCompare(right.planId))
+  );
+}
+
+function dependencyCompletionChanged(previousFingerprint, nextFingerprint) {
+  return previousFingerprint && nextFingerprint && previousFingerprint !== nextFingerprint;
+}
+
+function cooldownActive(cooldownUntil) {
+  const expiresAt = Date.parse(String(cooldownUntil ?? ''));
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
+function updatePlanBlockerRecoveryState(state, planId, patch = {}) {
+  const current = ensurePlanRecoveryState(state, planId);
+  state.recoveryState[planId] = {
+    ...current,
+    ...patch,
+    updatedAt: nowIso()
+  };
+  return state.recoveryState[planId];
+}
+
+async function persistPlanBlockerFingerprint(paths, state, plan, blockerReason, blockerClass) {
+  const trackedFiles = trackedFilesForBlocker(plan, new Map([[plan.planId, plan]]), state, blockerClass);
+  const trackedFileFingerprint = await fingerprintTrackedFiles(paths.rootDir, trackedFiles);
+  const current = ensurePlanRecoveryState(state, plan.planId);
+  const nextDependencyStateFingerprint = current.dependencyStateFingerprint ?? dependencyStateFingerprint(
+    plan,
+    new Map([[plan.planId, plan]]),
+    new Set(Array.isArray(state?.completedPlanIds) ? state.completedPlanIds : [])
+  );
+  const blockerFingerprint = stableHash({
+    blockerReason,
+    blockerClass,
+    dependencyStateFingerprint: nextDependencyStateFingerprint,
+    trackedFileFingerprint
+  });
+  return updatePlanBlockerRecoveryState(state, plan.planId, {
+    lastFailureReason: blockerReason,
+    blockerClass,
+    blockerFingerprint,
+    dependencyStateFingerprint: nextDependencyStateFingerprint,
+    trackedFiles,
+    trackedFileFingerprint
+  });
 }
 
 function ensurePlanContinuationState(state, planId) {
@@ -4866,6 +5044,9 @@ async function promoteFuturePlans(paths, state, options) {
     if (future.status !== 'ready-for-promotion') {
       continue;
     }
+    if (options.planId && !matchesPlanIdFilter(future, options.planId)) {
+      continue;
+    }
 
     if (takenPlanIds.has(future.planId)) {
       await logEvent(paths, state, 'promotion_skipped', {
@@ -5076,15 +5257,15 @@ function securityApprovalSatisfied(plan, assessment, config) {
   };
 }
 
-function classifyRecoverablePlans(activePlans, completedPlanIds, state, options, config) {
+async function classifyRecoverablePlans(paths, activePlans, completedPlanIds, state, options, config) {
   const retryableFailed = new Map();
   const unblockable = new Map();
+  const parkedPending = new Map();
+  const activePlansById = new Map(activePlans.filter((plan) => plan.planId).map((plan) => [plan.planId, plan]));
+  const cooldownMs = recoveryCooldownMs(config);
 
   for (const plan of activePlans) {
     if (!ACTIVE_STATUSES.has(plan.status)) {
-      continue;
-    }
-    if (!planDependenciesReady(plan, completedPlanIds)) {
       continue;
     }
 
@@ -5097,8 +5278,38 @@ function classifyRecoverablePlans(activePlans, completedPlanIds, state, options,
       state.effectiveMode
     );
     const approval = securityApprovalSatisfied(plan, assessment, config);
+    const recovery = ensurePlanRecoveryState(state, plan.planId);
+    const blockerReason = blockerReasonForPlan(plan, state);
+    const blockerClass = blockerClassForPlan(plan, state, blockerReason);
+    const trackedFiles = trackedFilesForBlocker(plan, activePlansById, state, blockerClass);
+    const trackedFileFingerprint = await fingerprintTrackedFiles(paths.rootDir, trackedFiles);
+    const nextDependencyStateFingerprint = dependencyStateFingerprint(plan, activePlansById, completedPlanIds);
+    const approvalState = stableHash({
+      ok: approval.ok,
+      value: approval.securityApprovalValue ?? null
+    });
+    const blockerFingerprint = stableHash({
+      blockerReason,
+      blockerClass,
+      dependencyStateFingerprint: nextDependencyStateFingerprint,
+      trackedFileFingerprint
+    });
+    const dependencyChanged = dependencyCompletionChanged(recovery.dependencyStateFingerprint, nextDependencyStateFingerprint);
+    const approvalSatisfiedTransition = recovery.approvalState && recovery.approvalState !== approvalState && approval.ok;
+    const trackedFilesChanged = recovery.trackedFileFingerprint && recovery.trackedFileFingerprint !== trackedFileFingerprint;
+    const materialChange = dependencyChanged || approvalSatisfiedTransition || trackedFilesChanged;
 
-    if (plan.status === 'failed' && options.retryFailedPlans) {
+    updatePlanBlockerRecoveryState(state, plan.planId, {
+      blockerClass,
+      blockerFingerprint,
+      dependencyStateFingerprint: nextDependencyStateFingerprint,
+      trackedFiles,
+      trackedFileFingerprint,
+      approvalState,
+      lastMaterialChangeAt: materialChange ? nowIso() : recovery.lastMaterialChangeAt ?? null
+    });
+
+    if (plan.status === 'failed' && options.retryFailedPlans && planDependenciesReady(plan, completedPlanIds)) {
       const attempts = failedAttemptCount(state, plan.planId);
       if (attempts < asInteger(options.maxFailedRetries, DEFAULT_MAX_FAILED_RETRIES) && policyGate.allowed && approval.ok) {
         retryableFailed.set(plan.planId, {
@@ -5109,9 +5320,33 @@ function classifyRecoverablePlans(activePlans, completedPlanIds, state, options,
     }
 
     if (plan.status === 'blocked' && options.autoUnblockPlans) {
-      if (policyGate.allowed && approval.ok) {
+      const allowAutoUnblock =
+        planDependenciesReady(plan, completedPlanIds) &&
+        policyGate.allowed &&
+        approval.ok &&
+        materialChange;
+      if (allowAutoUnblock) {
         unblockable.set(plan.planId, {
-          reason: 'Policy/approval gates now satisfied.'
+          reason: dependencyChanged
+            ? 'Dependency state changed.'
+            : approvalSatisfiedTransition
+              ? 'Approval state changed to satisfied.'
+              : trackedFilesChanged
+                ? 'Relevant parent/runtime artifacts changed.'
+                : 'Blocker inputs changed.'
+        });
+      }
+    }
+
+    if (plan.status === 'validation') {
+      const validation = state.validationState?.[plan.planId] ?? {};
+      const residualPending =
+        (String(validation.always ?? '').trim().toLowerCase() === 'pending' ||
+          String(validation.host ?? '').trim().toLowerCase() === 'pending') &&
+        trimmedString(validation.reason, '').length > 0;
+      if (residualPending && !materialChange) {
+        parkedPending.set(plan.planId, {
+          reason: validation.reason
         });
       }
     }
@@ -5119,7 +5354,8 @@ function classifyRecoverablePlans(activePlans, completedPlanIds, state, options,
 
   return {
     retryableFailed,
-    unblockable
+    unblockable,
+    parkedPending
   };
 }
 
@@ -7229,7 +7465,7 @@ function matchesPlanIdFilter(plan, planIdFilter) {
     return true;
   }
   const needle = String(planIdFilter).trim().toLowerCase();
-  return plan.planId.toLowerCase().includes(needle) || plan.rel.toLowerCase().includes(needle);
+  return plan.planId.toLowerCase() === needle || plan.rel.toLowerCase().includes(needle);
 }
 
 async function curateEvidenceDirectories(paths, directories, options, config) {
@@ -9119,11 +9355,12 @@ async function runLoop(paths, state, options, config, runMode) {
       await refreshProgramState(paths, state, catalog);
     }
     const completedIds = new Set(state.completedPlanIds);
-    const recoverable = classifyRecoverablePlans(catalog.active, completedIds, state, options, config);
+    const recoverable = await classifyRecoverablePlans(paths, catalog.active, completedIds, state, options, config);
     const recoverablePlanIds = new Set([
       ...recoverable.retryableFailed.keys(),
       ...recoverable.unblockable.keys()
     ]);
+    const parkedPlanIds = new Set(recoverable.parkedPending.keys());
 
     for (const [planId, details] of recoverable.retryableFailed.entries()) {
       if (recoveryAnnounced.has(`retry:${planId}`)) {
@@ -9166,7 +9403,8 @@ async function runLoop(paths, state, options, config, runMode) {
     state.failedPlanIds = state.failedPlanIds.filter((planId) => !recoverablePlanIds.has(planId));
     state.blockedPlanIds = state.blockedPlanIds.filter((planId) => !recoverablePlanIds.has(planId));
 
-    let executable = executablePlans(catalog.active, completedIds, failedOrBlockedIds, recoverablePlanIds);
+    let executable = executablePlans(catalog.active, completedIds, failedOrBlockedIds, recoverablePlanIds)
+      .filter((plan) => !parkedPlanIds.has(plan.planId));
     let blockedByDependency = blockedPlans(catalog.active, completedIds, failedOrBlockedIds);
     if (options.planId) {
       executable = executable.filter((plan) => matchesPlanIdFilter(plan, options.planId));
@@ -9192,6 +9430,12 @@ async function runLoop(paths, state, options, config, runMode) {
     }
 
     if (executable.length === 0) {
+      if (parkedPlanIds.size > 0) {
+        progressLog(
+          options,
+          `no executable plans; ${parkedPlanIds.size} plan(s) are parked on unchanged external blockers.`
+        );
+      }
       if (state.blockedPlanIds.length > 0) {
         progressLog(
           options,
@@ -9258,6 +9502,12 @@ async function runLoop(paths, state, options, config, runMode) {
       if (nextSteps.length > 0) {
         progressLog(options, `next steps ${nextPlan.planId}: ${nextSteps.join(' | ')}`);
       }
+      updatePlanBlockerRecoveryState(state, nextPlan.planId, {
+        lastFailureReason: outcome.reason ?? 'blocked',
+        blockerClass: blockerClassForPlan(nextPlan, state, outcome.reason ?? ''),
+        lastBlockedAt: nowIso(),
+        cooldownUntil: new Date(Date.now() + recoveryCooldownMs(config)).toISOString()
+      });
       await logEvent(paths, state, 'plan_blocked', {
         planId: nextPlan.planId,
         reason: outcome.reason,
@@ -9282,6 +9532,19 @@ async function runLoop(paths, state, options, config, runMode) {
       progressLog(options, `plan pending ${nextPlan.planId}: ${outcome.reason}`);
       if (nextSteps.length > 0) {
         progressLog(options, `next steps ${nextPlan.planId}: ${nextSteps.join(' | ')}`);
+      }
+      const validationState = state.validationState?.[nextPlan.planId] ?? {};
+      const residualPending =
+        (String(validationState.always ?? '').trim().toLowerCase() === 'pending' ||
+          String(validationState.host ?? '').trim().toLowerCase() === 'pending') &&
+        trimmedString(validationState.reason, '').length > 0;
+      if (residualPending) {
+        const blockerClass = blockerClassForPlan(nextPlan, state, validationState.reason);
+        await persistPlanBlockerFingerprint(paths, state, nextPlan, validationState.reason, blockerClass);
+        updatePlanBlockerRecoveryState(state, nextPlan.planId, {
+          lastParkedAt: nowIso(),
+          cooldownUntil: new Date(Date.now() + recoveryCooldownMs(config)).toISOString()
+        });
       }
     } else {
       const nextSteps = deriveOutcomeNextSteps(
@@ -9836,16 +10099,18 @@ async function runParallelCommand(paths, options) {
     }
 
     const completedForScheduling = new Set([...state.completedPlanIds, ...catalog.completed.map((plan) => plan.planId)]);
-    const recoverable = classifyRecoverablePlans(catalog.active, completedForScheduling, state, options, config);
+    const recoverable = await classifyRecoverablePlans(paths, catalog.active, completedForScheduling, state, options, config);
     const recoverablePlanIds = new Set([
       ...recoverable.retryableFailed.keys(),
       ...recoverable.unblockable.keys()
     ]);
+    const parkedPlanIds = new Set(recoverable.parkedPending.keys());
     candidates = candidates.filter((plan) => (
       plan.status !== 'failed' && plan.status !== 'blocked'
         ? true
         : recoverablePlanIds.has(plan.planId)
     ));
+    candidates = candidates.filter((plan) => !parkedPlanIds.has(plan.planId));
     candidates = sortExecutableQueue(candidates, completedForScheduling, recoverablePlanIds, state, config);
     const pending = new Map(candidates.map((plan) => [plan.planId, plan]));
     const launched = new Set();
@@ -9978,6 +10243,12 @@ async function runParallelCommand(paths, options) {
         }, options.dryRun);
       } else if (result.outcome === 'blocked') {
         outcomeSummary.blocked += 1;
+        updatePlanBlockerRecoveryState(state, plan.planId, {
+          lastFailureReason: result.reason ?? 'blocked',
+          blockerClass: blockerClassForPlan(plan, state, result.reason ?? ''),
+          lastBlockedAt: nowIso(),
+          cooldownUntil: new Date(Date.now() + recoveryCooldownMs(config)).toISOString()
+        });
         await logEvent(paths, state, 'plan_blocked_parallel', {
           planId: plan.planId,
           branch: result.branchName,
@@ -9994,6 +10265,19 @@ async function runParallelCommand(paths, options) {
         }, options.dryRun);
       } else {
         outcomeSummary.pending += 1;
+        const validationState = state.validationState?.[plan.planId] ?? {};
+        const residualPending =
+          (String(validationState.always ?? '').trim().toLowerCase() === 'pending' ||
+            String(validationState.host ?? '').trim().toLowerCase() === 'pending') &&
+          trimmedString(validationState.reason, '').length > 0;
+        if (residualPending) {
+          const blockerClass = blockerClassForPlan(plan, state, validationState.reason);
+          await persistPlanBlockerFingerprint(paths, state, plan, validationState.reason, blockerClass);
+          updatePlanBlockerRecoveryState(state, plan.planId, {
+            lastParkedAt: nowIso(),
+            cooldownUntil: new Date(Date.now() + recoveryCooldownMs(config)).toISOString()
+          });
+        }
         await logEvent(paths, state, 'plan_pending_parallel', {
           planId: plan.planId,
           branch: result.branchName,

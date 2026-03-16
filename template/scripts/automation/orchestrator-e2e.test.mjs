@@ -268,6 +268,15 @@ async function findPlanFile(rootDir, phase, planId) {
   return null;
 }
 
+async function readRunEvents(rootDir) {
+  const runEventsRaw = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
+  return runEventsRaw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
 function orchestratorArgs(subcommand, maxPlans) {
   return [
     './scripts/automation/orchestrator.mjs',
@@ -353,12 +362,7 @@ test('orchestrator end-to-end fixture covers resume, retry, host pending/pass, s
   assert.equal(runState.programState['parent-program'].completedChildren, 2);
   assert.equal(runState.programState['parent-program'].childCompilationCurrent, true);
 
-  const runEventsRaw = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
-  const runEvents = runEventsRaw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  const runEvents = await readRunEvents(rootDir);
   assert.ok(runEvents.length > 0);
   assert.ok(runEvents.every((event) => event.schemaVersion === 1));
   assert.deepEqual(
@@ -602,6 +606,74 @@ test('supervisor stops on repeated identical residual validation blockers withou
   const combined = `${result.stdout}\n${result.stderr}`;
   assert.equal(result.status, 2, combined);
   assert.match(combined, /repeated residual validation blocker/);
+});
+
+test('resume keeps unchanged residual external validation blockers parked', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'orchestrator-residual-parked-'));
+  const scenario = {
+    providerActions: {
+      'child-a': {
+        planner: [{ status: 'completed', summary: 'Planner complete for child-a.' }],
+        worker: [{
+          status: 'completed',
+          summary: 'Child A implementation complete.',
+          writeFiles: [{ path: 'src/feature-a.js', content: 'export const featureA = "done";\n' }],
+          plan: {
+            checkMustLand: true,
+            status: 'validation',
+            validationReady: 'yes',
+            validationEvidence: ['fixture child-a ready']
+          }
+        }],
+        reviewer: [{ status: 'completed', summary: 'Reviewer complete for child-a.' }]
+      }
+    },
+    validation: {
+      'always:child-a': [
+        {
+          status: 'failed',
+          summary: 'External validation blocker persists.',
+          findingFiles: ['docs/generated/external-blocker.json']
+        }
+      ]
+    }
+  };
+
+  await configureFixtureRepo(rootDir, scenario);
+  await updateFixtureConfig(rootDir, (config) => {
+    config.validation.always = [
+      {
+        id: 'fixture:always',
+        command: 'node ./scripts/automation/fixtures/stub-validation-command.mjs --lane always',
+        type: 'integration'
+      }
+    ];
+  });
+  await writeFutureParent(rootDir, { includeChildB: false });
+  await initGitRepo(rootDir);
+
+  let result = run('node', orchestratorArgs('run', 1), rootDir, { ORCH_APPROVED_MEDIUM: '1' });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+  const initialRunEvents = await readRunEvents(rootDir);
+  const initialValidationStarts = initialRunEvents.filter((event) => event.type === 'validation_started').length;
+  assert.equal(initialValidationStarts, 1);
+
+  const initialRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  assert.equal(initialRunState.validationState['child-a'].always, 'pending');
+  assert.match(initialRunState.validationState['child-a'].reason, /Validation .*stub-validation-command/);
+  assert.equal(initialRunState.recoveryState['child-a'].blockerClass, 'residual-external');
+
+  assert.equal(run('git', ['add', '.'], rootDir).status, 0);
+  assert.equal(run('git', ['commit', '-m', 'record residual blocker state'], rootDir).status, 0);
+
+  result = run('node', orchestratorArgs('resume', 1), rootDir, { ORCH_APPROVED_MEDIUM: '1' });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+  const resumedRunEvents = await readRunEvents(rootDir);
+  const resumedValidationStarts = resumedRunEvents.filter((event) => event.type === 'validation_started').length;
+  assert.equal(resumedValidationStarts, 1);
+  assert.match(`${result.stdout}\n${result.stderr}`, /parked on unchanged external blockers/);
 });
 
 test('supervisor dirty recovery continues unresolved work on a dirty workspace', async () => {

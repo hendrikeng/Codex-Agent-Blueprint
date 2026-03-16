@@ -4,7 +4,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   CONTRACT_IDS,
-  parseContractPayload
+  parseContractPayload,
+  prepareContractPayload
 } from './lib/contracts/index.mjs';
 import {
   normalizeOrchestrationState,
@@ -14,6 +15,7 @@ import {
 
 const DEFAULT_RUN_STATE_PATH = 'docs/ops/automation/run-state.json';
 const DEFAULT_RUN_EVENTS_PATH = 'docs/ops/automation/run-events.jsonl';
+const aggregateResultPath = String(process.env.ORCH_VALIDATION_RESULT_PATH ?? '').trim();
 
 function parseArgs(argv) {
   const options = {};
@@ -144,26 +146,74 @@ export function evaluateOrchestrationState(runState, runEvents) {
   };
 }
 
+async function writeValidationResult(rootDir, payload) {
+  if (!aggregateResultPath) {
+    return;
+  }
+  const absPath = path.resolve(rootDir, aggregateResultPath);
+  const normalized = prepareContractPayload(CONTRACT_IDS.validationResult, {
+    validationId: process.env.ORCH_VALIDATION_ID || 'repo:verify-orchestration-state',
+    command: 'node ./scripts/automation/verify-orchestration-state.mjs',
+    lane: process.env.ORCH_VALIDATION_LANE || 'always',
+    type: process.env.ORCH_VALIDATION_TYPE || 'contract',
+    status: String(payload?.status ?? '').trim(),
+    summary: String(payload?.summary ?? '').trim(),
+    startedAt: String(payload?.startedAt ?? '').trim(),
+    finishedAt: String(payload?.finishedAt ?? '').trim(),
+    evidenceRefs: Array.isArray(payload?.evidenceRefs) ? payload.evidenceRefs : [],
+    artifactRefs: Array.isArray(payload?.artifactRefs) ? payload.artifactRefs : [],
+    findingFiles: Array.isArray(payload?.findingFiles) ? payload.findingFiles : [],
+    outputLogPath: payload?.outputLogPath ?? null
+  });
+  await fs.mkdir(path.dirname(absPath), { recursive: true });
+  await fs.writeFile(absPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const rootDir = process.cwd();
   const runStatePath = path.join(rootDir, String(options['run-state'] ?? DEFAULT_RUN_STATE_PATH));
   const runEventsPath = path.join(rootDir, String(options['run-events'] ?? DEFAULT_RUN_EVENTS_PATH));
+  const runStateRel = path.relative(rootDir, runStatePath).split(path.sep).join('/');
+  const runEventsRel = path.relative(rootDir, runEventsPath).split(path.sep).join('/');
+  const startedAt = new Date().toISOString();
 
   const [hasRunState, hasRunEvents] = await Promise.all([exists(runStatePath), exists(runEventsPath)]);
   if (!hasRunState && !hasRunEvents) {
+    await writeValidationResult(rootDir, {
+      status: 'passed',
+      summary: '[state-verify] skipped (no run-state or run-events artifacts found).',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      findingFiles: []
+    });
     console.log('[state-verify] skipped (no run-state or run-events artifacts found).');
     return;
   }
 
-  const [runState, runEvents] = await Promise.all([
-    hasRunState
-      ? fs.readFile(runStatePath, 'utf8').then((raw) => parseContractPayload(CONTRACT_IDS.runState, JSON.parse(raw)))
-      : Promise.resolve(null),
-    hasRunEvents
-      ? fs.readFile(runEventsPath, 'utf8').then((raw) => parseRunEvents(raw, path.relative(rootDir, runEventsPath)))
-      : Promise.resolve([])
-  ]);
+  let runState = null;
+  let runEvents = [];
+  try {
+    [runState, runEvents] = await Promise.all([
+      hasRunState
+        ? fs.readFile(runStatePath, 'utf8').then((raw) => parseContractPayload(CONTRACT_IDS.runState, JSON.parse(raw)))
+        : Promise.resolve(null),
+      hasRunEvents
+        ? fs.readFile(runEventsPath, 'utf8').then((raw) => parseRunEvents(raw, path.relative(rootDir, runEventsPath)))
+        : Promise.resolve([])
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const findingFiles = message.includes(runEventsRel) ? [runEventsRel] : hasRunState ? [runStateRel] : [];
+    await writeValidationResult(rootDir, {
+      status: 'failed',
+      summary: message,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      findingFiles
+    });
+    throw error;
+  }
 
   const evaluation = evaluateOrchestrationState(runState, runEvents);
   if (evaluation.replayErrors.length > 0) {
@@ -179,9 +229,23 @@ async function main() {
     }
   }
   if (evaluation.replayErrors.length > 0 || evaluation.mismatches.length > 0) {
+    await writeValidationResult(rootDir, {
+      status: 'failed',
+      summary: '[state-verify] orchestration state mismatch detected.',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      findingFiles: [runStateRel, runEventsRel].filter(Boolean)
+    });
     process.exit(1);
   }
 
+  await writeValidationResult(rootDir, {
+    status: 'passed',
+    summary: `[state-verify] passed (${evaluation.checkedPlans} plan(s) checked).`,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    findingFiles: []
+  });
   console.log(`[state-verify] passed (${evaluation.checkedPlans} plan(s) checked).`);
 }
 

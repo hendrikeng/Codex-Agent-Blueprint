@@ -89,6 +89,7 @@ Use the manual path when any of these are true:
 
 ## CLI
 
+- `node ./scripts/automation/pre-grind-hygiene.mjs [--plan-id <value>]`
 - `node ./scripts/automation/orchestrator.mjs run --mode guarded --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty`
 - `node ./scripts/automation/orchestrator.mjs run-parallel --mode guarded --parallel-plans 3 --retry-failed true --auto-unblock true --max-failed-retries 2 --output pretty`
 - `node ./scripts/automation/orchestrator.mjs resume`
@@ -127,6 +128,9 @@ Use the manual path when any of these are true:
   - `--retry-failed true|false` (default `true`)
   - `--auto-unblock true|false` (default `true`)
   - `--max-failed-retries <n>` (default `2`)
+- Guarded grind recommendation:
+  - Run one hygiene pass before a new grind.
+  - When running the supervisor grind scripts, prefer `--auto-unblock false` so unchanged blockers stay parked.
 - Parallel controls:
   - `--parallel-plans <n>` enables dependency-aware parallel branch/worktree execution.
 
