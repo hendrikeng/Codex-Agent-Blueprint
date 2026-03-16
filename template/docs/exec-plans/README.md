@@ -50,6 +50,7 @@ Every executable plan must also include:
 
 Reconciliation lowers omission and stale-scope risk, but it does not replace planner or reviewer judgment.
 Compiled child slices are owned in three bands: compiler-generated contract sections, a preserved `## Planner Overlay`, and execution-updated status/evidence/closure sections.
+When compiled child slices live under `docs/future/`, they also remain subject to the future blueprint requirements documented in `docs/future/README.md`.
 
 ## Delivery Semantics
 

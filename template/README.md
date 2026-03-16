@@ -79,6 +79,18 @@ Reference: `docs/ops/automation/LITE_QUICKSTART.md`.
 - Improve checkpoint contents, contact-pack selection, evidence compaction, and observability before considering external retrieval or off-repo memory.
 - Repo-local checkpoints and contact packs remain the default memory architecture; see `docs/agent-hardening/MEMORY_CONTEXT.md` for the detailed rule set and escalation triggers.
 
+## Machine Contracts
+
+The harness treats machine-readable runtime artifacts as explicit contracts, not informal JSON:
+
+- `docs/ops/automation/harness-manifest.json` is the downstream ownership and version-stamp record for sync/update.
+- `docs/ops/automation/run-state.json` is the resumable queue/session snapshot.
+- `docs/ops/automation/run-events.jsonl` is the append-only event envelope stream.
+- `docs/ops/automation/runtime/state/<plan-id>/latest.json` and `checkpoints.jsonl` are the continuity contracts used by resume/handoff/contact-pack selection.
+- Contact-pack manifests and validation result payloads are versioned contracts and should be consumed through harness scripts, not hand-authored assumptions.
+
+If a contract version is missing, stale, truncated, or incompatible, the harness now prefers fail-closed behavior with explicit errors.
+
 ## Documentation Navigation
 
 Start with:
@@ -125,6 +137,7 @@ Start with:
 - Governance checks: `npm run docs:verify`, `npm run conformance:verify`, `npm run architecture:verify`, `npm run agent:verify`, `npm run eval:verify`, `npm run plans:verify`, `npm run harness:verify`
 - Plan metadata drift self-heal (local default): `plans:verify` auto-aligns top-level `Status:` with metadata `- Status`; disable via `ORCH_PLAN_METADATA_AUTO_HEAL_STATUS=0` (CI defaults to disabled).
 - Broad future-native parents that still need decomposition should use `npm run plans:scaffold-children -- --plan-file <path>` instead of staying childless; legacy heading parents should use `npm run plans:migrate -- --plan-file <path>` first.
+- Generated future/active child slices from `plans:compile` are still real plans. Review and fill future-specific sections before expecting stricter repos to pass `plans:verify` on the first compile.
 - Fast iteration profile: `npm run verify:fast`
 - Full merge profile: `npm run verify:full`
 - Canonical command map and policy: `docs/governance/RULES.md`
@@ -158,6 +171,7 @@ Future blueprint promotion rule:
 - Before setting `Status: ready-for-promotion`, add `## Master Plan Coverage` or `## Capability Coverage Matrix`, add `## Prior Completed Plan Reconciliation`, add `## Promotion Blockers`, and run `npm run plans:verify`.
 - Broad `Execution-Scope: program` futures must also declare `Authoring-Intent`; default to `executable-default` plus `## Child Slice Definitions`, and reserve `blueprint-only` for explicit blueprint-only requests.
 - `plans:scaffold-children` auto-writes missing `Authoring-Intent: executable-default`, but it refuses legacy `## Remaining Execution Slices` / `## Portfolio Units` parents so migration stays on one explicit path.
+- Compiled future child slices inherit slice execution semantics but still live under the future blueprint rules until promoted; they must carry valid `Implementation-Targets` for product work plus future coverage, reconciliation, and promotion-blocker sections.
 - Resume supervised run loop: `npm run automation:resume:grind`
 - Resume supervised run loop with medium enabled: `npm run automation:resume:grind:medium`
 - Resume supervised run loop with medium+high enabled: `npm run automation:resume:grind:high`

@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: Platform Engineering
-Last Updated: 2026-03-14
+Last Updated: 2026-03-16
 Source of Truth: This directory.
 
 Reusable harness for initializing agent-first repositories with docs-as-governance, blast-radius control, and evidence-based delivery.
@@ -24,9 +24,23 @@ Reusable harness for initializing agent-first repositories with docs-as-governan
 - Faster delivery loops via `verify:fast` + compact runtime context.
 - Stronger reliability via `verify:full`, risk-tier routing, and approval gates.
 - Session continuity by design: proactive context rollover + structured handoffs between isolated runs.
+- Fail-closed machine contracts via explicit schema versions, validators, and shared contract loaders for run state, run events, continuity state, contact packs, validation payloads, and harness manifests.
+- Safer restart and resume behavior via durable shared-state writes and append-only event/checkpoint logs that reject malformed structured state instead of silently accepting it.
 - Reduced content rot: canonical docs stay aligned with behavior through required checks and policy manifests.
 - Better handoff and team alignment via canonical docs, plan metadata, and evidence indexes.
 - Clearer operational posture: practical structure for correctness and rollback instead of prompt improvisation.
+
+## Current Hardening Baseline
+
+The current harness revision assumes these behaviors are part of the public contract:
+
+- Node support policy is Node 24 only.
+- Root harness CI is expected to pass on Ubuntu and macOS.
+- Downstream ownership is tracked by `docs/ops/automation/harness-manifest.json`.
+- Shared orchestration artifacts are versioned machine contracts, not best-effort JSON blobs.
+- Future and active `Execution-Scope: program` plans must use explicit authoring intent and structured child definitions before orchestration can compile or execute them.
+
+This matters for downstream upgrades: old future/program-parent shapes that previously “kind of worked” may now fail closed until they are migrated or scaffolded into the structured child-definition format.
 
 ## Adoption Lanes
 
@@ -114,6 +128,8 @@ flowchart TD
 
 | Command | Use When |
 | --- | --- |
+| `npm run test:root` | You want the harness repo's own Node test suites and checks, not a downstream template smoke run. |
+| `npm run test:template-smoke` | You want a temp-repo smoke pass against the template/bootstrap path. |
 | `npm run plans:verify` | You want a fast plan-state check only. |
 | `npm run plans:scaffold-children -- --plan-file <path>` | A future-native broad parent needs reviewable child definitions; legacy heading parents should use `plans:migrate` first. |
 | `npm run verify:fast` | You want standard local preflight before grind/resume/commit. |
@@ -129,6 +145,8 @@ Future blueprint promotion rule:
 - Before setting `Status: ready-for-promotion`, add `## Master Plan Coverage` or `## Capability Coverage Matrix`, add `## Prior Completed Plan Reconciliation`, add `## Promotion Blockers`, and run `npm run plans:verify`.
 - Broad `Execution-Scope: program` futures must also declare `Authoring-Intent`; use `executable-default` plus `## Child Slice Definitions` by default, and reserve `blueprint-only` for explicit blueprint-only requests.
 - `plans:scaffold-children` backfills missing `Authoring-Intent: executable-default`, but it refuses legacy `## Remaining Execution Slices` / `## Portfolio Units` parents; use `npm run plans:migrate -- --plan-file <path>` for that one migration path.
+- Compiled future child slices are still real future blueprints: they must satisfy future-slice requirements such as `## Capability Coverage Matrix` or `## Master Plan Coverage`, `## Prior Completed Plan Reconciliation`, `## Promotion Blockers`, and valid non-doc `Implementation-Targets` for product work.
+- Generated child definitions are a starting point, not a finished authoring artifact. Review placeholders and rerun `npm run plans:compile` before expecting `plans:verify` to pass in strict downstream repos.
 
 For full command contracts, flags, and policy behavior, use `template/docs/ops/automation/README.md`.
 
@@ -156,7 +174,8 @@ Harness distribution/update commands:
 - Update an existing managed downstream repo to the current harness revision: `node ./scripts/harness-sync.mjs update --target /path/to/repo`
 - Report downstream drift without rewriting files: `node ./scripts/harness-sync.mjs drift --target /path/to/repo`
 - `update` now requires an existing valid downstream harness manifest and removes retired managed files before rewriting the manifest.
-- Install/update writes a downstream ownership record at `docs/ops/automation/harness-manifest.json` with the managed file list, hashes, manifest fingerprint, and source revision used for the sync; that revision is the harness version stamp.
+- Install/update writes a downstream ownership record at `docs/ops/automation/harness-manifest.json` with the managed file list, hashes, manifest fingerprint, schema version, and source revision used for the sync; that revision is the harness version stamp.
+- Downstream upgrades should run `npm run harness:verify`, `npm run plans:verify`, `npm run context:compile`, and `npm run verify:fast` after sync. Repos with older future/program-parent documents may also need `plans:migrate`, `plans:scaffold-children`, or `plans:compile` before verification goes green.
 
 ## README Lifecycle
 

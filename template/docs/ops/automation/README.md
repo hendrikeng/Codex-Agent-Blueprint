@@ -43,6 +43,13 @@ Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
 - `docs/ops/automation/runtime/state/<plan-id>/checkpoints.jsonl`: append-only checkpoint log for resumable episodic memory.
 - `docs/ops/automation/runtime/incidents/<run-id>/<plan-id>/`: failed/degraded continuity replay bundles.
 
+## Runtime Contract Posture
+
+- `harness-manifest.json`, `run-state.json`, `run-events.jsonl`, continuity state, checkpoint records, contact-pack manifests, and validation result payloads are versioned machine-readable contracts.
+- Shared structured writes are expected to use the harness helpers so overwrite-style files are written atomically and append-only logs stay single-writer.
+- Readers should fail closed on incompatible, malformed, or truncated structured state instead of silently treating it as valid runtime data.
+- Downstream repos should treat manual edits to runtime contract files as exceptional operational recovery, not normal workflow.
+
 ## Source Of Truth
 
 - `docs/future/`: proposed upcoming work not yet executing.
@@ -59,6 +66,7 @@ Quick start for `Lite`: `docs/ops/automation/LITE_QUICKSTART.md`.
 - Compiled child slices must declare `Validation-Lanes` and include `## Validation Contract` so proof references bind to configured validation IDs instead of free-form command text.
 - Legacy program parents that still use `## Remaining Execution Slices` or `## Portfolio Units` must be migrated to `## Child Slice Definitions` before automatic child compilation is allowed; use `node ./scripts/automation/migrate-program-children.mjs --plan-file <path>` for a dry-run preview. `plans:scaffold-children` refuses legacy parents so migration stays explicit.
 - If a broad executable parent still lacks a safe child graph, use `npm run plans:scaffold-children -- --plan-file <path>` to generate review-required draft child definitions instead of leaving the parent childless. The scaffold command auto-writes missing `Authoring-Intent: executable-default`.
+- Generated child definitions are scaffolds, not acceptance-ready contracts. Remove draft markers, replace placeholders, and rerun `npm run plans:compile` before expecting `plans:verify` to accept the parent in stricter repos.
 - Product slices must declare `Implementation-Targets`; those roots are the authoritative implementation evidence boundary. Worker sessions must not edit source/tests/config files outside those roots without first updating plan scope. `Spec-Targets` remain the broader impact list.
 - Future blueprints and active program parents must also include `## Prior Completed Plan Reconciliation` so overlapping completed plans are explicitly preserved, refactored, superseded, marked obsolete, or reopened.
 
@@ -87,6 +95,12 @@ Use the manual path when any of these are true:
 - `node ./scripts/automation/compile-program-children.mjs --write true [--plan-id <value>]`
 - `node ./scripts/automation/scaffold-program-children.mjs --plan-file <path> [--write true]`
 - `node ./scripts/automation/migrate-program-children.mjs --plan-file <path> [--write true]`
+- Typical migration path for older broad futures/phase parents:
+  1. `plans:migrate` if the parent still uses legacy headings.
+  2. `plans:scaffold-children` if the parent is future-native but childless.
+  3. Review child definitions and remove draft markers/placeholders.
+  4. `plans:compile` to materialize or refresh child slices.
+  5. `plans:verify` and `verify:fast` to confirm the upgraded authoring shape.
 - Optional continuation controls:
   - `--max-sessions-per-plan <n>` (default `12`)
   - `--max-rollovers <n>` (default `20`)
