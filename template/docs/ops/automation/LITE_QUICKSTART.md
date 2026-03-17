@@ -52,11 +52,12 @@ Use a direct active plan only when all of these are true:
 - `npm run plans:verify`
 - `npm run verify:fast`
 - `npm run verify:full`
-- `npm run automation:run -- --max-risk low|medium|high`
-- `npm run automation:resume -- --max-risk low|medium|high`
-- `npm run automation:grind -- --max-risk low|medium|high`
+- `npm run automation:run -- --max-risk low|medium|high --max-sessions-per-plan N`
+- `npm run automation:resume -- --max-risk low|medium|high --max-sessions-per-plan N`
+- `npm run automation:grind -- --max-risk low|medium|high --max-sessions-per-plan N`
 - `npm run automation:audit`
 - If you omit `--max-risk`, the package scripts use the repo's configured default risk ceiling. The template default is `high`.
+- If you omit `--max-sessions-per-plan`, the package scripts use `executor.maxSessionsPerPlan`. The template default is `12`.
 
 ## Non-Negotiables
 

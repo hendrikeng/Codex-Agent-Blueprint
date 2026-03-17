@@ -417,6 +417,241 @@ test('orchestrator blocks high-risk work without explicit security approval', as
   assert.match(blockedPlan, /Security-Approval must be approved/);
 });
 
+test('orchestrator pauses on session budget exhaustion and resume continues only after a higher limit', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'budget-loop': {
+        worker: [
+          {
+            status: 'pending',
+            summary: 'Need another worker pass.',
+            reason: 'implementation slice still open',
+            nextAction: 'Resume the worker to finish the plan',
+            writeFiles: [{ path: 'src/budget-loop-pass-1.js', content: 'export const pass = 1;\n' }]
+          },
+          {
+            status: 'completed',
+            summary: 'Worker finished after resume.',
+            writeFiles: [{ path: 'src/budget-loop.js', content: 'export const status = "done";\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:budget-loop': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  const budgetLoopPlan = directFuturePlan({ planId: 'budget-loop', riskTier: 'low' }).replace(
+    '- Implementation-Targets: src/budget-loop.js',
+    '- Implementation-Targets: src/budget-loop.js, src/budget-loop-pass-1.js'
+  );
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-budget-loop.md'),
+    budgetLoopPlan,
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed budget loop plan');
+
+  const firstRun = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--max-sessions-per-plan', '1', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(firstRun.status, 0, String(firstRun.stderr));
+
+  const activePlanPath = path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-budget-loop.md');
+  const pausedPlan = await fs.readFile(activePlanPath, 'utf8');
+  assert.match(pausedPlan, /^Status: budget-exhausted$/m);
+  assert.match(pausedPlan, /Resume with --max-sessions-per-plan 2 or higher\./);
+
+  const firstRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  assert.equal(firstRunState.planSessions['budget-loop'], 1);
+  assert.deepEqual(firstRunState.budgetExhaustedPlanIds, ['budget-loop']);
+
+  const sameLimitResume = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['resume', '--max-risk', 'low', '--max-sessions-per-plan', '1', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(sameLimitResume.status, 0, String(sameLimitResume.stderr));
+  assert.match(String(sameLimitResume.stdout), /active budget-exhausted=1/);
+  assert.match(String(sameLimitResume.stdout), /resume with -- --max-sessions-per-plan 2 to continue budget-loop/);
+
+  const stillPausedPlan = await fs.readFile(activePlanPath, 'utf8');
+  assert.match(stillPausedPlan, /^Status: budget-exhausted$/m);
+
+  const resumedRun = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['resume', '--max-risk', 'low', '--max-sessions-per-plan', '2', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(resumedRun.status, 0, String(resumedRun.stderr));
+
+  const completedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-budget-loop.md'),
+    'utf8'
+  );
+  assert.match(completedPlan, /^Status: completed$/m);
+
+  const finalRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  assert.equal(finalRunState.runId, firstRunState.runId);
+  assert.equal(finalRunState.planSessions['budget-loop'], 2);
+
+  const secondWorkerLog = await fs.readFile(
+    path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', finalRunState.runId, 'budget-loop', 'logs', '02-worker.log'),
+    'utf8'
+  );
+  assert.match(secondWorkerLog, /touchedFiles=src\/budget-loop\.js/);
+
+  const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
+  assert.match(events, /plan_budget_exhausted/);
+  assert.doesNotMatch(events, /"type":"plan_blocked".*"budget-loop"/);
+});
+
+test('resume normalizes legacy session-budget blockers and continues the existing run', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'legacy-budget': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker finished after legacy normalization.',
+            writeFiles: [{ path: 'src/legacy-budget.js', content: 'export const status = "done";\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:legacy-budget': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  const legacyPlan = `${directFuturePlan({ planId: 'legacy-budget', status: 'blocked', riskTier: 'low' })}
+
+## Blockers
+
+- Session budget exhausted after 1 sessions.
+`;
+  await fs.mkdir(path.join(rootDir, 'docs', 'exec-plans', 'active'), { recursive: true });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-legacy-budget.md'),
+    legacyPlan,
+    'utf8'
+  );
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      runId: 'run-legacy-budget',
+      maxRisk: 'low',
+      startedAt: '2026-03-17T00:00:00.000Z',
+      lastUpdatedAt: '2026-03-17T00:00:00.000Z',
+      queue: [],
+      activePlanId: null,
+      completedPlanIds: [],
+      budgetExhaustedPlanIds: [],
+      blockedPlanIds: ['legacy-budget'],
+      failedPlanIds: [],
+      planSessions: { 'legacy-budget': 1 },
+      stats: {
+        promotions: 0,
+        sessions: 1,
+        validations: 0,
+        completed: 0,
+        budgetExhausted: 0,
+        blocked: 1,
+        commits: 0
+      }
+    }, null, 2)}\n`,
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['resume', '--max-risk', 'low', '--max-sessions-per-plan', '2', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const completedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-legacy-budget.md'),
+    'utf8'
+  );
+  assert.match(completedPlan, /^Status: completed$/m);
+
+  const finalRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  assert.equal(finalRunState.runId, 'run-legacy-budget');
+  assert.equal(finalRunState.planSessions['legacy-budget'], 2);
+
+  const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
+  assert.match(events, /run_resumed/);
+});
+
+test('orchestrator still validates and completes when must-land work finishes on the last allowed session', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'last-session-validation': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker finished must-land scope on the last allowed session.',
+            writeFiles: [{ path: 'src/last-session-validation.js', content: 'export const status = "done";\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:last-session-validation': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-last-session-validation.md'),
+    directFuturePlan({ planId: 'last-session-validation', riskTier: 'low' }),
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed last-session-validation plan');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--max-sessions-per-plan', '1', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const completedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-last-session-validation.md'),
+    'utf8'
+  );
+  assert.match(completedPlan, /^Status: completed$/m);
+  assert.doesNotMatch(completedPlan, /^Status: budget-exhausted$/m);
+});
+
 test('orchestrator commits per-plan active evidence without leaking it into the next slice', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {

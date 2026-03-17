@@ -10,7 +10,7 @@ Place currently executing plans in this directory.
 Each active plan must include:
 
 - `## Metadata` section with required plan fields from `docs/exec-plans/README.md`.
-- `Status` set to one of: `queued`, `in-progress`, `in-review`, `blocked`, `validation`.
+- `Status` set to one of: `queued`, `in-progress`, `in-review`, `budget-exhausted`, `blocked`, `validation`.
 - Explicit acceptance criteria before implementation begins.
 - `## Must-Land Checklist` with the exact completion contract for the current plan.
 - Product slices should prefix must-land items with stable backticked IDs.

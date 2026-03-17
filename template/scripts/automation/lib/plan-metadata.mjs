@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 export const FUTURE_STATUSES = new Set(['draft', 'ready-for-promotion']);
-export const ACTIVE_STATUSES = new Set(['queued', 'in-progress', 'in-review', 'blocked', 'validation']);
+export const ACTIVE_STATUSES = new Set(['queued', 'in-progress', 'in-review', 'budget-exhausted', 'blocked', 'validation']);
 export const COMPLETED_STATUSES = new Set(['completed']);
 export const PRIORITIES = new Set(['p0', 'p1', 'p2', 'p3']);
 export const RISK_TIERS = new Set(['low', 'medium', 'high']);

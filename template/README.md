@@ -117,10 +117,12 @@ Start with:
 
 ## Automation Conveyor Commands
 
-- Start a new sequential run: `npm run automation:run -- --max-risk low|medium|high`
-- Continue the current run: `npm run automation:resume -- --max-risk low|medium|high`
-- Drain the queue in supervised sequential mode: `npm run automation:grind -- --max-risk low|medium|high`
+- Start a new sequential run: `npm run automation:run -- --max-risk low|medium|high --max-sessions-per-plan N`
+- Continue the current run: `npm run automation:resume -- --max-risk low|medium|high --max-sessions-per-plan N`
+- Drain the queue in supervised sequential mode: `npm run automation:grind -- --max-risk low|medium|high --max-sessions-per-plan N`
 - If you omit `--max-risk`, these commands use the repo's configured `risk.defaultMaxRisk`. The template default is `high`.
+- If you omit `--max-sessions-per-plan`, these commands use `executor.maxSessionsPerPlan`. The template default is `12`.
+- Plans that stop only because they hit the session cap move to `Status: budget-exhausted`; resume them with a higher `--max-sessions-per-plan`.
 - Inspect ready, active, blocked, and completed state: `npm run automation:audit`
 - Canonical details live in `docs/ops/automation/README.md`, `docs/ops/automation/ROLE_ORCHESTRATION.md`, and `docs/ops/automation/LITE_QUICKSTART.md`.
 

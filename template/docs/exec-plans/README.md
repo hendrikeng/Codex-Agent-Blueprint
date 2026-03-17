@@ -54,7 +54,7 @@ Every active or completed plan must also include:
 ## Status Conventions
 
 - Future plan statuses live in `docs/future/`: `draft`, `ready-for-promotion`.
-- Active plan statuses: `queued`, `in-progress`, `in-review`, `blocked`, `validation`.
+- Active plan statuses: `queued`, `in-progress`, `in-review`, `budget-exhausted`, `blocked`, `validation`.
 - Completed plan status: `completed`.
 
 ## Workflow

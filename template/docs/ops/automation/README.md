@@ -59,11 +59,12 @@ Treat `docs/ops/automation/LITE_QUICKSTART.md` as the simplest explanation of ho
 
 ## CLI
 
-- `npm run automation:run -- --max-risk low|medium|high`
-- `npm run automation:resume -- --max-risk low|medium|high`
-- `npm run automation:grind -- --max-risk low|medium|high`
+- `npm run automation:run -- --max-risk low|medium|high --max-sessions-per-plan N`
+- `npm run automation:resume -- --max-risk low|medium|high --max-sessions-per-plan N`
+- `npm run automation:grind -- --max-risk low|medium|high --max-sessions-per-plan N`
 - `npm run automation:audit`
 - The package scripts use the repo's configured `risk.defaultMaxRisk` when `--max-risk` is omitted. The template default is `high`.
+- `--max-sessions-per-plan N` overrides `executor.maxSessionsPerPlan`. The template default is `12`.
 - `--commit true|false` controls whether the harness creates one atomic git commit per completed slice. Default is `true`.
 - `--output minimal|ticker|pretty|verbose` controls operator-facing console output. Default is `pretty`.
 
@@ -72,6 +73,7 @@ Treat `docs/ops/automation/LITE_QUICKSTART.md` as the simplest explanation of ho
 - `executor.command` in `docs/ops/automation/orchestrator.config.json` is required for `run`, `resume`, and `grind`.
 - `executor.roles.worker` defines the implementation profile.
 - `executor.roles.reviewer` defines the review profile.
+- `executor.maxSessionsPerPlan` defines the default per-plan worker/reviewer session budget before the run pauses that plan as `budget-exhausted`.
 - `executor.contextBudget.minRemaining` defines the low-watermark token threshold for forced handoff.
 - `executor.contextBudget.minRemainingPercent` defines the low-watermark ratio when the provider can report total context window.
 - Provider commands must be non-interactive and must honor `ORCH_RESULT_PATH`.
@@ -86,6 +88,8 @@ Treat `docs/ops/automation/LITE_QUICKSTART.md` as the simplest explanation of ho
 - Providers should also report `contextWindow` when available so percent-based thresholds work.
 - If a session returns near the low-context threshold and the current role boundary is not safely complete, the runtime forces a handoff instead of pretending the session finished cleanly.
 - The handoff note and latest checkpoint are the canonical packet for the next fresh agent.
+- If the current run reaches its per-plan session cap before another worker/reviewer pass can start, the plan moves to `Status: budget-exhausted` instead of `blocked`.
+- Resume a `budget-exhausted` plan by rerunning `automation:resume` with a higher `--max-sessions-per-plan`.
 
 ## Operator Output
 

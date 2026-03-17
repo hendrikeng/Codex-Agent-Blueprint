@@ -3,7 +3,7 @@
     "command": "codex exec --json --full-auto -c model_reasoning_effort={reasoning_effort} -m {model} {prompt}",
     "promptTemplate": "@canonical-executor-prompt",
     "timeoutSeconds": 1800,
-    "maxSessionsPerPlan": 6,
+    "maxSessionsPerPlan": 12,
     "contextBudget": {
       "minRemaining": 12000,
       "minRemainingPercent": 0.15

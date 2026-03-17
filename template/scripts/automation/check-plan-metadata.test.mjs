@@ -99,3 +99,19 @@ test('plans:verify rejects legacy execution-scope metadata and child sections', 
   assert.match(String(result.stderr), /LEGACY_METADATA_FIELD/);
   assert.match(String(result.stderr), /LEGACY_SECTION/);
 });
+
+test('plans:verify accepts budget-exhausted as an active-plan status', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'plans-verify-budget-exhausted-'));
+  await fs.mkdir(path.join(rootDir, 'docs', 'exec-plans', 'active'), { recursive: true });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-red-inbox.md'),
+    validFuturePlan()
+      .replace(/^Status:\s+ready-for-promotion$/m, 'Status: budget-exhausted')
+      .replace(/^- Status:\s+ready-for-promotion$/m, '- Status: budget-exhausted'),
+    'utf8'
+  );
+
+  const result = runNode(scriptPath, [], rootDir);
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), /\[plans:verify\] ok/);
+});

@@ -22,6 +22,7 @@ import {
 } from './lib/plan-metadata.mjs';
 import {
   appendToDeliveryLog,
+  removeSection,
   sectionBody,
   setPlanDocumentFields,
   upsertSection
@@ -43,10 +44,12 @@ import { resolveExecutorPromptTemplate } from './lib/executor-policy.mjs';
 
 const ROLE_WORKER = 'worker';
 const ROLE_REVIEWER = 'reviewer';
+const STATUS_BUDGET_EXHAUSTED = 'budget-exhausted';
+const SESSION_BUDGET_EXHAUSTED_PATTERN = /^Session budget exhausted after (\d+) sessions\./i;
 const RISK_ORDER = { low: 0, medium: 1, high: 2 };
 const DEFAULT_MAX_RISK = 'low';
 const DEFAULT_MAX_PLANS = 0;
-const DEFAULT_MAX_SESSIONS_PER_PLAN = 6;
+const DEFAULT_MAX_SESSIONS_PER_PLAN = 12;
 const DEFAULT_TIMEOUT_SECONDS = 1800;
 const DEFAULT_OUTPUT = 'pretty';
 const DEFAULT_HEARTBEAT_SECONDS = 12;
@@ -170,6 +173,77 @@ function maxSessionsPerPlan(config, options) {
     1,
     asInteger(options['max-sessions-per-plan'] ?? options.maxSessionsPerPlan, asInteger(config?.executor?.maxSessionsPerPlan, DEFAULT_MAX_SESSIONS_PER_PLAN))
   );
+}
+
+function sessionBudgetExhaustedReason(sessionLimit) {
+  return `Session budget exhausted after ${sessionLimit} sessions.`;
+}
+
+function parseBudgetExhaustedSessionLimit(value) {
+  const match = String(value ?? '').trim().match(SESSION_BUDGET_EXHAUSTED_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
+function currentPlanSessionCount(state, planId, fallback = 0) {
+  const sessionCount = state?.planSessions?.[planId];
+  return Number.isInteger(sessionCount) && sessionCount >= 0 ? sessionCount : fallback;
+}
+
+function budgetExhaustedBlockerText(plan) {
+  const blockers = sectionBody(plan.content, 'Blockers')
+    .split('\n')
+    .map((line) => line.trim().replace(/^- /, ''))
+    .filter(Boolean);
+  return blockers.find((line) => parseBudgetExhaustedSessionLimit(line) != null) ?? null;
+}
+
+function budgetResumeSessionLimit(plan, state) {
+  const blockerLimit = parseBudgetExhaustedSessionLimit(budgetExhaustedBlockerText(plan));
+  return Math.max(1, currentPlanSessionCount(state, plan.planId, blockerLimit ?? 0) + 1);
+}
+
+function budgetResumeHint(plan, state) {
+  return `Resume with --max-sessions-per-plan ${budgetResumeSessionLimit(plan, state)} or higher.`;
+}
+
+function isLegacyBudgetBlockedPlan(plan) {
+  return plan.phase === 'active' && plan.status === 'blocked' && budgetExhaustedBlockerText(plan) != null;
+}
+
+function effectivePlanStatus(plan) {
+  return isLegacyBudgetBlockedPlan(plan) ? STATUS_BUDGET_EXHAUSTED : plan.status;
+}
+
+function canResumeBudgetExhaustedPlan(plan, state, sessionLimit) {
+  return budgetResumeSessionLimit(plan, state) <= sessionLimit;
+}
+
+function addTrackedPlan(list, planId) {
+  return [...new Set([...(Array.isArray(list) ? list : []), planId])];
+}
+
+function removeTrackedPlan(list, planId) {
+  return (Array.isArray(list) ? list : []).filter((entry) => entry !== planId);
+}
+
+function trackBlockedPlan(state, planId) {
+  state.blockedPlanIds = addTrackedPlan(state.blockedPlanIds, planId);
+  state.budgetExhaustedPlanIds = removeTrackedPlan(state.budgetExhaustedPlanIds, planId);
+}
+
+function trackBudgetExhaustedPlan(state, planId) {
+  state.budgetExhaustedPlanIds = addTrackedPlan(state.budgetExhaustedPlanIds, planId);
+  state.blockedPlanIds = removeTrackedPlan(state.blockedPlanIds, planId);
+}
+
+function clearTrackedPlanState(state, planId) {
+  state.blockedPlanIds = removeTrackedPlan(state.blockedPlanIds, planId);
+  state.budgetExhaustedPlanIds = removeTrackedPlan(state.budgetExhaustedPlanIds, planId);
+  state.failedPlanIds = removeTrackedPlan(state.failedPlanIds, planId);
 }
 
 function asFiniteNumber(value, fallback = null) {
@@ -1311,11 +1385,12 @@ function monitorTouchedPaths(rootDir, baseline, sampleSize = 3) {
 function buildQueueOverview(plans, completedPlanIds, queue, maxRisk) {
   const futureDraft = plans.filter((plan) => plan.phase === 'future' && plan.status === 'draft').map((plan) => plan.planId);
   const futureReady = plans.filter((plan) => plan.phase === 'future' && plan.status === 'ready-for-promotion').map((plan) => plan.planId);
-  const activeQueued = plans.filter((plan) => plan.phase === 'active' && plan.status === 'queued').map((plan) => plan.planId);
-  const activeInProgress = plans.filter((plan) => plan.phase === 'active' && plan.status === 'in-progress').map((plan) => plan.planId);
-  const activeInReview = plans.filter((plan) => plan.phase === 'active' && plan.status === 'in-review').map((plan) => plan.planId);
-  const activeValidation = plans.filter((plan) => plan.phase === 'active' && plan.status === 'validation').map((plan) => plan.planId);
-  const activeBlocked = plans.filter((plan) => plan.phase === 'active' && plan.status === 'blocked').map((plan) => plan.planId);
+  const activeQueued = plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'queued').map((plan) => plan.planId);
+  const activeInProgress = plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'in-progress').map((plan) => plan.planId);
+  const activeInReview = plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'in-review').map((plan) => plan.planId);
+  const activeValidation = plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'validation').map((plan) => plan.planId);
+  const activeBudgetExhausted = plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === STATUS_BUDGET_EXHAUSTED).map((plan) => plan.planId);
+  const activeBlocked = plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'blocked').map((plan) => plan.planId);
   return {
     maxRisk,
     nextPlanId: queue[0]?.planId ?? 'none',
@@ -1333,6 +1408,8 @@ function buildQueueOverview(plans, completedPlanIds, queue, maxRisk) {
     activeInReviewPreview: previewPlanIds(activeInReview),
     activeValidationCount: activeValidation.length,
     activeValidationPreview: previewPlanIds(activeValidation),
+    activeBudgetExhaustedCount: activeBudgetExhausted.length,
+    activeBudgetExhaustedPreview: previewPlanIds(activeBudgetExhausted),
     activeBlockedCount: activeBlocked.length,
     activeBlockedPreview: previewPlanIds(activeBlocked),
     completedCount: completedPlanIds.size
@@ -1356,7 +1433,7 @@ function logQueueOverview(logging, state, overview, label = 'queue overview', le
   const message =
     `${label} runId=${state.runId} maxRisk=${overview.maxRisk} next=${overview.nextPlanId} queue=${overview.queueCount} ` +
     `queuePreview=${overview.queuePreview} futureReady=${overview.futureReadyCount} activeQueued=${overview.activeQueuedCount} activeInProgress=${overview.activeInProgressCount} ` +
-    `activeInReview=${overview.activeInReviewCount} activeValidation=${overview.activeValidationCount} activeBlocked=${overview.activeBlockedCount} completed=${overview.completedCount}`;
+    `activeInReview=${overview.activeInReviewCount} activeValidation=${overview.activeValidationCount} activeBudgetExhausted=${overview.activeBudgetExhaustedCount} activeBlocked=${overview.activeBlockedCount} completed=${overview.completedCount}`;
   logLine(logging, message, level);
 }
 
@@ -1373,6 +1450,7 @@ function printRunSummary(logging, label, state, processed, durationSeconds, over
       ['active in-progress', `${overview.activeInProgressCount} (${overview.activeInProgressPreview})`],
       ['active in-review', `${overview.activeInReviewCount} (${overview.activeInReviewPreview})`],
       ['active validation', `${overview.activeValidationCount} (${overview.activeValidationPreview})`],
+      ['budget paused', `${overview.activeBudgetExhaustedCount} (${overview.activeBudgetExhaustedPreview})`],
       ['active blocked', `${overview.activeBlockedCount} (${overview.activeBlockedPreview})`],
       ['completed', overview.completedCount],
       ['promotions', state.stats.promotions],
@@ -1384,7 +1462,7 @@ function printRunSummary(logging, label, state, processed, durationSeconds, over
   }
   logLine(
     logging,
-    `${label} summary runId=${state.runId} processed=${processed} duration=${formatDuration(durationSeconds)} queue=${overview.queueCount} completed=${overview.completedCount} blocked=${overview.activeBlockedCount} commits=${state.stats.commits}`,
+    `${label} summary runId=${state.runId} processed=${processed} duration=${formatDuration(durationSeconds)} queue=${overview.queueCount} completed=${overview.completedCount} budgetPaused=${overview.activeBudgetExhaustedCount} blocked=${overview.activeBlockedCount} commits=${state.stats.commits}`,
     'ok'
   );
 }
@@ -1765,6 +1843,7 @@ function createRunState(runId, maxRisk) {
     queue: [],
     activePlanId: null,
     completedPlanIds: [],
+    budgetExhaustedPlanIds: [],
     blockedPlanIds: [],
     failedPlanIds: [],
     planSessions: {},
@@ -1773,6 +1852,7 @@ function createRunState(runId, maxRisk) {
       sessions: 0,
       validations: 0,
       completed: 0,
+      budgetExhausted: 0,
       blocked: 0,
       commits: 0
     }
@@ -1787,6 +1867,22 @@ async function loadRunState(rootDir, maxRisk, command) {
   }
   return {
     ...existing,
+    queue: Array.isArray(existing.queue) ? existing.queue : [],
+    completedPlanIds: Array.isArray(existing.completedPlanIds) ? existing.completedPlanIds : [],
+    budgetExhaustedPlanIds: Array.isArray(existing.budgetExhaustedPlanIds) ? existing.budgetExhaustedPlanIds : [],
+    blockedPlanIds: Array.isArray(existing.blockedPlanIds) ? existing.blockedPlanIds : [],
+    failedPlanIds: Array.isArray(existing.failedPlanIds) ? existing.failedPlanIds : [],
+    planSessions: existing.planSessions && typeof existing.planSessions === 'object' ? existing.planSessions : {},
+    stats: {
+      promotions: 0,
+      sessions: 0,
+      validations: 0,
+      completed: 0,
+      budgetExhausted: 0,
+      blocked: 0,
+      commits: 0,
+      ...(existing.stats && typeof existing.stats === 'object' ? existing.stats : {})
+    },
     maxRisk,
     lastUpdatedAt: nowIso()
   };
@@ -2123,6 +2219,9 @@ async function writePlan(rootDir, plan, content) {
 
 async function updatePlanStatus(rootDir, plan, status, deliveryMessage = '') {
   let content = setPlanDocumentFields(plan.content, { Status: status });
+  if (status !== 'blocked') {
+    content = removeSection(content, 'Blockers');
+  }
   if (deliveryMessage) {
     content = appendToDeliveryLog(content, deliveryMessage);
   }
@@ -2135,6 +2234,17 @@ async function markPlanBlocked(rootDir, plan, reason, logLineText = '') {
   if (logLineText) {
     content = appendToDeliveryLog(content, logLineText);
   }
+  return writePlan(rootDir, plan, content);
+}
+
+async function markPlanBudgetExhausted(rootDir, state, plan, sessionLimit) {
+  const sessionCount = currentPlanSessionCount(state, plan.planId, sessionLimit);
+  let content = setPlanDocumentFields(plan.content, { Status: STATUS_BUDGET_EXHAUSTED });
+  content = removeSection(content, 'Blockers');
+  content = appendToDeliveryLog(
+    content,
+    `Session budget exhausted at ${sessionCount}/${sessionLimit} in ${state.runId}. ${budgetResumeHint(plan, state)}`
+  );
   return writePlan(rootDir, plan, content);
 }
 
@@ -2262,7 +2372,7 @@ async function runValidation(rootDir, config, state, plan, logging) {
         reason: payload?.summary || payload?.reason || `Validation failed: ${commandSpec.id}`,
         validationId: commandSpec.id
       });
-      state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
+      trackBlockedPlan(state, plan.planId);
       state.stats.blocked += 1;
       return { outcome: 'blocked', plan: blockedPlan };
     }
@@ -2309,8 +2419,7 @@ async function finalizeCompletedPlan(rootDir, state, plan, validationResults) {
   await rewritePerPlanActiveEvidence(rootDir, plan, path.relative(rootDir, targetPath));
   await fs.unlink(plan.filePath);
   state.completedPlanIds = [...new Set([...state.completedPlanIds, plan.planId])];
-  state.blockedPlanIds = state.blockedPlanIds.filter((entry) => entry !== plan.planId);
-  state.failedPlanIds = state.failedPlanIds.filter((entry) => entry !== plan.planId);
+  clearTrackedPlanState(state, plan.planId);
   state.stats.completed += 1;
   await appendRunEvent(rootDir, state, 'plan_completed', plan.planId, {
     target: toPosix(path.relative(rootDir, targetPath)),
@@ -2341,13 +2450,69 @@ function checkpointRequestsWorkerContinuation(checkpoint) {
   return role === ROLE_REVIEWER && (status === 'pending' || status === 'handoff_required');
 }
 
+function deriveBudgetResumeStatus(plan, config, latestCheckpoint) {
+  if (!mustLandComplete(plan.content)) {
+    return 'in-progress';
+  }
+  const planRoles = rolesForPlan(plan, config);
+  if (!planRoles.includes(ROLE_REVIEWER)) {
+    return 'validation';
+  }
+  const checkpointRole = String(latestCheckpoint?.role ?? '').trim().toLowerCase();
+  const checkpointStatus = String(latestCheckpoint?.status ?? '').trim().toLowerCase();
+  if (checkpointRole === ROLE_REVIEWER && checkpointStatus === 'completed') {
+    return 'validation';
+  }
+  return 'in-review';
+}
+
+async function rewriteLegacyBudgetBlockedPlan(rootDir, state, plan) {
+  let content = setPlanDocumentFields(plan.content, { Status: STATUS_BUDGET_EXHAUSTED });
+  content = removeSection(content, 'Blockers');
+  content = appendToDeliveryLog(content, `Normalized legacy session-budget pause in ${state.runId}. ${budgetResumeHint(plan, state)}`);
+  return writePlan(rootDir, plan, content);
+}
+
+async function prepareBudgetResumablePlan(rootDir, config, state, plan) {
+  const status = effectivePlanStatus(plan);
+  if (status !== STATUS_BUDGET_EXHAUSTED) {
+    return plan;
+  }
+  let currentPlan = plan;
+  if (isLegacyBudgetBlockedPlan(currentPlan)) {
+    currentPlan = await rewriteLegacyBudgetBlockedPlan(rootDir, state, currentPlan);
+  }
+  const latestCheckpoint = await readLatestCheckpoint(rootDir, state.runId, currentPlan.planId);
+  const resumedStatus = deriveBudgetResumeStatus(currentPlan, config, latestCheckpoint);
+  return updatePlanStatus(
+    rootDir,
+    currentPlan,
+    resumedStatus,
+    `Resumed ${currentPlan.planId} after session budget increase in ${state.runId}.`
+  );
+}
+
+async function normalizeLegacyBudgetBlockedPlans(rootDir, state, plans) {
+  const normalizedPlans = [];
+  for (const plan of plans) {
+    if (isLegacyBudgetBlockedPlan(plan)) {
+      normalizedPlans.push(await rewriteLegacyBudgetBlockedPlan(rootDir, state, plan));
+      continue;
+    }
+    normalizedPlans.push(plan);
+  }
+  return normalizedPlans;
+}
+
 async function executePlan(rootDir, config, state, initialPlan, logging, sessionLimit, options) {
   let plan = initialPlan;
-  const planRoles = rolesForPlan(plan, config);
-  const reviewerEnabled = planRoles.includes(ROLE_REVIEWER);
-
-  while ((state.planSessions[plan.planId] ?? 0) < sessionLimit) {
+  while (true) {
     plan = await refreshPlan(rootDir, plan);
+    if (effectivePlanStatus(plan) === STATUS_BUDGET_EXHAUSTED) {
+      plan = await prepareBudgetResumablePlan(rootDir, config, state, plan);
+    }
+    const planRoles = rolesForPlan(plan, config);
+    const reviewerEnabled = planRoles.includes(ROLE_REVIEWER);
     const mustLandSatisfied = mustLandComplete(plan.content);
     const latestCheckpoint = await readLatestCheckpoint(rootDir, state.runId, plan.planId);
     const reviewerRequestedWorkerContinuation =
@@ -2362,7 +2527,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
         `Security-Approval must be approved before executing ${plan.planId}.`,
         `Blocked ${plan.planId} pending security approval in ${state.runId}.`
       );
-      state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
+      trackBlockedPlan(state, plan.planId);
       state.stats.blocked += 1;
       await appendRunEvent(rootDir, state, 'plan_blocked', plan.planId, {
         reason: 'missing security approval'
@@ -2376,7 +2541,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
     }
 
     if (plan.status === 'blocked') {
-      state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
+      trackBlockedPlan(state, plan.planId);
       logLine(logging, `plan blocked plan=${plan.planId} reason=plan already marked blocked`, 'err');
       return 'blocked';
     }
@@ -2441,6 +2606,22 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
     }
 
     const role = plan.status === 'in-review' ? ROLE_REVIEWER : ROLE_WORKER;
+    if ((state.planSessions[plan.planId] ?? 0) >= sessionLimit) {
+      plan = await markPlanBudgetExhausted(rootDir, state, plan, sessionLimit);
+      trackBudgetExhaustedPlan(state, plan.planId);
+      state.stats.budgetExhausted += 1;
+      await appendRunEvent(rootDir, state, 'plan_budget_exhausted', plan.planId, {
+        sessionLimit,
+        sessionCount: currentPlanSessionCount(state, plan.planId, sessionLimit),
+        resumableAt: budgetResumeSessionLimit(plan, state)
+      });
+      logLine(
+        logging,
+        `plan budget-exhausted plan=${plan.planId} reason=${sanitizeLogNarrative(`${sessionBudgetExhaustedReason(sessionLimit)} ${budgetResumeHint(plan, state)}`)}`,
+        'warn'
+      );
+      return 'budget-exhausted';
+    }
     if (role === ROLE_REVIEWER && !planRoles.includes(ROLE_REVIEWER)) {
       plan = await updatePlanStatus(rootDir, plan, 'validation', `Queued validation in ${state.runId}.`);
       logLine(logging, `role transition plan=${plan.planId} from=reviewer to=validation reason=review lane not configured`, 'warn');
@@ -2514,7 +2695,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
         session.result.reason || session.result.summary || 'Blocked during execution.',
         `${role} blocked ${plan.planId} in ${state.runId}.`
       );
-      state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
+      trackBlockedPlan(state, plan.planId);
       state.stats.blocked += 1;
       await appendRunEvent(rootDir, state, 'plan_blocked', plan.planId, {
         role,
@@ -2574,17 +2755,6 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
       return 'requeued';
     }
   }
-
-  plan = await markPlanBlocked(
-    rootDir,
-    plan,
-    `Session budget exhausted after ${sessionLimit} sessions.`,
-    `Budget exhausted for ${plan.planId} in ${state.runId}.`
-  );
-  state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
-  state.stats.blocked += 1;
-  logLine(logging, `plan blocked plan=${plan.planId} reason=${sanitizeLogNarrative(`Session budget exhausted after ${sessionLimit} sessions.`)}`, 'err');
-  return 'blocked';
 }
 
 async function promoteNextReadyFuture(rootDir, state, plans, maxRisk, logging) {
@@ -2603,12 +2773,13 @@ async function promoteNextReadyFuture(rootDir, state, plans, maxRisk, logging) {
   return false;
 }
 
-function actionableActivePlans(plans, completedPlanIds, maxRisk, config) {
+function actionableActivePlans(plans, completedPlanIds, maxRisk, config, state, sessionLimit) {
   return orderPlans(
     plans.filter((plan) => (
       plan.phase === 'active' &&
-      ACTIVE_STATUSES.has(plan.status) &&
-      plan.status !== 'blocked' &&
+      ACTIVE_STATUSES.has(effectivePlanStatus(plan)) &&
+      effectivePlanStatus(plan) !== 'blocked' &&
+      (effectivePlanStatus(plan) !== STATUS_BUDGET_EXHAUSTED || canResumeBudgetExhaustedPlan(plan, state, sessionLimit)) &&
       riskAllowed(plan, maxRisk) &&
       dependenciesComplete(plan, completedPlanIds) &&
       !(securityApprovalRequired(plan, config) && plan.securityApproval !== 'approved')
@@ -2616,7 +2787,7 @@ function actionableActivePlans(plans, completedPlanIds, maxRisk, config) {
   );
 }
 
-function emptyQueueSummary(plans, completedPlanIds, maxRisk, config) {
+function emptyQueueSummary(plans, completedPlanIds, maxRisk, config, state, sessionLimit) {
   const futureDraftCount = plans.filter((plan) => plan.phase === 'future' && plan.status === 'draft').length;
   const futureReady = plans.filter((plan) => plan.phase === 'future' && plan.status === 'ready-for-promotion');
   const futureReadyExcludedByRisk = futureReady.filter((plan) => !riskAllowed(plan, maxRisk)).length;
@@ -2626,8 +2797,8 @@ function emptyQueueSummary(plans, completedPlanIds, maxRisk, config) {
   )).length;
   const activeCandidates = plans.filter((plan) => (
     plan.phase === 'active' &&
-    ACTIVE_STATUSES.has(plan.status) &&
-    plan.status !== 'blocked'
+    ACTIVE_STATUSES.has(effectivePlanStatus(plan)) &&
+    effectivePlanStatus(plan) !== 'blocked'
   ));
   const activeExcludedByRisk = activeCandidates.filter((plan) => !riskAllowed(plan, maxRisk)).length;
   const activeWaitingOnDependencies = activeCandidates.filter((plan) => (
@@ -2640,6 +2811,13 @@ function emptyQueueSummary(plans, completedPlanIds, maxRisk, config) {
     securityApprovalRequired(plan, config) &&
     plan.securityApproval !== 'approved'
   )).length;
+  const activeBudgetExhausted = activeCandidates.filter((plan) => effectivePlanStatus(plan) === STATUS_BUDGET_EXHAUSTED);
+  const activeBudgetWaitingOnHigherLimit = orderPlans(activeBudgetExhausted.filter((plan) => (
+    riskAllowed(plan, maxRisk) &&
+    dependenciesComplete(plan, completedPlanIds) &&
+    !(securityApprovalRequired(plan, config) && plan.securityApproval !== 'approved') &&
+    !canResumeBudgetExhaustedPlan(plan, state, sessionLimit)
+  )));
   const parts = [`no eligible plans for maxRisk=${maxRisk}`];
 
   if (futureDraftCount > 0) {
@@ -2660,6 +2838,13 @@ function emptyQueueSummary(plans, completedPlanIds, maxRisk, config) {
   if (activeWaitingOnSecurityApproval > 0) {
     parts.push(`active waiting on security approval=${activeWaitingOnSecurityApproval}`);
   }
+  if (activeBudgetExhausted.length > 0) {
+    parts.push(`active budget-exhausted=${activeBudgetExhausted.length}`);
+  }
+  if (activeBudgetWaitingOnHigherLimit.length > 0) {
+    const nextBudgetPlan = activeBudgetWaitingOnHigherLimit[0];
+    parts.push(`resume with -- --max-sessions-per-plan ${budgetResumeSessionLimit(nextBudgetPlan, state)} to continue ${nextBudgetPlan.planId}`);
+  }
   if ((futureReadyExcludedByRisk > 0 || activeExcludedByRisk > 0) && maxRisk !== 'high') {
     parts.push('rerun with -- --max-risk high if that is intentional');
   }
@@ -2677,20 +2862,25 @@ async function processQueue(rootDir, config, state, options) {
 
   while (maxPlans === 0 || processedPlans < maxPlans) {
     let refreshedPlans = await collectPlans(rootDir);
+    refreshedPlans = await normalizeLegacyBudgetBlockedPlans(rootDir, state, refreshedPlans);
     let completedPlanIds = new Set(refreshedPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
-    let queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk, config);
+    let queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk, config, state, sessionLimit);
     if (queue.length === 0) {
       const promoted = await promoteNextReadyFuture(rootDir, state, refreshedPlans, maxRisk, logging);
       if (promoted) {
         refreshedPlans = await collectPlans(rootDir);
+        refreshedPlans = await normalizeLegacyBudgetBlockedPlans(rootDir, state, refreshedPlans);
         completedPlanIds = new Set(refreshedPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
-        queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk, config);
+        queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk, config, state, sessionLimit);
       }
     }
 
     state.completedPlanIds = [...completedPlanIds];
     state.blockedPlanIds = refreshedPlans
-      .filter((plan) => plan.phase === 'active' && plan.status === 'blocked')
+      .filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'blocked')
+      .map((plan) => plan.planId);
+    state.budgetExhaustedPlanIds = refreshedPlans
+      .filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === STATUS_BUDGET_EXHAUSTED)
       .map((plan) => plan.planId);
     state.queue = queue.map((plan) => plan.planId);
     await saveRunState(rootDir, state);
@@ -2699,7 +2889,7 @@ async function processQueue(rootDir, config, state, options) {
     logQueueOverview(logging, state, overview, queue.length === 0 ? 'queue overview' : 'queue focus');
 
     if (queue.length === 0) {
-      logLine(logging, emptyQueueSummary(refreshedPlans, completedPlanIds, maxRisk, config), 'warn');
+      logLine(logging, emptyQueueSummary(refreshedPlans, completedPlanIds, maxRisk, config, state, sessionLimit), 'warn');
       break;
     }
 
@@ -2717,7 +2907,7 @@ async function processQueue(rootDir, config, state, options) {
       processedPlans += 1;
       state.activePlanId = null;
       await saveRunState(rootDir, state);
-      if (outcome === 'blocked') {
+      if (outcome === 'blocked' || outcome === 'budget-exhausted') {
         break;
       }
     }
@@ -2733,14 +2923,18 @@ async function audit(rootDir, options) {
       ready: plans.filter((plan) => plan.phase === 'future' && plan.status === 'ready-for-promotion').map((plan) => plan.planId)
     },
     active: {
-      queued: plans.filter((plan) => plan.phase === 'active' && plan.status === 'queued').map((plan) => plan.planId),
-      inProgress: plans.filter((plan) => plan.phase === 'active' && plan.status === 'in-progress').map((plan) => plan.planId),
-      inReview: plans.filter((plan) => plan.phase === 'active' && plan.status === 'in-review').map((plan) => plan.planId),
-      blocked: plans.filter((plan) => plan.phase === 'active' && plan.status === 'blocked').map((plan) => ({
+      queued: plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'queued').map((plan) => plan.planId),
+      inProgress: plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'in-progress').map((plan) => plan.planId),
+      inReview: plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'in-review').map((plan) => plan.planId),
+      budgetExhausted: plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === STATUS_BUDGET_EXHAUSTED).map((plan) => ({
+        planId: plan.planId,
+        resumeAt: budgetResumeSessionLimit(plan, runState ?? {})
+      })),
+      blocked: plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'blocked').map((plan) => ({
         planId: plan.planId,
         blocker: sectionBody(plan.content, 'Blockers').split('\n').find((line) => line.trim().startsWith('- '))?.replace(/^- /, '') ?? 'none'
       })),
-      validation: plans.filter((plan) => plan.phase === 'active' && plan.status === 'validation').map((plan) => plan.planId)
+      validation: plans.filter((plan) => plan.phase === 'active' && effectivePlanStatus(plan) === 'validation').map((plan) => plan.planId)
     },
     completed: plans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId),
     runState
@@ -2757,6 +2951,7 @@ async function audit(rootDir, options) {
   console.log(`active in-progress: ${summary.active.inProgress.join(', ') || 'none'}`);
   console.log(`active in-review: ${summary.active.inReview.join(', ') || 'none'}`);
   console.log(`active validation: ${summary.active.validation.join(', ') || 'none'}`);
+  console.log(`active budget-exhausted: ${summary.active.budgetExhausted.map((entry) => `${entry.planId} (resume at ${entry.resumeAt})`).join(', ') || 'none'}`);
   console.log(`active blocked: ${summary.active.blocked.map((entry) => `${entry.planId} (${entry.blocker})`).join(', ') || 'none'}`);
   console.log(`completed: ${summary.completed.join(', ') || 'none'}`);
 }
@@ -2789,9 +2984,9 @@ async function main() {
     logging,
     `${command} runId=${state.runId} maxRisk=${maxRisk} output=${logging.mode} heartbeat=${logging.heartbeatSeconds}s stallWarn=${logging.stallWarnSeconds}s sessionLimit=${maxSessionsPerPlan(config, options)} commit=${commitEnabled(config, options) ? 'atomic' : 'off'}`
   );
-  const startingPlans = await collectPlans(rootDir);
+  const startingPlans = await normalizeLegacyBudgetBlockedPlans(rootDir, state, await collectPlans(rootDir));
   const startingCompleted = new Set(startingPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
-  const startingQueue = actionableActivePlans(startingPlans, startingCompleted, maxRisk, config);
+  const startingQueue = actionableActivePlans(startingPlans, startingCompleted, maxRisk, config, state, maxSessionsPerPlan(config, options));
   const startingOverview = buildQueueOverview(startingPlans, startingCompleted, startingQueue, maxRisk);
   if (logging.mode === 'pretty') {
     printSummaryBlock(logging, `${command.toUpperCase()} OVERVIEW`, [
@@ -2805,6 +3000,7 @@ async function main() {
       ['active in-progress', `${startingOverview.activeInProgressCount} (${startingOverview.activeInProgressPreview})`],
       ['active in-review', `${startingOverview.activeInReviewCount} (${startingOverview.activeInReviewPreview})`],
       ['active validation', `${startingOverview.activeValidationCount} (${startingOverview.activeValidationPreview})`],
+      ['budget paused', `${startingOverview.activeBudgetExhaustedCount} (${startingOverview.activeBudgetExhaustedPreview})`],
       ['active blocked', `${startingOverview.activeBlockedCount} (${startingOverview.activeBlockedPreview})`],
       ['completed', startingOverview.completedCount]
     ]);
@@ -2816,13 +3012,14 @@ async function main() {
   await saveRunState(rootDir, state);
   await appendRunEvent(rootDir, state, 'run_finished', null, {
     completed: state.completedPlanIds.length,
+    budgetExhausted: state.budgetExhaustedPlanIds.length,
     blocked: state.blockedPlanIds.length,
     queue: state.queue.length,
     commits: state.stats.commits
   });
-  const endingPlans = await collectPlans(rootDir);
+  const endingPlans = await normalizeLegacyBudgetBlockedPlans(rootDir, state, await collectPlans(rootDir));
   const endingCompleted = new Set(endingPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
-  const endingQueue = actionableActivePlans(endingPlans, endingCompleted, maxRisk, config);
+  const endingQueue = actionableActivePlans(endingPlans, endingCompleted, maxRisk, config, state, maxSessionsPerPlan(config, options));
   const endingOverview = buildQueueOverview(endingPlans, endingCompleted, endingQueue, maxRisk);
   printRunSummary(
     logging,
@@ -2834,7 +3031,7 @@ async function main() {
   );
   logLine(
     logging,
-    `finished runId=${state.runId} queue=${state.queue.length} completed=${state.completedPlanIds.length} blocked=${state.blockedPlanIds.length} commits=${state.stats.commits}`,
+    `finished runId=${state.runId} queue=${state.queue.length} completed=${state.completedPlanIds.length} budgetPaused=${state.budgetExhaustedPlanIds.length} blocked=${state.blockedPlanIds.length} commits=${state.stats.commits}`,
     'ok'
   );
 }
