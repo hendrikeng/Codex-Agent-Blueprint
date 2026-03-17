@@ -1414,6 +1414,48 @@ function actionableActivePlans(plans, completedPlanIds, maxRisk) {
   );
 }
 
+function emptyQueueSummary(plans, completedPlanIds, maxRisk) {
+  const futureDraftCount = plans.filter((plan) => plan.phase === 'future' && plan.status === 'draft').length;
+  const futureReady = plans.filter((plan) => plan.phase === 'future' && plan.status === 'ready-for-promotion');
+  const futureReadyExcludedByRisk = futureReady.filter((plan) => !riskAllowed(plan, maxRisk)).length;
+  const futureReadyWaitingOnDependencies = futureReady.filter((plan) => (
+    riskAllowed(plan, maxRisk) &&
+    !dependenciesComplete(plan, completedPlanIds)
+  )).length;
+  const activeCandidates = plans.filter((plan) => (
+    plan.phase === 'active' &&
+    ACTIVE_STATUSES.has(plan.status) &&
+    plan.status !== 'blocked'
+  ));
+  const activeExcludedByRisk = activeCandidates.filter((plan) => !riskAllowed(plan, maxRisk)).length;
+  const activeWaitingOnDependencies = activeCandidates.filter((plan) => (
+    riskAllowed(plan, maxRisk) &&
+    !dependenciesComplete(plan, completedPlanIds)
+  )).length;
+  const parts = [`no eligible plans for maxRisk=${maxRisk}`];
+
+  if (futureDraftCount > 0) {
+    parts.push(`future draft=${futureDraftCount}`);
+  }
+  if (futureReadyExcludedByRisk > 0) {
+    parts.push(`future excluded by risk=${futureReadyExcludedByRisk}`);
+  }
+  if (futureReadyWaitingOnDependencies > 0) {
+    parts.push(`future waiting on deps=${futureReadyWaitingOnDependencies}`);
+  }
+  if (activeExcludedByRisk > 0) {
+    parts.push(`active excluded by risk=${activeExcludedByRisk}`);
+  }
+  if (activeWaitingOnDependencies > 0) {
+    parts.push(`active waiting on deps=${activeWaitingOnDependencies}`);
+  }
+  if ((futureReadyExcludedByRisk > 0 || activeExcludedByRisk > 0) && maxRisk !== 'high') {
+    parts.push('rerun with -- --max-risk high if that is intentional');
+  }
+
+  return parts.join(' | ');
+}
+
 async function processQueue(rootDir, config, state, options) {
   const maxRisk = normalizeMaxRisk(options['max-risk'] ?? options.maxRisk ?? state.maxRisk ?? config?.risk?.defaultMaxRisk ?? DEFAULT_MAX_RISK);
   state.maxRisk = maxRisk;
@@ -1436,6 +1478,7 @@ async function processQueue(rootDir, config, state, options) {
     await saveRunState(rootDir, state);
 
     if (queue.length === 0) {
+      logLine(logging, emptyQueueSummary(refreshedPlans, completedPlanIds, maxRisk), 'warn');
       break;
     }
 

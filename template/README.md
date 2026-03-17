@@ -120,6 +120,7 @@ Start with:
 - Start a new sequential run: `npm run automation:run -- --max-risk low|medium|high`
 - Continue the current run: `npm run automation:resume -- --max-risk low|medium|high`
 - Drain the queue in supervised sequential mode: `npm run automation:grind -- --max-risk low|medium|high`
+- If you omit `--max-risk`, these commands use the repo's configured `risk.defaultMaxRisk`. The template default is `high`.
 - Inspect ready, active, blocked, and completed state: `npm run automation:audit`
 - Canonical details live in `docs/ops/automation/README.md`, `docs/ops/automation/ROLE_ORCHESTRATION.md`, and `docs/ops/automation/LITE_QUICKSTART.md`.
 

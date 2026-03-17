@@ -38,7 +38,7 @@
     "atomicCommits": true
   },
   "risk": {
-    "defaultMaxRisk": "low",
+    "defaultMaxRisk": "high",
     "reviewRequired": [
       "medium",
       "high"

@@ -56,6 +56,7 @@ Use a direct active plan only when all of these are true:
 - `npm run automation:resume -- --max-risk low|medium|high`
 - `npm run automation:grind -- --max-risk low|medium|high`
 - `npm run automation:audit`
+- If you omit `--max-risk`, the package scripts use the repo's configured default risk ceiling. The template default is `high`.
 
 ## Non-Negotiables
 

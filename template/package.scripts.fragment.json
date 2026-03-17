@@ -12,9 +12,9 @@
     "plans:verify": "node ./scripts/automation/check-plan-metadata.mjs",
     "verify:fast": "node ./scripts/automation/verify-fast.mjs",
     "verify:full": "node ./scripts/automation/verify-full.mjs",
-    "automation:run": "node ./scripts/automation/orchestrator.mjs run --max-risk low",
-    "automation:resume": "node ./scripts/automation/orchestrator.mjs resume --max-risk low",
-    "automation:grind": "node ./scripts/automation/orchestrator.mjs grind --max-risk low",
+    "automation:run": "node ./scripts/automation/orchestrator.mjs run",
+    "automation:resume": "node ./scripts/automation/orchestrator.mjs resume",
+    "automation:grind": "node ./scripts/automation/orchestrator.mjs grind",
     "automation:audit": "node ./scripts/automation/orchestrator.mjs audit"
   }
 }

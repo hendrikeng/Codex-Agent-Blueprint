@@ -63,6 +63,7 @@ Treat `docs/ops/automation/LITE_QUICKSTART.md` as the simplest explanation of ho
 - `npm run automation:resume -- --max-risk low|medium|high`
 - `npm run automation:grind -- --max-risk low|medium|high`
 - `npm run automation:audit`
+- The package scripts use the repo's configured `risk.defaultMaxRisk` when `--max-risk` is omitted. The template default is `high`.
 - `--commit true|false` controls whether the harness creates one atomic git commit per completed slice. Default is `true`.
 - `--output minimal|ticker|pretty|verbose` controls operator-facing console output. Default is `pretty`.
 
