@@ -118,6 +118,14 @@ async function main() {
   }
 
   await writeJson(statePath, state);
+  if (action.skipResultWrite === true) {
+    return;
+  }
+  if (typeof action.rawResultText === 'string') {
+    await fs.mkdir(path.dirname(resultPath), { recursive: true });
+    await fs.writeFile(resultPath, action.rawResultText, 'utf8');
+    return;
+  }
   await writeJson(resultPath, {
     status: action.status ?? 'completed',
     summary: action.summary ?? `Fixture action ${planId}/${role}`,

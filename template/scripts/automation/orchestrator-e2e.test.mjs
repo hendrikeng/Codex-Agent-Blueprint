@@ -634,6 +634,106 @@ test('resume normalizes legacy session-budget blockers and continues the existin
   assert.match(events, /run_resumed/);
 });
 
+test('orchestrator reports an explicit executor protocol error when a worker exits without a result payload', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'missing-worker-result': {
+        worker: [
+          {
+            skipResultWrite: true,
+            summary: 'This summary should never be used.'
+          }
+        ]
+      }
+    },
+    validation: {}
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-missing-worker-result.md'),
+    directFuturePlan({ planId: 'missing-worker-result', riskTier: 'low' }),
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed missing worker result plan');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const blockedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-missing-worker-result.md'),
+    'utf8'
+  );
+  assert.match(blockedPlan, /^Status: blocked$/m);
+  assert.match(blockedPlan, /did not write ORCH_RESULT_PATH/);
+  assert.doesNotMatch(blockedPlan, /No summary provided\./);
+
+  const checkpoint = JSON.parse(await fs.readFile(
+    path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', 'state', 'missing-worker-result', 'latest.json'),
+    'utf8'
+  ));
+  assert.equal(checkpoint.summary, 'Executor protocol error.');
+  assert.match(String(checkpoint.reason), /did not write ORCH_RESULT_PATH/);
+
+  const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
+  assert.match(events, /session_protocol_error/);
+});
+
+test('orchestrator fails validation explicitly when a validation command exits without a result payload', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'missing-validation-result': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker completed the slice.',
+            writeFiles: [{ path: 'src/missing-validation-result.js', content: 'export const ready = true;\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:missing-validation-result': [
+        {
+          skipResultWrite: true,
+          status: 'passed',
+          summary: 'This summary should never be used.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-missing-validation-result.md'),
+    directFuturePlan({ planId: 'missing-validation-result', riskTier: 'low' }),
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed missing validation result plan');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const blockedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-missing-validation-result.md'),
+    'utf8'
+  );
+  assert.match(blockedPlan, /^Status: blocked$/m);
+  assert.match(blockedPlan, /did not write ORCH_VALIDATION_RESULT_PATH/);
+
+  const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
+  assert.match(events, /validation_protocol_error/);
+});
+
 test('orchestrator refuses a second concurrent run in the same repository', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { nextScenarioStep, writeStructuredResult } from './scenario-driver.mjs';
@@ -53,7 +54,15 @@ async function main() {
     evidenceRefs: Array.isArray(step.evidenceRefs) ? step.evidenceRefs : [],
     artifactRefs: Array.isArray(step.artifactRefs) ? step.artifactRefs : []
   });
-  await writeStructuredResult(path.join(rootDir, resultPath), payload);
+  const absResultPath = path.join(rootDir, resultPath);
+  if (step.skipResultWrite !== true) {
+    if (typeof step.rawResultText === 'string') {
+      await fs.mkdir(path.dirname(absResultPath), { recursive: true });
+      await fs.writeFile(absResultPath, step.rawResultText, 'utf8');
+    } else {
+      await writeStructuredResult(absResultPath, payload);
+    }
+  }
 
   process.exit(payload.status === 'failed' ? 1 : 0);
 }

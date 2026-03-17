@@ -2178,6 +2178,67 @@ function normalizeResult(raw, fallbackReason = '') {
   };
 }
 
+async function loadStructuredResultArtifact(filePath) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    return {
+      ok: true,
+      value: JSON.parse(raw)
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { ok: false, code: 'missing', error };
+    }
+    if (error instanceof SyntaxError) {
+      return { ok: false, code: 'invalid-json', error };
+    }
+    return { ok: false, code: 'unreadable', error };
+  }
+}
+
+function protocolFailureReason(actorLabel, artifactEnvName, artifactRel, logRel, artifactLoad, exitCode) {
+  const statusLabel = exitCode === 0 ? 'exited successfully' : `exited ${exitCode ?? 1}`;
+  const artifactRef = `${artifactEnvName} (${artifactRel})`;
+  if (artifactLoad?.code === 'missing') {
+    return `${actorLabel} ${statusLabel} but did not write ${artifactRef}. See ${logRel}.`;
+  }
+  if (artifactLoad?.code === 'invalid-json') {
+    return `${actorLabel} ${statusLabel} but wrote invalid JSON to ${artifactRef}. See ${logRel}.`;
+  }
+  const detail = trimmedString(artifactLoad?.error?.message, 'unknown read error');
+  return `${actorLabel} ${statusLabel} but produced an unreadable result payload at ${artifactRef}: ${detail}. See ${logRel}.`;
+}
+
+function protocolFailureResult(summary, reason, logRel, execution) {
+  return {
+    status: 'blocked',
+    summary,
+    reason,
+    contextRemaining: null,
+    contextWindow: null,
+    contextRemainingPercent: null,
+    currentSubtask: 'executor-protocol-error',
+    nextAction: `Inspect ${logRel} and rerun the session after the executor result contract is healthy.`,
+    stateDelta: {
+      completedWork: [],
+      acceptedFacts: [],
+      decisions: [],
+      openQuestions: [],
+      pendingActions: [],
+      recentResults: [],
+      artifacts: [],
+      risks: [reason],
+      reasoning: [],
+      evidence: []
+    },
+    sessionLogPath: logRel,
+    touchSummary: execution.touchSummary,
+    liveActivity: execution.liveActivity,
+    liveActivityTrail: execution.liveActivityTrail,
+    liveActivityUpdates: execution.liveActivityUpdates ?? 0
+  };
+}
+
 function replaceTokens(template, values) {
   return String(template).replace(/\{([a-z0-9_]+)\}/gi, (match, rawKey) => {
     const key = rawKey.toLowerCase();
@@ -2322,20 +2383,42 @@ async function executeRole(rootDir, config, state, plan, role, logging) {
     liveActivity: execution.liveActivity,
     liveActivityTrail: execution.liveActivityTrail
   });
-  const rawResult = await readJson(resultPath, null);
-  const normalized = {
-    ...normalizeResult(
-    rawResult,
-    execution.status === 0
-      ? ''
-      : `Executor exited ${execution.status ?? 1}. See ${logRel}.`
-    ),
-    sessionLogPath: logRel,
-    touchSummary: execution.touchSummary,
-    liveActivity: execution.liveActivity,
-    liveActivityTrail: execution.liveActivityTrail,
-    liveActivityUpdates: execution.liveActivityUpdates ?? 0
-  };
+  const artifactLoad = await loadStructuredResultArtifact(resultPath);
+  let normalized;
+  if (!artifactLoad.ok) {
+    const reason = protocolFailureReason(
+      `Executor for ${plan.planId}/${role}`,
+      'ORCH_RESULT_PATH',
+      resultRel,
+      logRel,
+      artifactLoad,
+      execution.status ?? 1
+    );
+    normalized = protocolFailureResult('Executor protocol error.', reason, logRel, execution);
+    await appendRunEvent(rootDir, state, 'session_protocol_error', plan.planId, {
+      role,
+      session: sessionNumber,
+      exitCode: execution.status ?? 1,
+      kind: artifactLoad.code,
+      result: resultRel,
+      log: logRel,
+      reason
+    });
+  } else {
+    normalized = {
+      ...normalizeResult(
+        artifactLoad.value,
+        execution.status === 0
+          ? ''
+          : `Executor exited ${execution.status ?? 1}. See ${logRel}.`
+      ),
+      sessionLogPath: logRel,
+      touchSummary: execution.touchSummary,
+      liveActivity: execution.liveActivity,
+      liveActivityTrail: execution.liveActivityTrail,
+      liveActivityUpdates: execution.liveActivityUpdates ?? 0
+    };
+  }
   const checkpointRefs = await writeCheckpoint(rootDir, state.runId, plan, role, sessionNumber, normalized);
   await appendRunEvent(rootDir, state, 'session_finished', plan.planId, {
     role,
@@ -2503,7 +2586,31 @@ async function runValidation(rootDir, config, state, plan, logging) {
     );
     trackPlanTouchedPaths(state, plan.planId, execution.touchSummary?.touched ?? []);
     const logRel = await writeCommandLog(rootDir, state.runId, plan.planId, `validation-${index + 1}`, index + 1, execution);
-    const payload = await readJson(resultPath, null);
+    const artifactLoad = await loadStructuredResultArtifact(resultPath);
+    const payload = artifactLoad.ok
+      ? artifactLoad.value
+      : {
+          status: 'failed',
+          summary: protocolFailureReason(
+            `Validation command ${commandSpec.id}`,
+            'ORCH_VALIDATION_RESULT_PATH',
+            resultRel,
+            logRel,
+            artifactLoad,
+            execution.status ?? 1
+          ),
+          reason: 'Validation protocol error.'
+        };
+    if (!artifactLoad.ok) {
+      await appendRunEvent(rootDir, state, 'validation_protocol_error', plan.planId, {
+        validationId: commandSpec.id,
+        exitCode: execution.status ?? 1,
+        kind: artifactLoad.code,
+        result: resultRel,
+        log: logRel,
+        reason: payload.reason
+      });
+    }
     results.push({ ...commandSpec, payload, resultRel, logRel, status: execution.status ?? 1 });
     if ((execution.status ?? 1) !== 0 || String(payload?.status ?? '').trim().toLowerCase() === 'failed') {
       const failureTail = tailLines(executionOutput(execution), logging.failureTailLines);
