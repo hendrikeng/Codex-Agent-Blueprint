@@ -231,6 +231,26 @@ function removeTrackedPlan(list, planId) {
   return (Array.isArray(list) ? list : []).filter((entry) => entry !== planId);
 }
 
+function trackedPlanPaths(state, planId) {
+  const entries = state?.planTouchedPaths?.[planId];
+  return Array.isArray(entries)
+    ? entries.map((entry) => normalizeRepoRelativePath(entry)).filter(Boolean)
+    : [];
+}
+
+function trackPlanTouchedPaths(state, planId, paths) {
+  if (!state || !planId) {
+    return [];
+  }
+  const merged = [
+    ...trackedPlanPaths(state, planId),
+    ...(Array.isArray(paths) ? paths : []).map((entry) => normalizeRepoRelativePath(entry)).filter(Boolean)
+  ].filter((entry, index, list) => list.indexOf(entry) === index);
+  state.planTouchedPaths = state.planTouchedPaths && typeof state.planTouchedPaths === 'object' ? state.planTouchedPaths : {};
+  state.planTouchedPaths[planId] = merged;
+  return merged;
+}
+
 function trackBlockedPlan(state, planId) {
   state.blockedPlanIds = addTrackedPlan(state.blockedPlanIds, planId);
   state.budgetExhaustedPlanIds = removeTrackedPlan(state.budgetExhaustedPlanIds, planId);
@@ -1137,14 +1157,18 @@ function shellJoinArgs(args) {
   return args.map((entry) => shellEscape(entry)).join(' ');
 }
 
-function createAtomicCommit(rootDir, plan, config) {
+function createAtomicCommit(rootDir, plan, config, state = null) {
   const changedPaths = dirtyRepoPaths(rootDir, { includeTransient: false });
   if (changedPaths.length === 0) {
     return { ok: true, committed: false, reason: 'no changes' };
   }
 
   const allowedRoots = atomicCommitRootsForPlan(plan, config);
-  const outsideScope = changedPaths.filter((entry) => !allowedRoots.some((root) => pathMatchesRootPrefix(entry, root)));
+  const trackedPaths = trackedPlanPaths(state, plan.planId);
+  const outsideScope = changedPaths.filter((entry) => (
+    !allowedRoots.some((root) => pathMatchesRootPrefix(entry, root)) &&
+    !trackedPaths.some((trackedPath) => pathMatchesRootPrefix(entry, trackedPath))
+  ));
   if (outsideScope.length > 0) {
     return {
       ok: false,
@@ -1969,6 +1993,7 @@ function createRunState(runId, maxRisk) {
     blockedPlanIds: [],
     failedPlanIds: [],
     planSessions: {},
+    planTouchedPaths: {},
     stats: {
       promotions: 0,
       sessions: 0,
@@ -1995,6 +2020,7 @@ async function loadRunState(rootDir, maxRisk, command) {
     blockedPlanIds: Array.isArray(existing.blockedPlanIds) ? existing.blockedPlanIds : [],
     failedPlanIds: Array.isArray(existing.failedPlanIds) ? existing.failedPlanIds : [],
     planSessions: existing.planSessions && typeof existing.planSessions === 'object' ? existing.planSessions : {},
+    planTouchedPaths: existing.planTouchedPaths && typeof existing.planTouchedPaths === 'object' ? existing.planTouchedPaths : {},
     stats: {
       promotions: 0,
       sessions: 0,
@@ -2290,6 +2316,7 @@ async function executeRole(rootDir, config, state, plan, role, logging) {
       activity: role === ROLE_REVIEWER ? 'reviewing' : 'implementing'
     }
   );
+  trackPlanTouchedPaths(state, plan.planId, execution.touchSummary?.touched ?? []);
   const logRel = await writeCommandLog(rootDir, state.runId, plan.planId, role, sessionNumber, execution, {
     touchSummary: execution.touchSummary,
     liveActivity: execution.liveActivity,
@@ -2474,6 +2501,7 @@ async function runValidation(rootDir, config, state, plan, logging) {
         activity: commandSpec.id
       }
     );
+    trackPlanTouchedPaths(state, plan.planId, execution.touchSummary?.touched ?? []);
     const logRel = await writeCommandLog(rootDir, state.runId, plan.planId, `validation-${index + 1}`, index + 1, execution);
     const payload = await readJson(resultPath, null);
     results.push({ ...commandSpec, payload, resultRel, logRel, status: execution.status ?? 1 });
@@ -2696,7 +2724,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
       }
       const completedPlan = await finalizeCompletedPlan(rootDir, state, validation.plan, validation.results);
       if (commitEnabled(config, options)) {
-        const commitResult = createAtomicCommit(rootDir, completedPlan, config);
+        const commitResult = createAtomicCommit(rootDir, completedPlan, config, state);
         if (!commitResult.ok) {
           await appendRunEvent(rootDir, state, 'plan_commit_failed', completedPlan.planId, {
             reason: commitResult.reason ?? 'atomic commit failed'
@@ -2729,7 +2757,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
       }
       const completedPlan = await finalizeCompletedPlan(rootDir, state, validation.plan, validation.results);
       if (commitEnabled(config, options)) {
-        const commitResult = createAtomicCommit(rootDir, completedPlan, config);
+        const commitResult = createAtomicCommit(rootDir, completedPlan, config, state);
         if (!commitResult.ok) {
           await appendRunEvent(rootDir, state, 'plan_commit_failed', completedPlan.planId, {
             reason: commitResult.reason ?? 'atomic commit failed'

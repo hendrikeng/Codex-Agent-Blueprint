@@ -737,6 +737,69 @@ test('orchestrator still validates and completes when must-land work finishes on
   assert.doesNotMatch(completedPlan, /^Status: budget-exhausted$/m);
 });
 
+test('orchestrator atomic commits include same-slice touched files outside declared roots', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'atomic-touched-files': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker delivered the slice plus adjacent regression coverage.',
+            writeFiles: [
+              { path: 'src/atomic-touched-files.js', content: 'export const delivered = true;\n' },
+              { path: 'tests/atomic-touched-files.test.js', content: 'export const covered = true;\n' }
+            ],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:atomic-touched-files': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-atomic-touched-files.md'),
+    directFuturePlan({ planId: 'atomic-touched-files', riskTier: 'low' }),
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed atomic touched-files plan');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const completedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-atomic-touched-files.md'),
+    'utf8'
+  );
+  assert.match(completedPlan, /^Status: completed$/m);
+
+  const cleanStatus = spawnSync('git', ['status', '--short'], { cwd: rootDir, stdio: 'pipe', encoding: 'utf8' });
+  assert.equal(cleanStatus.status, 0);
+  assert.equal(String(cleanStatus.stdout).trim(), '');
+
+  const latestCommit = spawnSync('git', ['show', '--stat', '--oneline', '--max-count', '1'], {
+    cwd: rootDir,
+    stdio: 'pipe',
+    encoding: 'utf8'
+  });
+  assert.equal(latestCommit.status, 0);
+  assert.match(String(latestCommit.stdout), /complete atomic-touched-files/);
+  assert.match(String(latestCommit.stdout), /tests\/atomic-touched-files\.test\.js/);
+});
+
 test('orchestrator commits per-plan active evidence without leaking it into the next slice', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {

@@ -104,6 +104,7 @@ Treat `docs/ops/automation/LITE_QUICKSTART.md` as the simplest explanation of ho
 
 - The default queue behavior is one atomic git commit per completed slice.
 - A plan may narrow or extend its commit boundary through metadata `Atomic-Roots` when the default `Implementation-Targets` and plan-doc files are not enough.
+- The atomic commit guard also allows files the current slice actually touched during worker, reviewer, or validation sessions, so same-slice regression tests and adjacent proof updates are not misclassified as unrelated drift.
 - If unrelated dirty files fall outside the current slice's commit roots, the harness stops instead of silently sweeping them into the same commit.
 - Disable commits explicitly with `--commit false` only when you are doing manual recovery or intentionally running on a dirty worktree.
 
