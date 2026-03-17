@@ -1708,19 +1708,20 @@ async function promoteNextReadyFuture(rootDir, state, plans, maxRisk, logging) {
   return false;
 }
 
-function actionableActivePlans(plans, completedPlanIds, maxRisk) {
+function actionableActivePlans(plans, completedPlanIds, maxRisk, config) {
   return orderPlans(
     plans.filter((plan) => (
       plan.phase === 'active' &&
       ACTIVE_STATUSES.has(plan.status) &&
       plan.status !== 'blocked' &&
       riskAllowed(plan, maxRisk) &&
-      dependenciesComplete(plan, completedPlanIds)
+      dependenciesComplete(plan, completedPlanIds) &&
+      !(securityApprovalRequired(plan, config) && plan.securityApproval !== 'approved')
     ))
   );
 }
 
-function emptyQueueSummary(plans, completedPlanIds, maxRisk) {
+function emptyQueueSummary(plans, completedPlanIds, maxRisk, config) {
   const futureDraftCount = plans.filter((plan) => plan.phase === 'future' && plan.status === 'draft').length;
   const futureReady = plans.filter((plan) => plan.phase === 'future' && plan.status === 'ready-for-promotion');
   const futureReadyExcludedByRisk = futureReady.filter((plan) => !riskAllowed(plan, maxRisk)).length;
@@ -1738,6 +1739,12 @@ function emptyQueueSummary(plans, completedPlanIds, maxRisk) {
     riskAllowed(plan, maxRisk) &&
     !dependenciesComplete(plan, completedPlanIds)
   )).length;
+  const activeWaitingOnSecurityApproval = activeCandidates.filter((plan) => (
+    riskAllowed(plan, maxRisk) &&
+    dependenciesComplete(plan, completedPlanIds) &&
+    securityApprovalRequired(plan, config) &&
+    plan.securityApproval !== 'approved'
+  )).length;
   const parts = [`no eligible plans for maxRisk=${maxRisk}`];
 
   if (futureDraftCount > 0) {
@@ -1754,6 +1761,9 @@ function emptyQueueSummary(plans, completedPlanIds, maxRisk) {
   }
   if (activeWaitingOnDependencies > 0) {
     parts.push(`active waiting on deps=${activeWaitingOnDependencies}`);
+  }
+  if (activeWaitingOnSecurityApproval > 0) {
+    parts.push(`active waiting on security approval=${activeWaitingOnSecurityApproval}`);
   }
   if ((futureReadyExcludedByRisk > 0 || activeExcludedByRisk > 0) && maxRisk !== 'high') {
     parts.push('rerun with -- --max-risk high if that is intentional');
@@ -1773,13 +1783,13 @@ async function processQueue(rootDir, config, state, options) {
   while (maxPlans === 0 || processedPlans < maxPlans) {
     let refreshedPlans = await collectPlans(rootDir);
     let completedPlanIds = new Set(refreshedPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
-    let queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk);
+    let queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk, config);
     if (queue.length === 0) {
       const promoted = await promoteNextReadyFuture(rootDir, state, refreshedPlans, maxRisk, logging);
       if (promoted) {
         refreshedPlans = await collectPlans(rootDir);
         completedPlanIds = new Set(refreshedPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
-        queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk);
+        queue = actionableActivePlans(refreshedPlans, completedPlanIds, maxRisk, config);
       }
     }
 
@@ -1791,7 +1801,7 @@ async function processQueue(rootDir, config, state, options) {
     await saveRunState(rootDir, state);
 
     if (queue.length === 0) {
-      logLine(logging, emptyQueueSummary(refreshedPlans, completedPlanIds, maxRisk), 'warn');
+      logLine(logging, emptyQueueSummary(refreshedPlans, completedPlanIds, maxRisk, config), 'warn');
       break;
     }
 
