@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   ACTIVE_STATUSES,
   COMPLETED_STATUSES,
@@ -391,6 +392,18 @@ function colorizeStructuredHeadline(logging, headline, level = 'run') {
   if (lower.startsWith('heartbeat') || lower.startsWith('file activity')) {
     return colorize(logging, '32', value);
   }
+  if (lower.startsWith('queue ') || lower.startsWith('plan start') || lower.startsWith('session start')) {
+    return colorize(logging, '36', value);
+  }
+  if (
+    lower.startsWith('session end') ||
+    lower.startsWith('session artifacts') ||
+    lower.startsWith('plan continuation') ||
+    lower.startsWith('role transition') ||
+    lower.startsWith('working')
+  ) {
+    return colorize(logging, '37', value);
+  }
   if (lower.startsWith('run resumed') || lower.startsWith('run start') || lower.startsWith('grind ') || lower.startsWith('run ')) {
     return colorize(logging, '36', value);
   }
@@ -417,8 +430,15 @@ function colorizeStructuredValue(logging, key, value, level = 'run') {
   if (keyLower === 'runid') return colorize(logging, '96', valueText);
   if (keyLower === 'plan') return colorize(logging, '36', valueText);
   if (keyLower === 'role') return colorize(logging, '35', valueText);
+  if (keyLower === 'nextrole' || keyLower === 'roles') return colorize(logging, '36', valueText);
   if (keyLower === 'phase' || keyLower === 'activity') return colorize(logging, '32', valueText);
   if (keyLower === 'elapsed' || keyLower === 'idle') return colorize(logging, '32', valueText);
+  if (keyLower === 'model') return colorize(logging, '96', valueText);
+  if (keyLower === 'reasoning' || keyLower === 'priority') return colorize(logging, '35', valueText);
+  if (keyLower === 'checkpoint' || keyLower === 'handoff' || keyLower === 'log') return colorize(logging, '90', valueText);
+  if (keyLower === 'message' || keyLower === 'reason' || keyLower === 'summary' || keyLower === 'nextaction') {
+    return colorize(logging, '37', valueText);
+  }
 
   if (['risk', 'status', 'commit'].includes(keyLower)) {
     if (valueLower === 'low' || valueLower === 'completed' || valueLower === 'passed' || valueLower === 'atomic') {
@@ -783,6 +803,21 @@ function safeDisplayToken(value, fallback = 'n/a') {
   return rendered.length > 0 ? rendered : fallback;
 }
 
+function sanitizeLogNarrative(value, fallback = 'none', maxLength = 160) {
+  let rendered = String(value ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/=/g, ':')
+    .trim();
+  if (!rendered) {
+    return fallback;
+  }
+  if (Number.isFinite(maxLength) && maxLength > 0 && rendered.length > maxLength) {
+    rendered = `${rendered.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+  }
+  return rendered;
+}
+
 function compactDisplayToken(value, fallback, maxLength) {
   const rendered = safeDisplayToken(value, fallback);
   if (!Number.isFinite(maxLength) || maxLength <= 1 || rendered.length <= maxLength) {
@@ -802,7 +837,198 @@ function formatDurationClock(totalSeconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function formatCommandHeartbeatLine(logging, context, elapsedSeconds, idleSeconds) {
+function previewPlanIds(values, maxItems = 3) {
+  const items = [...new Set((Array.isArray(values) ? values : []).map((entry) => safeDisplayToken(entry, '')).filter(Boolean))];
+  if (items.length === 0) {
+    return 'none';
+  }
+  const visible = items.slice(0, Math.max(1, maxItems));
+  const remainder = items.length - visible.length;
+  return remainder > 0 ? `${visible.join(', ')} +${remainder} more` : visible.join(', ');
+}
+
+function classifyTouchedPath(filePath) {
+  const normalized = normalizeRepoRelativePath(filePath);
+  if (!normalized) {
+    return 'repo';
+  }
+  if (normalized.startsWith('docs/exec-plans/')) return 'plan-docs';
+  if (normalized.startsWith('docs/')) return 'docs';
+  if (normalized.startsWith('scripts/')) return 'scripts';
+  if (normalized.startsWith('test/') || normalized.startsWith('tests/') || normalized.includes('.test.')) return 'tests';
+  if (
+    normalized.startsWith('src/') ||
+    normalized.startsWith('app/') ||
+    normalized.startsWith('apps/') ||
+    normalized.startsWith('packages/') ||
+    normalized.startsWith('lib/')
+  ) {
+    return 'code';
+  }
+  return normalized.split('/')[0] || 'repo';
+}
+
+function summarizeTouchedPaths(paths, sampleSize = 3) {
+  const normalized = [...new Set(
+    (Array.isArray(paths) ? paths : [])
+      .map((entry) => normalizeRepoRelativePath(entry))
+      .filter(Boolean)
+  )].sort((left, right) => left.localeCompare(right));
+  if (normalized.length === 0) {
+    return {
+      count: 0,
+      categories: [],
+      samples: [],
+      fingerprint: 'none',
+      touched: []
+    };
+  }
+
+  const categoryCounts = new Map();
+  for (const filePath of normalized) {
+    const category = classifyTouchedPath(filePath);
+    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+  }
+
+  return {
+    count: normalized.length,
+    categories: [...categoryCounts.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([category, count]) => ({ category, count })),
+    samples: normalized.slice(0, Math.max(1, sampleSize)),
+    fingerprint: createHash('sha1').update(normalized.join('\n')).digest('hex').slice(0, 10),
+    touched: normalized
+  };
+}
+
+function formatTouchSummaryInline(summary) {
+  if (!summary || summary.count <= 0) {
+    return 'touch=none';
+  }
+  const categories = summary.categories
+    .slice(0, 2)
+    .map((entry) => `${entry.category}:${entry.count}`)
+    .join(',');
+  return `touch=${summary.count}(${categories || 'n/a'})`;
+}
+
+function formatTouchSummaryDetails(summary) {
+  if (!summary || summary.count <= 0) {
+    return 'touched=0';
+  }
+  const categories = summary.categories
+    .slice(0, 4)
+    .map((entry) => `${entry.category}:${entry.count}`)
+    .join(', ');
+  const samples = summary.samples.length > 0 ? summary.samples.join(', ') : 'none';
+  return `touched=${summary.count} categories=[${categories}] sample=[${samples}]`;
+}
+
+function createTouchBaseline(rootDir) {
+  return {
+    initialDirtyPathSet: new Set(dirtyRepoPaths(rootDir, { includeTransient: true })),
+    touchedPathSet: new Set()
+  };
+}
+
+function monitorTouchedPaths(rootDir, baseline, sampleSize = 3) {
+  if (!baseline || !(baseline.initialDirtyPathSet instanceof Set)) {
+    return null;
+  }
+  const current = dirtyRepoPaths(rootDir, { includeTransient: true });
+  for (const entry of current) {
+    if (isTransientAutomationPath(entry)) {
+      continue;
+    }
+    if (!baseline.initialDirtyPathSet.has(entry)) {
+      baseline.touchedPathSet.add(entry);
+    }
+  }
+  return summarizeTouchedPaths([...baseline.touchedPathSet], sampleSize);
+}
+
+function buildQueueOverview(plans, completedPlanIds, queue, maxRisk) {
+  const futureDraft = plans.filter((plan) => plan.phase === 'future' && plan.status === 'draft').map((plan) => plan.planId);
+  const futureReady = plans.filter((plan) => plan.phase === 'future' && plan.status === 'ready-for-promotion').map((plan) => plan.planId);
+  const activeQueued = plans.filter((plan) => plan.phase === 'active' && plan.status === 'queued').map((plan) => plan.planId);
+  const activeInProgress = plans.filter((plan) => plan.phase === 'active' && plan.status === 'in-progress').map((plan) => plan.planId);
+  const activeInReview = plans.filter((plan) => plan.phase === 'active' && plan.status === 'in-review').map((plan) => plan.planId);
+  const activeValidation = plans.filter((plan) => plan.phase === 'active' && plan.status === 'validation').map((plan) => plan.planId);
+  const activeBlocked = plans.filter((plan) => plan.phase === 'active' && plan.status === 'blocked').map((plan) => plan.planId);
+  return {
+    maxRisk,
+    nextPlanId: queue[0]?.planId ?? 'none',
+    queueCount: queue.length,
+    queuePreview: previewPlanIds(queue.map((plan) => plan.planId)),
+    futureDraftCount: futureDraft.length,
+    futureDraftPreview: previewPlanIds(futureDraft),
+    futureReadyCount: futureReady.length,
+    futureReadyPreview: previewPlanIds(futureReady),
+    activeQueuedCount: activeQueued.length,
+    activeQueuedPreview: previewPlanIds(activeQueued),
+    activeInProgressCount: activeInProgress.length,
+    activeInProgressPreview: previewPlanIds(activeInProgress),
+    activeInReviewCount: activeInReview.length,
+    activeInReviewPreview: previewPlanIds(activeInReview),
+    activeValidationCount: activeValidation.length,
+    activeValidationPreview: previewPlanIds(activeValidation),
+    activeBlockedCount: activeBlocked.length,
+    activeBlockedPreview: previewPlanIds(activeBlocked),
+    completedCount: completedPlanIds.size
+  };
+}
+
+function printSummaryBlock(logging, title, rows) {
+  clearLiveStatusLine();
+  const border = colorize(logging, '90', '------------------------------------------------------------');
+  const renderedTitle = colorize(logging, '1;36', title);
+  console.log(border);
+  console.log(renderedTitle);
+  for (const [label, value] of rows) {
+    const key = colorize(logging, '90', `${label}:`.padEnd(18, ' '));
+    console.log(`${key} ${String(value ?? 'n/a')}`);
+  }
+  console.log(border);
+}
+
+function logQueueOverview(logging, state, overview, label = 'queue overview', level = 'run') {
+  const message =
+    `${label} runId=${state.runId} maxRisk=${overview.maxRisk} next=${overview.nextPlanId} queue=${overview.queueCount} ` +
+    `queuePreview=${overview.queuePreview} futureReady=${overview.futureReadyCount} activeQueued=${overview.activeQueuedCount} activeInProgress=${overview.activeInProgressCount} ` +
+    `activeInReview=${overview.activeInReviewCount} activeValidation=${overview.activeValidationCount} activeBlocked=${overview.activeBlockedCount} completed=${overview.completedCount}`;
+  logLine(logging, message, level);
+}
+
+function printRunSummary(logging, label, state, processed, durationSeconds, overview) {
+  if (logging.mode === 'pretty') {
+    printSummaryBlock(logging, `${label.toUpperCase()} SUMMARY`, [
+      ['runId', state.runId],
+      ['processed', processed],
+      ['duration', `${formatDuration(durationSeconds)} (${Math.max(0, Math.floor(durationSeconds || 0))}s)`],
+      ['next', overview.nextPlanId],
+      ['queue', overview.queueCount],
+      ['future ready', `${overview.futureReadyCount} (${overview.futureReadyPreview})`],
+      ['active queued', `${overview.activeQueuedCount} (${overview.activeQueuedPreview})`],
+      ['active in-progress', `${overview.activeInProgressCount} (${overview.activeInProgressPreview})`],
+      ['active in-review', `${overview.activeInReviewCount} (${overview.activeInReviewPreview})`],
+      ['active validation', `${overview.activeValidationCount} (${overview.activeValidationPreview})`],
+      ['active blocked', `${overview.activeBlockedCount} (${overview.activeBlockedPreview})`],
+      ['completed', overview.completedCount],
+      ['promotions', state.stats.promotions],
+      ['sessions', state.stats.sessions],
+      ['validations', state.stats.validations],
+      ['commits', state.stats.commits]
+    ]);
+    return;
+  }
+  logLine(
+    logging,
+    `${label} summary runId=${state.runId} processed=${processed} duration=${formatDuration(durationSeconds)} queue=${overview.queueCount} completed=${overview.completedCount} blocked=${overview.activeBlockedCount} commits=${state.stats.commits}`,
+    'ok'
+  );
+}
+
+function formatCommandHeartbeatLine(logging, context, elapsedSeconds, idleSeconds, touchSummary = null) {
   const stamp = colorize(logging, '90', nowIso().slice(11, 19));
   const dots = nextPrettyLiveDots(logging);
   const tag = prettyLevelTag(logging, idleSeconds >= logging.stallWarnSeconds ? 'warn' : 'run');
@@ -812,7 +1038,7 @@ function formatCommandHeartbeatLine(logging, context, elapsedSeconds, idleSecond
   const activity = compactDisplayToken(context.activity, phase, 16);
   return (
     `${stamp} ${dots} ${tag} phase=${phase} plan=${planId} role=${role} activity=${activity} ` +
-    `elapsed=${formatDurationClock(elapsedSeconds)} idle=${formatDurationClock(idleSeconds)}`
+    `elapsed=${formatDurationClock(elapsedSeconds)} idle=${formatDurationClock(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`
   );
 }
 
@@ -821,6 +1047,7 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
   let lastOutputAtMs = startedAtMs;
   let lastVisibleStatusAtMs = startedAtMs;
   let lastLiveActivityAtMs = 0;
+  let lastTouchChangeAtMs = startedAtMs;
   let stdout = '';
   let stderr = '';
   let stdoutRemainder = '';
@@ -829,6 +1056,9 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
   let processError = null;
   let settled = false;
   let warnEmitted = false;
+  const touchBaseline = gitAvailable(cwd) ? createTouchBaseline(cwd) : null;
+  let touchSummary = null;
+  let lastTouchFingerprint = null;
 
   const child = spawn(command, {
     shell: true,
@@ -838,7 +1068,7 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
   });
 
   function maybeEmitLiveActivity(line, nowMs = Date.now()) {
-    if (logging.mode !== 'pretty') {
+    if (logging.mode !== 'pretty' && logging.mode !== 'ticker') {
       return;
     }
     if (nowMs - lastLiveActivityAtMs < 5000) {
@@ -857,11 +1087,25 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
     if (!message) {
       return;
     }
+    const activityMessage = sanitizeLogNarrative(message, 'working');
+    if (logging.mode === 'ticker') {
+      logLine(
+        logging,
+        `working plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} phase=${safeDisplayToken(context.phase, 'session')} activity=${safeDisplayToken(context.activity, 'working')} message=${activityMessage}`
+      );
+      lastLiveActivityAtMs = nowMs;
+      lastVisibleStatusAtMs = nowMs;
+      return;
+    }
     const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
     const stamp = colorize(logging, '90', nowIso().slice(11, 19));
     const spinner = nextPrettySpinner(logging);
-    const workingLabel = colorize(logging, '36', `WORKING (${formatDurationClock(elapsedSeconds)})`);
-    const workingMessage = colorize(logging, '37', message);
+    const workingLabel = colorize(
+      logging,
+      '36',
+      `WORKING ${safeDisplayToken(context.planId, 'run')}/${safeDisplayToken(context.role, 'n/a')} (${formatDurationClock(elapsedSeconds)})`
+    );
+    const workingMessage = colorize(logging, '37', activityMessage);
     clearLiveStatusLine();
     printIndentedPrettyMessage(`${stamp} ${spinner} ${workingLabel} `, workingMessage);
     lastLiveActivityAtMs = nowMs;
@@ -911,17 +1155,43 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
   const stallWarnMs = Math.max(heartbeatMs, logging.stallWarnSeconds * 1000);
   const heartbeatEnabled = logging.mode === 'pretty' || logging.mode === 'ticker';
   let heartbeatTimer = null;
+
+  function maybeRefreshTouchSummary(nowMs = Date.now()) {
+    if (!touchBaseline) {
+      return null;
+    }
+    const latest = monitorTouchedPaths(cwd, touchBaseline, 3);
+    if (!latest) {
+      return null;
+    }
+    touchSummary = latest;
+    if (latest.fingerprint !== lastTouchFingerprint) {
+      lastTouchFingerprint = latest.fingerprint;
+      if (latest.count > 0) {
+        lastTouchChangeAtMs = nowMs;
+        logLine(
+          logging,
+          `file activity phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} ${formatTouchSummaryDetails(latest)}`,
+          'run'
+        );
+        lastVisibleStatusAtMs = nowMs;
+      }
+    }
+    return latest;
+  }
+
   const emitHeartbeat = () => {
     const nowMs = Date.now();
+    maybeRefreshTouchSummary(nowMs);
     const elapsedSeconds = Math.floor((nowMs - startedAtMs) / 1000);
-    const idleSeconds = Math.floor((nowMs - lastOutputAtMs) / 1000);
+    const idleSeconds = Math.floor((nowMs - Math.max(lastOutputAtMs, lastTouchChangeAtMs)) / 1000);
     if (nowMs - lastVisibleStatusAtMs >= heartbeatMs && supportsLiveStatusLine(logging)) {
-      renderLiveStatusLine(logging, formatCommandHeartbeatLine(logging, context, elapsedSeconds, idleSeconds));
+      renderLiveStatusLine(logging, formatCommandHeartbeatLine(logging, context, elapsedSeconds, idleSeconds, touchSummary));
       lastVisibleStatusAtMs = nowMs;
     } else if (nowMs - lastVisibleStatusAtMs >= heartbeatMs) {
       logLine(
         logging,
-        `heartbeat phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} activity=${safeDisplayToken(context.activity, safeDisplayToken(context.phase, 'session'))} elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)}`,
+        `heartbeat phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} activity=${safeDisplayToken(context.activity, safeDisplayToken(context.phase, 'session'))} elapsed=${formatDuration(elapsedSeconds)} idle=${formatDuration(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`,
         idleSeconds >= logging.stallWarnSeconds ? 'warn' : 'run'
       );
       lastVisibleStatusAtMs = nowMs;
@@ -930,7 +1200,7 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
       warnEmitted = true;
       logLine(
         logging,
-        `stall warning phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)}`,
+        `stall warning phase=${safeDisplayToken(context.phase, 'session')} plan=${safeDisplayToken(context.planId, 'run')} role=${safeDisplayToken(context.role, 'n/a')} idle=${formatDuration(idleSeconds)} ${formatTouchSummaryInline(touchSummary)}`,
         'warn'
       );
     }
@@ -978,6 +1248,7 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
         return;
       }
       settled = true;
+      maybeRefreshTouchSummary(Date.now());
       cleanupTimers();
       resolve({
         status,
@@ -1615,6 +1886,7 @@ async function refreshPlan(rootDir, plan) {
 async function executePlan(rootDir, config, state, initialPlan, logging, sessionLimit, options) {
   let plan = initialPlan;
   const planRoles = rolesForPlan(plan, config);
+  const reviewerEnabled = planRoles.includes(ROLE_REVIEWER);
 
   while ((state.planSessions[plan.planId] ?? 0) < sessionLimit) {
     plan = await refreshPlan(rootDir, plan);
@@ -1631,11 +1903,17 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
       await appendRunEvent(rootDir, state, 'plan_blocked', plan.planId, {
         reason: 'missing security approval'
       });
+      logLine(
+        logging,
+        `plan blocked plan=${plan.planId} reason=${sanitizeLogNarrative(`Security approval required before executing ${plan.planId}.`)}`,
+        'err'
+      );
       return 'blocked';
     }
 
     if (plan.status === 'blocked') {
       state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
+      logLine(logging, `plan blocked plan=${plan.planId} reason=plan already marked blocked`, 'err');
       return 'blocked';
     }
 
@@ -1661,6 +1939,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
           logLine(logging, `committed ${completedPlan.planId}${commitResult.commitHash ? ` ${commitResult.commitHash.slice(0, 7)}` : ''}`, 'ok');
         }
       }
+      logLine(logging, `plan completed plan=${completedPlan.planId} status=completed`, 'ok');
       return 'completed';
     }
 
@@ -1693,22 +1972,37 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
           logLine(logging, `committed ${completedPlan.planId}${commitResult.commitHash ? ` ${commitResult.commitHash.slice(0, 7)}` : ''}`, 'ok');
         }
       }
+      logLine(logging, `plan completed plan=${completedPlan.planId} status=completed`, 'ok');
       return 'completed';
     }
 
     const role = plan.status === 'in-review' ? ROLE_REVIEWER : ROLE_WORKER;
     if (role === ROLE_REVIEWER && !planRoles.includes(ROLE_REVIEWER)) {
       plan = await updatePlanStatus(rootDir, plan, 'validation', `Queued validation in ${state.runId}.`);
+      logLine(logging, `role transition plan=${plan.planId} from=reviewer to=validation reason=review lane not configured`, 'warn');
       continue;
     }
     if (role === ROLE_WORKER && plan.status === 'queued') {
       plan = await updatePlanStatus(rootDir, plan, 'in-progress', `Worker started in ${state.runId}.`);
     }
 
+    const nextSessionNumber = (state.planSessions[plan.planId] ?? 0) + 1;
     await appendRunEvent(rootDir, state, 'session_started', plan.planId, { role });
-    logLine(logging, `${role} ${plan.planId}`);
+    logLine(
+      logging,
+      `session start plan=${plan.planId} role=${role} session=${nextSessionNumber} status=${plan.status} risk=${plan.riskTier} model=${safeDisplayToken(config?.executor?.roles?.[role]?.model, 'n/a')} reasoning=${safeDisplayToken(config?.executor?.roles?.[role]?.reasoningEffort, 'n/a')}`
+    );
     const session = await executeRole(rootDir, config, state, plan, role, logging);
     plan = await refreshPlan(rootDir, plan);
+    logLine(
+      logging,
+      `session end plan=${plan.planId} role=${role} session=${session.sessionNumber} status=${session.result.status} contextRemaining=${Number.isFinite(session.result.contextRemaining) ? session.result.contextRemaining : 'unknown'} nextAction=${session.result.nextAction || 'none'}`,
+      session.result.status === 'blocked' ? 'err' : session.result.status === 'handoff_required' || session.result.status === 'pending' ? 'warn' : 'ok'
+    );
+    logLine(
+      logging,
+      `session artifacts plan=${plan.planId} role=${role} session=${session.sessionNumber} checkpoint=${session.checkpointRefs.checkpointRel} handoff=${session.checkpointRefs.handoffRel} log=${session.logRel}`
+    );
     const contextBudget = analyzeContextBudget(session.result, config);
     if (contextBudget.triggered && !roleBoundaryComplete(plan, role) && session.result.status !== 'blocked') {
       session.result.status = 'handoff_required';
@@ -1737,6 +2031,11 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
         checkpoint: session.checkpointRefs.checkpointRel,
         handoff: session.checkpointRefs.handoffRel
       });
+      logLine(
+        logging,
+        `session handoff plan=${plan.planId} role=${role} session=${session.sessionNumber} reason=${sanitizeLogNarrative(session.result.reason, 'context threshold reached')} checkpoint=${session.checkpointRefs.checkpointRel} handoff=${session.checkpointRefs.handoffRel}`,
+        'warn'
+      );
     }
 
     if (plan.status === 'blocked' || session.result.status === 'blocked') {
@@ -1757,37 +2056,57 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
         role,
         reason: session.result.reason || session.result.summary || 'Blocked during execution.'
       });
+      logLine(logging, `plan blocked plan=${plan.planId} reason=${session.result.reason || session.result.summary || 'blocked during execution'}`, 'err');
       return 'blocked';
     }
 
     if (session.result.status === 'pending' || session.result.status === 'handoff_required') {
+      const nextRole = ROLE_WORKER;
+      logLine(
+        logging,
+        `session pending plan=${plan.planId} role=${role} session=${session.sessionNumber} nextRole=${nextRole} reason=${sanitizeLogNarrative(session.result.reason || session.result.summary, 'executor requested continuation')} checkpoint=${session.checkpointRefs.checkpointRel} handoff=${session.checkpointRefs.handoffRel}`,
+        'warn'
+      );
       if (role === ROLE_REVIEWER) {
         plan = await updatePlanStatus(rootDir, plan, 'in-progress', `Reviewer handed ${plan.planId} back to worker in ${state.runId}.`);
       } else {
         plan = await updatePlanStatus(rootDir, plan, 'in-progress', `Worker checkpointed ${plan.planId} in ${state.runId}.`);
       }
+      logLine(logging, `plan continuation plan=${plan.planId} status=in-progress nextRole=${nextRole}`, 'warn');
       return 'requeued';
     }
 
     if (role === ROLE_WORKER) {
-      if (mustLandComplete(plan.content) && planRoles.includes(ROLE_REVIEWER)) {
+      if (mustLandComplete(plan.content) && reviewerEnabled) {
         plan = await updatePlanStatus(rootDir, plan, 'in-review', `Worker completed must-land scope for ${plan.planId} in ${state.runId}.`);
+        logLine(logging, `role transition plan=${plan.planId} from=worker to=reviewer reason=must-land scope complete`, 'ok');
         continue;
       }
       if (mustLandComplete(plan.content)) {
         plan = await updatePlanStatus(rootDir, plan, 'validation', `Worker completed must-land scope for ${plan.planId} in ${state.runId}.`);
+        logLine(logging, `role transition plan=${plan.planId} from=worker to=validation reason=must-land scope complete`, 'ok');
         continue;
       }
       plan = await updatePlanStatus(rootDir, plan, 'in-progress', `Worker session completed for ${plan.planId} in ${state.runId}.`);
+      logLine(
+        logging,
+        `plan continuation plan=${plan.planId} status=in-progress nextRole=worker reason=${sanitizeLogNarrative(session.result.nextAction || session.result.summary, 'implementation slice still open')}`
+      );
       return 'requeued';
     }
 
     if (role === ROLE_REVIEWER) {
       if (mustLandComplete(plan.content)) {
         plan = await updatePlanStatus(rootDir, plan, 'validation', `Reviewer approved ${plan.planId} in ${state.runId}.`);
+        logLine(logging, `role transition plan=${plan.planId} from=reviewer to=validation reason=review approved`, 'ok');
         continue;
       }
       plan = await updatePlanStatus(rootDir, plan, 'in-progress', `Reviewer requested more work for ${plan.planId} in ${state.runId}.`);
+      logLine(
+        logging,
+        `role transition plan=${plan.planId} from=reviewer to=worker reason=${sanitizeLogNarrative(session.result.reason || session.result.summary, 'review requested more work')}`,
+        'warn'
+      );
       return 'requeued';
     }
   }
@@ -1800,6 +2119,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
   );
   state.blockedPlanIds = [...new Set([...state.blockedPlanIds, plan.planId])];
   state.stats.blocked += 1;
+  logLine(logging, `plan blocked plan=${plan.planId} reason=${sanitizeLogNarrative(`Session budget exhausted after ${sessionLimit} sessions.`)}`, 'err');
   return 'blocked';
 }
 
@@ -1911,12 +2231,21 @@ async function processQueue(rootDir, config, state, options) {
     state.queue = queue.map((plan) => plan.planId);
     await saveRunState(rootDir, state);
 
+    const overview = buildQueueOverview(refreshedPlans, completedPlanIds, queue, maxRisk);
+    logQueueOverview(logging, state, overview, queue.length === 0 ? 'queue overview' : 'queue focus');
+
     if (queue.length === 0) {
       logLine(logging, emptyQueueSummary(refreshedPlans, completedPlanIds, maxRisk, config), 'warn');
       break;
     }
 
     const plan = queue[0];
+    const planRoles = rolesForPlan(plan, config);
+    const nextSessionNumber = (state.planSessions[plan.planId] ?? 0) + 1;
+    logLine(
+      logging,
+      `plan start plan=${plan.planId} status=${plan.status} priority=${plan.priority} risk=${plan.riskTier} queueDepth=${queue.length} session=${nextSessionNumber}/${sessionLimit} roles=${planRoles.join('->')} validation=${plan.validationLanes.join(',') || 'none'}`
+    );
     state.activePlanId = plan.planId;
     await saveRunState(rootDir, state);
     const outcome = await executePlan(rootDir, config, state, plan, logging, sessionLimit, options);
@@ -1927,6 +2256,7 @@ async function processQueue(rootDir, config, state, options) {
       break;
     }
   }
+  return processedPlans;
 }
 
 async function audit(rootDir, options) {
@@ -1990,8 +2320,34 @@ async function main() {
   const state = await loadRunState(rootDir, maxRisk, command);
   const logging = resolveLogging(config, options);
   await appendRunEvent(rootDir, state, command === 'resume' ? 'run_resumed' : 'run_started', null, { maxRisk });
-  logLine(logging, `${command} runId=${state.runId} maxRisk=${maxRisk} commit=${commitEnabled(config, options) ? 'atomic' : 'off'}`);
-  await processQueue(rootDir, config, state, options);
+  logLine(
+    logging,
+    `${command} runId=${state.runId} maxRisk=${maxRisk} output=${logging.mode} heartbeat=${logging.heartbeatSeconds}s stallWarn=${logging.stallWarnSeconds}s sessionLimit=${maxSessionsPerPlan(config, options)} commit=${commitEnabled(config, options) ? 'atomic' : 'off'}`
+  );
+  const startingPlans = await collectPlans(rootDir);
+  const startingCompleted = new Set(startingPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
+  const startingQueue = actionableActivePlans(startingPlans, startingCompleted, maxRisk, config);
+  const startingOverview = buildQueueOverview(startingPlans, startingCompleted, startingQueue, maxRisk);
+  if (logging.mode === 'pretty') {
+    printSummaryBlock(logging, `${command.toUpperCase()} OVERVIEW`, [
+      ['runId', state.runId],
+      ['max risk', maxRisk],
+      ['next', startingOverview.nextPlanId],
+      ['queue', startingOverview.queueCount],
+      ['future ready', `${startingOverview.futureReadyCount} (${startingOverview.futureReadyPreview})`],
+      ['future draft', `${startingOverview.futureDraftCount} (${startingOverview.futureDraftPreview})`],
+      ['active queued', `${startingOverview.activeQueuedCount} (${startingOverview.activeQueuedPreview})`],
+      ['active in-progress', `${startingOverview.activeInProgressCount} (${startingOverview.activeInProgressPreview})`],
+      ['active in-review', `${startingOverview.activeInReviewCount} (${startingOverview.activeInReviewPreview})`],
+      ['active validation', `${startingOverview.activeValidationCount} (${startingOverview.activeValidationPreview})`],
+      ['active blocked', `${startingOverview.activeBlockedCount} (${startingOverview.activeBlockedPreview})`],
+      ['completed', startingOverview.completedCount]
+    ]);
+  } else {
+    logQueueOverview(logging, state, startingOverview, `${command} overview`);
+  }
+  const startedAtMs = Date.parse(state.startedAt) || Date.now();
+  const processedPlans = await processQueue(rootDir, config, state, options);
   await saveRunState(rootDir, state);
   await appendRunEvent(rootDir, state, 'run_finished', null, {
     completed: state.completedPlanIds.length,
@@ -1999,6 +2355,18 @@ async function main() {
     queue: state.queue.length,
     commits: state.stats.commits
   });
+  const endingPlans = await collectPlans(rootDir);
+  const endingCompleted = new Set(endingPlans.filter((plan) => plan.phase === 'completed').map((plan) => plan.planId));
+  const endingQueue = actionableActivePlans(endingPlans, endingCompleted, maxRisk, config);
+  const endingOverview = buildQueueOverview(endingPlans, endingCompleted, endingQueue, maxRisk);
+  printRunSummary(
+    logging,
+    command,
+    state,
+    processedPlans,
+    Math.max(0, (Date.now() - startedAtMs) / 1000),
+    endingOverview
+  );
   logLine(
     logging,
     `finished runId=${state.runId} queue=${state.queue.length} completed=${state.completedPlanIds.length} blocked=${state.blockedPlanIds.length} commits=${state.stats.commits}`,

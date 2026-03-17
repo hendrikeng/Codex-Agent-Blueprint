@@ -41,3 +41,21 @@ test('harness:verify fails when package.json drifts from the managed harness fra
   assert.match(String(result.stderr), /SCRIPT_MISMATCH/);
   assert.match(String(result.stderr), /automation:grind/);
 });
+
+test('harness:verify fails when canonical docs reference retired harness commands', async () => {
+  const rootDir = await createTemplateRepo();
+  const plansPath = path.join(rootDir, 'docs', 'PLANS.md');
+  const plansDoc = await fs.readFile(plansPath, 'utf8');
+  const drifted = `${plansDoc}\nLegacy fallback: \`automation:run:parallel\`.\n`;
+  await fs.writeFile(plansPath, drifted, 'utf8');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'check-harness-alignment.mjs'),
+    [],
+    rootDir
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(String(result.stderr), /RETIRED_DOC_REFERENCE/);
+  assert.match(String(result.stderr), /docs\/PLANS\.md/);
+});

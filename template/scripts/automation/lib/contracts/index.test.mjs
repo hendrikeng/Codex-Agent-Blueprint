@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   CONTRACT_IDS,
-  parseContractPayload,
-  prepareContractPayload
+  parseContractPayload
 } from './index.mjs';
 
 test('run-state migrates legacy versioned payloads to schemaVersion 1', () => {
@@ -79,39 +78,6 @@ test('validation-result upgrades unversioned payloads to schemaVersion 1', () =>
     artifactRefs: [],
     findingFiles: [],
     outputLogPath: null
-  });
-
-  assert.equal(payload.schemaVersion, 1);
-});
-
-test('prepareContractPayload injects latest schema version for contact-pack manifests', () => {
-  const payload = prepareContractPayload(CONTRACT_IDS.contactPackManifest, {
-    generatedAt: '2026-03-16T00:00:00.000Z',
-    planId: 'plan-a',
-    runId: 'run-1',
-    role: 'worker',
-    deliveryClass: 'product',
-    executionScope: 'slice',
-    parentPlanId: null,
-    implementationTargets: ['src/index.js'],
-    stageIndex: 1,
-    stageTotal: 1,
-    selectionMaxItems: 6,
-    selectedInputs: [
-      {
-        itemId: 'checkpoint-1',
-        category: 'checkpoint',
-        type: 'same-role-checkpoint',
-        score: 7,
-        reasons: ['recency'],
-        role: 'worker',
-        stageIndex: 1,
-        value: 'status=in-progress'
-      }
-    ],
-    candidateCount: 1,
-    thinPack: false,
-    missingCategories: []
   });
 
   assert.equal(payload.schemaVersion, 1);

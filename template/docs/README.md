@@ -41,7 +41,7 @@ This file is the navigation and usage entrypoint for `docs/`. Use `docs/MANIFEST
 - Canonical docs: hand-maintained source of truth such as `AGENTS.md`, `README.md`, `ARCHITECTURE.md`, `docs/governance/*`, `docs/architecture/*`, and plan/evidence docs.
 - Generated docs: rebuildable artifacts derived from canonical policy or measured runs, such as `docs/generated/*`.
 - Runtime artifacts: transient orchestration state under `docs/ops/automation/runtime/*` and `docs/ops/automation/handoffs/*`.
-- Derived platform surfaces: optional exports for platform-native agents such as `.github/agents/*`; these are scaffolds, not canonical policy.
+- Derived platform surfaces: optional repo-local exports or scaffolds for platform-native agents; these are scaffolds, not canonical policy.
 
 ## Layering Model
 
@@ -55,7 +55,7 @@ This file is the navigation and usage entrypoint for `docs/`. Use `docs/MANIFEST
 
 - Humans and general-purpose agents start with `AGENTS.md`, `README.md`, and `docs/MANIFEST.md`.
 - Queue runtime sessions consume `docs/generated/AGENT-RUNTIME-CONTEXT.md`, the current plan, the latest checkpoint, the latest handoff note, and only the evidence needed for the active slice.
-- Platform-native feature agents should prefer exported scaffolds from `docs/ops/automation/INTEROP_GITHUB.md` rather than copying policy into ad-hoc prompt files.
+- If a repository chooses to export platform-native scaffolds, treat them as optional derived surfaces described by `docs/ops/automation/INTEROP_GITHUB.md` rather than as canonical policy.
 - When canonical policy changes, regenerate derived surfaces instead of editing generated or exported files by hand.
 
 ## Authoring Rules

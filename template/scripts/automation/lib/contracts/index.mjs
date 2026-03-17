@@ -6,7 +6,6 @@ export const CONTRACT_IDS = {
   runEvent: 'run-event',
   continuityLatestState: 'continuity-latest-state',
   continuityCheckpoint: 'continuity-checkpoint',
-  contactPackManifest: 'contact-pack-manifest',
   validationResult: 'validation-result'
 };
 
@@ -479,41 +478,6 @@ function validateContinuityCheckpoint(payload) {
   return payload;
 }
 
-function validateContactPackManifest(payload) {
-  const contractId = CONTRACT_IDS.contactPackManifest;
-  asObject(payload, contractId, 'payload');
-  ensureKnownSchemaVersion(contractId, payload, [1]);
-  asString(payload.generatedAt, contractId, 'generatedAt');
-  asString(payload.planId, contractId, 'planId');
-  asString(payload.runId, contractId, 'runId', { allowEmpty: true });
-  asString(payload.role, contractId, 'role');
-  asString(payload.deliveryClass, contractId, 'deliveryClass', { allowEmpty: true });
-  asString(payload.executionScope, contractId, 'executionScope', { allowEmpty: true });
-  asNullableString(payload.parentPlanId, contractId, 'parentPlanId');
-  asStringArray(payload.implementationTargets, contractId, 'implementationTargets');
-  asInteger(payload.stageIndex, contractId, 'stageIndex', { minimum: 1 });
-  asInteger(payload.stageTotal, contractId, 'stageTotal', { minimum: 1 });
-  asInteger(payload.selectionMaxItems, contractId, 'selectionMaxItems', { minimum: 0 });
-  if (!Array.isArray(payload.selectedInputs)) {
-    fail(contractId, 'selectedInputs must be an array.');
-  }
-  for (const [index, entry] of payload.selectedInputs.entries()) {
-    const item = asObject(entry, contractId, `selectedInputs[${index}]`);
-    asString(item.itemId, contractId, `selectedInputs[${index}].itemId`);
-    asString(item.category, contractId, `selectedInputs[${index}].category`);
-    asString(item.type, contractId, `selectedInputs[${index}].type`);
-    asNumber(item.score, contractId, `selectedInputs[${index}].score`);
-    asStringArray(item.reasons, contractId, `selectedInputs[${index}].reasons`);
-    asString(item.role ?? '', contractId, `selectedInputs[${index}].role`, { allowEmpty: true });
-    asInteger(item.stageIndex, contractId, `selectedInputs[${index}].stageIndex`, { minimum: 0 });
-    asString(item.value, contractId, `selectedInputs[${index}].value`);
-  }
-  asInteger(payload.candidateCount, contractId, 'candidateCount', { minimum: 0 });
-  asBoolean(payload.thinPack, contractId, 'thinPack');
-  asStringArray(payload.missingCategories, contractId, 'missingCategories');
-  return payload;
-}
-
 function validateValidationResult(payload) {
   const contractId = CONTRACT_IDS.validationResult;
   asObject(payload, contractId, 'payload');
@@ -563,13 +527,6 @@ const registry = {
     latestSchemaVersion: 2,
     migrate: migrateContinuityCheckpoint,
     validate: validateContinuityCheckpoint
-  },
-  [CONTRACT_IDS.contactPackManifest]: {
-    latestSchemaVersion: 1,
-    migrate(payload) {
-      return payload;
-    },
-    validate: validateContactPackManifest
   },
   [CONTRACT_IDS.validationResult]: {
     latestSchemaVersion: 1,

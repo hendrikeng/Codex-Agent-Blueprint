@@ -105,6 +105,11 @@ async function writeActiveEvidence(rootDir, planSlug) {
   );
 }
 
+function commitFixtureChanges(rootDir, message) {
+  spawnSync('git', ['add', '.'], { cwd: rootDir, stdio: 'pipe' });
+  spawnSync('git', ['commit', '-m', message], { cwd: rootDir, stdio: 'pipe' });
+}
+
 test('orchestrator promotes a medium-risk future, runs worker and reviewer, then completes it', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {
@@ -142,6 +147,7 @@ test('orchestrator promotes a medium-risk future, runs worker and reviewer, then
     directFuturePlan({ planId: 'red-inbox', riskTier: 'medium' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed red inbox plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -200,6 +206,7 @@ test('orchestrator ticker output keeps timestamped lifecycle lines', async () =>
     directFuturePlan({ planId: 'ticker-plan', riskTier: 'low' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed ticker output plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -209,7 +216,13 @@ test('orchestrator ticker output keeps timestamped lifecycle lines', async () =>
 
   assert.equal(result.status, 0, String(result.stderr));
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind runId=/);
-  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} heartbeat phase=session plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind overview runId=/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} queue focus runId=/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} plan start plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} session start plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} file activity phase=session plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} session artifacts plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind summary runId=/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} finished runId=/);
 });
 
@@ -244,6 +257,7 @@ test('orchestrator pretty output keeps readable lifecycle tags in non-tty mode',
     directFuturePlan({ planId: 'pretty-plan', riskTier: 'low' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed pretty output plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -252,9 +266,19 @@ test('orchestrator pretty output keeps readable lifecycle tags in non-tty mode',
   );
 
   assert.equal(result.status, 0, String(result.stderr));
-  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN  grind runId=/);
-  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN  heartbeat phase=session plan=pretty-plan/);
-  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. OK\s+finished runId=/);
+  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN  grind/);
+  assert.match(String(result.stdout), /GRIND OVERVIEW/);
+  assert.match(String(result.stdout), /queue focus/);
+  assert.match(String(result.stdout), /plan start/);
+  assert.match(String(result.stdout), /runId\s+=\s+run-/);
+  assert.match(String(result.stdout), /session start/);
+  assert.match(String(result.stdout), /plan\s+=\s+pretty-plan/);
+  assert.match(String(result.stdout), /file activity/);
+  assert.match(String(result.stdout), /session artifacts/);
+  assert.match(String(result.stdout), /phase\s+=\s+session/);
+  assert.match(String(result.stdout), /GRIND SUMMARY/);
+  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. OK\s+finished/);
+  assert.match(String(result.stdout), /runId\s+=\s+run-/);
 });
 
 test('orchestrator forces a handoff when a worker returns too close to the context threshold', async () => {
@@ -309,6 +333,7 @@ test('orchestrator forces a handoff when a worker returns too close to the conte
     directFuturePlan({ planId: 'context-threshold-plan', riskTier: 'medium' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed context threshold plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -344,6 +369,7 @@ test('orchestrator blocks high-risk work without explicit security approval', as
     }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed payments cutover plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -468,6 +494,7 @@ test('orchestrator pretty output keeps readable lifecycle lines', async () => {
     directFuturePlan({ planId: 'pretty-plan', riskTier: 'low' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed pretty lifecycle plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -476,7 +503,15 @@ test('orchestrator pretty output keeps readable lifecycle lines', async () => {
   );
   assert.equal(result.status, 0, String(result.stderr));
   assert.match(String(result.stdout), / RUN /);
+  assert.match(String(result.stdout), /GRIND OVERVIEW/);
+  assert.match(String(result.stdout), /plan start/);
   assert.match(String(result.stdout), /promoted pretty-plan/);
+  assert.match(String(result.stdout), /session start/);
+  assert.match(String(result.stdout), /plan\s+=\s+pretty-plan/);
+  assert.match(String(result.stdout), /file activity/);
+  assert.match(String(result.stdout), /session artifacts/);
+  assert.match(String(result.stdout), /phase\s+=\s+session/);
+  assert.match(String(result.stdout), /GRIND SUMMARY/);
 });
 
 test('orchestrator ticker output keeps compact lifecycle lines', async () => {
@@ -510,6 +545,7 @@ test('orchestrator ticker output keeps compact lifecycle lines', async () => {
     directFuturePlan({ planId: 'ticker-plan', riskTier: 'low' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed ticker lifecycle plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -518,6 +554,12 @@ test('orchestrator ticker output keeps compact lifecycle lines', async () => {
   );
   assert.equal(result.status, 0, String(result.stderr));
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind runId=/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind overview runId=/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} plan start plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} session start plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} file activity phase=session plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} session artifacts plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind summary runId=/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} committed ticker-plan/);
 });
 
@@ -552,6 +594,7 @@ test('orchestrator ticker output keeps compact lifecycle logs visible', async ()
     directFuturePlan({ planId: 'ticker-plan', riskTier: 'low' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed ticker visible lifecycle plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -560,7 +603,10 @@ test('orchestrator ticker output keeps compact lifecycle logs visible', async ()
   );
   assert.equal(result.status, 0, String(result.stderr));
   assert.match(String(result.stdout), /\[ticker\]/);
+  assert.match(String(result.stdout), /queue focus runId=/);
+  assert.match(String(result.stdout), /plan start plan=ticker-plan/);
   assert.match(String(result.stdout), /promoted ticker-plan/);
+  assert.match(String(result.stdout), /session start plan=ticker-plan/);
 });
 
 test('orchestrator pretty output keeps readable tagged lifecycle logs in non-tty runs', async () => {
@@ -594,6 +640,7 @@ test('orchestrator pretty output keeps readable tagged lifecycle logs in non-tty
     directFuturePlan({ planId: 'pretty-plan', riskTier: 'low' }),
     'utf8'
   );
+  commitFixtureChanges(rootDir, 'docs: seed pretty tagged lifecycle plan');
 
   const result = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -602,5 +649,12 @@ test('orchestrator pretty output keeps readable tagged lifecycle logs in non-tty
   );
   assert.equal(result.status, 0, String(result.stderr));
   assert.match(String(result.stdout), / RUN /);
-  assert.match(String(result.stdout), /heartbeat phase=session plan=pretty-plan/);
+  assert.match(String(result.stdout), /GRIND OVERVIEW/);
+  assert.match(String(result.stdout), /plan start/);
+  assert.match(String(result.stdout), /session start/);
+  assert.match(String(result.stdout), /plan\s+=\s+pretty-plan/);
+  assert.match(String(result.stdout), /file activity/);
+  assert.match(String(result.stdout), /session artifacts/);
+  assert.match(String(result.stdout), /phase\s+=\s+session/);
+  assert.match(String(result.stdout), /GRIND SUMMARY/);
 });

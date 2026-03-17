@@ -36,6 +36,40 @@ const scriptFiles = [
   'package.json'
 ];
 const managedScriptPattern = /^(agent:verify|architecture:verify|automation:|conformance:verify|context:compile|docs:verify|eval:|harness:verify|interop:github:|outcomes:|perf:|plans:|state:verify|verify:)/;
+const canonicalDocFiles = [
+  'README.md',
+  'AGENTS.md',
+  'docs/README.md',
+  'docs/PLANS.md',
+  'docs/future/README.md',
+  'docs/exec-plans/README.md',
+  'docs/exec-plans/active/README.md',
+  'docs/ops/automation/README.md',
+  'docs/ops/automation/LITE_QUICKSTART.md',
+  'docs/ops/automation/ROLE_ORCHESTRATION.md'
+];
+const requiredDocSnippets = [
+  {
+    filePath: 'README.md',
+    snippet: 'future -> active -> completed',
+    message: "README.md must describe the flat queue lifecycle 'future -> active -> completed'."
+  },
+  {
+    filePath: 'docs/PLANS.md',
+    snippet: 'Use separate future files instead of program parents',
+    message: 'docs/PLANS.md must direct larger work into multiple future files instead of parent-plan orchestration.'
+  },
+  {
+    filePath: 'docs/future/README.md',
+    snippet: 'Use one future file per executable slice.',
+    message: 'docs/future/README.md must keep future authoring slice-shaped.'
+  },
+  {
+    filePath: 'docs/ops/automation/README.md',
+    snippet: 'no program parents, no child compilation, no parallel worktrees, no contact packs',
+    message: 'docs/ops/automation/README.md must keep the reduced flat-queue conveyor boundary explicit.'
+  }
+];
 
 function addFinding(code, message, filePath) {
   findings.push({ code, message, filePath });
@@ -44,6 +78,10 @@ function addFinding(code, message, filePath) {
 async function readJson(filePath) {
   const raw = await fs.readFile(filePath, 'utf8');
   return JSON.parse(raw);
+}
+
+async function readText(filePath) {
+  return fs.readFile(filePath, 'utf8');
 }
 
 function validateScriptsMap(scripts, filePath) {
@@ -85,12 +123,34 @@ function validateMirroredScripts(fragmentScripts, packageScripts) {
   }
 }
 
+function validateCanonicalDocs(docPayloads) {
+  for (const [filePath, content] of Object.entries(docPayloads)) {
+    for (const scriptName of retiredScripts) {
+      if (String(content).includes(`\`${scriptName}\``) || String(content).includes(scriptName)) {
+        addFinding(
+          'RETIRED_DOC_REFERENCE',
+          `Canonical docs must not reference retired harness script '${scriptName}'.`,
+          filePath
+        );
+      }
+    }
+  }
+
+  for (const requirement of requiredDocSnippets) {
+    const content = String(docPayloads[requirement.filePath] ?? '');
+    if (!content.includes(requirement.snippet)) {
+      addFinding('MISSING_FLAT_QUEUE_GUIDANCE', requirement.message, requirement.filePath);
+    }
+  }
+}
+
 async function main() {
   const configPath = path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json');
   const policyPath = path.join(rootDir, 'docs', 'governance', 'policy-manifest.json');
   const config = await readJson(configPath);
   const policy = await readJson(policyPath);
   const scriptPayloads = {};
+  const docPayloads = {};
 
   for (const scriptFile of scriptFiles) {
     const payload = await readJson(path.join(rootDir, scriptFile));
@@ -101,6 +161,11 @@ async function main() {
     scriptPayloads['package.scripts.fragment.json'] ?? {},
     scriptPayloads['package.json'] ?? {}
   );
+
+  for (const docFile of canonicalDocFiles) {
+    docPayloads[docFile] = await readText(path.join(rootDir, docFile));
+  }
+  validateCanonicalDocs(docPayloads);
 
   const roleNames = Object.keys(config?.executor?.roles ?? {}).sort();
   if (roleNames.join(',') !== 'reviewer,worker') {
