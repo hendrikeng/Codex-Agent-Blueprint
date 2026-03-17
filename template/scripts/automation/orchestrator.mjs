@@ -315,7 +315,12 @@ function printIndentedPrettyMessage(prefix, message) {
   const consoleWidth =
     process.stdout.isTTY && Number.isFinite(process.stdout.columns) ? Number(process.stdout.columns) : 0;
   const maxWidth = consoleWidth > visiblePrefixLength + 12 ? consoleWidth - visiblePrefixLength : 0;
-  const lines = wrapTextForConsole(renderedMessage, maxWidth);
+  const visibleMessage = stripAnsiControl(renderedMessage);
+  if (!Number.isFinite(maxWidth) || maxWidth <= 0 || visibleMessage.length <= maxWidth) {
+    console.log(`${renderedPrefix}${renderedMessage}`);
+    return;
+  }
+  const lines = wrapTextForConsole(visibleMessage, maxWidth);
 
   console.log(`${renderedPrefix}${lines[0] ?? ''}`);
   if (lines.length <= 1) {
@@ -1883,6 +1888,16 @@ async function refreshPlan(rootDir, plan) {
   return readPlan(plan.filePath, plan.phase, rootDir);
 }
 
+async function readLatestCheckpoint(rootDir, runId, planId) {
+  return readJson(runtimePaths(rootDir, runId, planId).checkpointPath, null);
+}
+
+function checkpointRequestsWorkerContinuation(checkpoint) {
+  const role = String(checkpoint?.role ?? '').trim().toLowerCase();
+  const status = String(checkpoint?.status ?? '').trim().toLowerCase();
+  return role === ROLE_REVIEWER && (status === 'pending' || status === 'handoff_required');
+}
+
 async function executePlan(rootDir, config, state, initialPlan, logging, sessionLimit, options) {
   let plan = initialPlan;
   const planRoles = rolesForPlan(plan, config);
@@ -1890,6 +1905,12 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
 
   while ((state.planSessions[plan.planId] ?? 0) < sessionLimit) {
     plan = await refreshPlan(rootDir, plan);
+    const mustLandSatisfied = mustLandComplete(plan.content);
+    const latestCheckpoint = await readLatestCheckpoint(rootDir, state.runId, plan.planId);
+    const reviewerRequestedWorkerContinuation =
+      plan.status === 'in-progress' &&
+      mustLandSatisfied &&
+      checkpointRequestsWorkerContinuation(latestCheckpoint);
 
     if (securityApprovalRequired(plan, config) && plan.securityApproval !== 'approved') {
       plan = await markPlanBlocked(
@@ -1943,7 +1964,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
       return 'completed';
     }
 
-    if (mustLandComplete(plan.content) && plan.status !== 'in-review') {
+    if (mustLandSatisfied && plan.status !== 'in-review' && !reviewerRequestedWorkerContinuation) {
       if (planRoles.includes(ROLE_REVIEWER)) {
         plan = await updatePlanStatus(rootDir, plan, 'in-review', `Queued review for ${plan.planId} in ${state.runId}.`);
         continue;
@@ -2239,23 +2260,24 @@ async function processQueue(rootDir, config, state, options) {
       break;
     }
 
-    const plan = queue[0];
-    const planRoles = rolesForPlan(plan, config);
-    const nextSessionNumber = (state.planSessions[plan.planId] ?? 0) + 1;
-    logLine(
-      logging,
-      `plan start plan=${plan.planId} status=${plan.status} priority=${plan.priority} risk=${plan.riskTier} queueDepth=${queue.length} session=${nextSessionNumber}/${sessionLimit} roles=${planRoles.join('->')} validation=${plan.validationLanes.join(',') || 'none'}`
-    );
-    state.activePlanId = plan.planId;
-    await saveRunState(rootDir, state);
-    const outcome = await executePlan(rootDir, config, state, plan, logging, sessionLimit, options);
-    processedPlans += 1;
-    state.activePlanId = null;
-    await saveRunState(rootDir, state);
-    if (outcome === 'blocked' && maxPlans === 1) {
-      break;
+      const plan = queue[0];
+      const planRoles = rolesForPlan(plan, config);
+      const nextSessionNumber = (state.planSessions[plan.planId] ?? 0) + 1;
+      const displaySessionNumber = Math.min(nextSessionNumber, sessionLimit);
+      logLine(
+        logging,
+        `plan start plan=${plan.planId} status=${plan.status} priority=${plan.priority} risk=${plan.riskTier} queueDepth=${queue.length} session=${displaySessionNumber}/${sessionLimit} roles=${planRoles.join('->')} validation=${plan.validationLanes.join(',') || 'none'}`
+      );
+      state.activePlanId = plan.planId;
+      await saveRunState(rootDir, state);
+      const outcome = await executePlan(rootDir, config, state, plan, logging, sessionLimit, options);
+      processedPlans += 1;
+      state.activePlanId = null;
+      await saveRunState(rootDir, state);
+      if (outcome === 'blocked') {
+        break;
+      }
     }
-  }
   return processedPlans;
 }
 
