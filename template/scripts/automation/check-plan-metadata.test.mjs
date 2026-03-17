@@ -56,6 +56,32 @@ test('plans:verify accepts a direct future slice without legacy program metadata
   assert.match(String(result.stdout), /\[plans:verify\] ok/);
 });
 
+test('plans:verify accepts dependencies that resolve to completed plans in default scope', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'plans-verify-completed-deps-'));
+  await fs.mkdir(path.join(rootDir, 'docs', 'future'), { recursive: true });
+  await fs.mkdir(path.join(rootDir, 'docs', 'exec-plans', 'completed'), { recursive: true });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-red-inbox.md'),
+    validFuturePlan('\n- Dependencies: shipped-foundation'),
+    'utf8'
+  );
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-16-shipped-foundation.md'),
+    validFuturePlan(
+      '\n- Plan-ID: shipped-foundation\n- Status: completed\n- Done-Evidence: docs/exec-plans/evidence-index/shipped-foundation.md'
+    )
+      .replace(/^Status:\s+ready-for-promotion$/m, 'Status: completed')
+      .replace(/^- Status:\s+ready-for-promotion$/m, '- Status: completed')
+      .replace(/^- Dependencies:\s+none$/m, '- Dependencies: none')
+      .replace(/- \[ \] `ml-red-inbox` Make the inbox red\./, '- [x] `ml-red-inbox` Make the inbox red.'),
+    'utf8'
+  );
+
+  const result = runNode(scriptPath, [], rootDir);
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), /\[plans:verify\] ok/);
+});
+
 test('plans:verify rejects legacy execution-scope metadata and child sections', async () => {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'plans-verify-legacy-'));
   await fs.mkdir(path.join(rootDir, 'docs', 'future'), { recursive: true });

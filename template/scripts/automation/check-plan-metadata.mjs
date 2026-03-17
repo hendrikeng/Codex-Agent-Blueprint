@@ -310,9 +310,10 @@ async function main() {
   const filterPlanId = parsePlanId(options['plan-id'] ?? options.planId, null);
   const scope = normalizeScope(options.scope);
   const findings = [];
-  const plans = (await loadPlans()).filter((plan) => scope === 'all' || plan.phase !== 'completed');
+  const allLoadedPlans = await loadPlans();
+  const plans = allLoadedPlans.filter((plan) => scope === 'all' || plan.phase !== 'completed');
   const seenPlanIds = new Set();
-  const allPlanIds = new Set(plans.map((plan) => plan.planId).filter(Boolean));
+  const allPlanIds = new Set(allLoadedPlans.map((plan) => plan.planId).filter(Boolean));
 
   for (const plan of plans) {
     if (filterPlanId && plan.planId !== filterPlanId) {
