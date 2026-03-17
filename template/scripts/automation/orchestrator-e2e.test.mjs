@@ -169,6 +169,94 @@ test('orchestrator promotes a medium-risk future, runs worker and reviewer, then
   assert.match(String(latestCommit.stdout), /complete red-inbox/);
 });
 
+test('orchestrator ticker output keeps timestamped lifecycle lines', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'ticker-plan': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker delivered ticker plan.',
+            writeFiles: [{ path: 'src/ticker-plan.js', content: 'export const mode = "ticker";\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:ticker-plan': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-ticker-plan.md'),
+    directFuturePlan({ planId: 'ticker-plan', riskTier: 'low' }),
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'ticker'],
+    rootDir
+  );
+
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind runId=/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} heartbeat phase=session plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} finished runId=/);
+});
+
+test('orchestrator pretty output keeps readable lifecycle tags in non-tty mode', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'pretty-plan': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker delivered pretty plan.',
+            writeFiles: [{ path: 'src/pretty-plan.js', content: 'export const mode = "pretty";\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:pretty-plan': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-pretty-plan.md'),
+    directFuturePlan({ planId: 'pretty-plan', riskTier: 'low' }),
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'pretty'],
+    rootDir
+  );
+
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN  grind runId=/);
+  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN  heartbeat phase=session plan=pretty-plan/);
+  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. OK\s+finished runId=/);
+});
+
 test('orchestrator forces a handoff when a worker returns too close to the context threshold', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {
@@ -347,4 +435,172 @@ test('orchestrator commits per-plan active evidence without leaking it into the 
   assert.equal(history.status, 0);
   assert.match(String(history.stdout), /complete first-slice/);
   assert.match(String(history.stdout), /complete second-slice/);
+});
+
+test('orchestrator pretty output keeps readable lifecycle lines', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'pretty-plan': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Pretty output plan delivered.',
+            writeFiles: [{ path: 'src/pretty-plan.js', content: 'export const pretty = true;\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:pretty-plan': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed for pretty plan.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-pretty-plan.md'),
+    directFuturePlan({ planId: 'pretty-plan', riskTier: 'low' }),
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'pretty'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), / RUN /);
+  assert.match(String(result.stdout), /promoted pretty-plan/);
+});
+
+test('orchestrator ticker output keeps compact lifecycle lines', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'ticker-plan': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Ticker output plan delivered.',
+            writeFiles: [{ path: 'src/ticker-plan.js', content: 'export const ticker = true;\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:ticker-plan': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed for ticker plan.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-ticker-plan.md'),
+    directFuturePlan({ planId: 'ticker-plan', riskTier: 'low' }),
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'ticker'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind runId=/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} committed ticker-plan/);
+});
+
+test('orchestrator ticker output keeps compact lifecycle logs visible', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'ticker-plan': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker delivered ticker plan.',
+            writeFiles: [{ path: 'src/ticker-plan.js', content: 'export const ticker = true;\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:ticker-plan': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-ticker-plan.md'),
+    directFuturePlan({ planId: 'ticker-plan', riskTier: 'low' }),
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'ticker'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), /\[ticker\]/);
+  assert.match(String(result.stdout), /promoted ticker-plan/);
+});
+
+test('orchestrator pretty output keeps readable tagged lifecycle logs in non-tty runs', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'pretty-plan': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker delivered pretty plan.',
+            writeFiles: [{ path: 'src/pretty-plan.js', content: 'export const pretty = true;\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:pretty-plan': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-pretty-plan.md'),
+    directFuturePlan({ planId: 'pretty-plan', riskTier: 'low' }),
+    'utf8'
+  );
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'pretty'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+  assert.match(String(result.stdout), / RUN /);
+  assert.match(String(result.stdout), /heartbeat phase=session plan=pretty-plan/);
 });

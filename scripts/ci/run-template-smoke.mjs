@@ -137,6 +137,27 @@ async function writePackageJson(repoDir) {
   await fs.writeFile(path.join(repoDir, 'package.json'), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
+async function assertPackageJsonDriftFails(repoDir) {
+  const packageJsonPath = path.join(repoDir, 'package.json');
+  const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
+  packageJson.scripts['automation:run:parallel'] =
+    'node ./scripts/automation/orchestrator.mjs run-parallel';
+  await fs.writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
+
+  const result = spawnSync('npm run harness:verify', {
+    cwd: repoDir,
+    shell: true,
+    stdio: 'pipe',
+    env: { ...process.env, CI: '1' }
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if ((result.status ?? 1) === 0) {
+    throw new Error('Expected harness:verify to fail when package.json contains retired scripts.');
+  }
+}
+
 function runCommand(repoDir, command, extraEnv = {}) {
   console.log(`[template-smoke] ${command}`);
   const result = spawnSync(command, {
@@ -170,6 +191,7 @@ async function main() {
   for (const command of commands) {
     runCommand(repoDir, command, { CI: '1' });
   }
+  await assertPackageJsonDriftFails(repoDir);
 
   console.log(`[template-smoke] passed (${toPosix(repoDir)})`);
 }

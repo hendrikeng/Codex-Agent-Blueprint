@@ -41,4 +41,5 @@ test('verify-fast uses dry-run plan reference repair during orchestrated validat
 
   assert.equal(result.status, 0, String(result.stderr));
   assert.match(String(result.stdout), /repair-plan-references\.mjs --dry-run/);
+  assert.match(String(result.stdout), /check-plan-metadata\.mjs --plan-id red-inbox/);
 });

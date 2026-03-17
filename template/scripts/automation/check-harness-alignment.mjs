@@ -27,6 +27,15 @@ const retiredScripts = [
   'plans:scaffold-children',
   'state:verify'
 ];
+const mirroredScriptNames = [
+  ...requiredScripts,
+  ...retiredScripts
+];
+const scriptFiles = [
+  'package.scripts.fragment.json',
+  'package.json'
+];
+const managedScriptPattern = /^(agent:verify|architecture:verify|automation:|conformance:verify|context:compile|docs:verify|eval:|harness:verify|interop:github:|outcomes:|perf:|plans:|state:verify|verify:)/;
 
 function addFinding(code, message, filePath) {
   findings.push({ code, message, filePath });
@@ -37,25 +46,61 @@ async function readJson(filePath) {
   return JSON.parse(raw);
 }
 
-async function main() {
-  const packageScriptsPath = path.join(rootDir, 'package.scripts.fragment.json');
-  const configPath = path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json');
-  const policyPath = path.join(rootDir, 'docs', 'governance', 'policy-manifest.json');
-  const packageScripts = await readJson(packageScriptsPath);
-  const config = await readJson(configPath);
-  const policy = await readJson(policyPath);
-  const scripts = packageScripts?.scripts ?? {};
-
+function validateScriptsMap(scripts, filePath) {
   for (const scriptName of requiredScripts) {
     if (!String(scripts[scriptName] ?? '').trim()) {
-      addFinding('MISSING_SCRIPT', `Missing required script '${scriptName}'.`, 'package.scripts.fragment.json');
+      addFinding('MISSING_SCRIPT', `Missing required script '${scriptName}'.`, filePath);
     }
   }
   for (const scriptName of retiredScripts) {
     if (Object.prototype.hasOwnProperty.call(scripts, scriptName)) {
-      addFinding('RETIRED_SCRIPT', `Retired script '${scriptName}' should not exist.`, 'package.scripts.fragment.json');
+      addFinding('RETIRED_SCRIPT', `Retired script '${scriptName}' should not exist.`, filePath);
     }
   }
+}
+
+function validateMirroredScripts(fragmentScripts, packageScripts) {
+  for (const scriptName of mirroredScriptNames) {
+    const fragmentValue = String(fragmentScripts[scriptName] ?? '').trim();
+    const packageValue = String(packageScripts[scriptName] ?? '').trim();
+    if (fragmentValue !== packageValue) {
+      addFinding(
+        'SCRIPT_MISMATCH',
+        `package.json script '${scriptName}' must match package.scripts.fragment.json.`,
+        'package.json'
+      );
+    }
+  }
+  for (const scriptName of Object.keys(packageScripts)) {
+    if (!managedScriptPattern.test(scriptName)) {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(fragmentScripts, scriptName)) {
+      addFinding(
+        'UNMANAGED_SCRIPT',
+        `package.json script '${scriptName}' is not part of the flat-queue harness script set.`,
+        'package.json'
+      );
+    }
+  }
+}
+
+async function main() {
+  const configPath = path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json');
+  const policyPath = path.join(rootDir, 'docs', 'governance', 'policy-manifest.json');
+  const config = await readJson(configPath);
+  const policy = await readJson(policyPath);
+  const scriptPayloads = {};
+
+  for (const scriptFile of scriptFiles) {
+    const payload = await readJson(path.join(rootDir, scriptFile));
+    scriptPayloads[scriptFile] = payload?.scripts ?? {};
+    validateScriptsMap(payload?.scripts ?? {}, scriptFile);
+  }
+  validateMirroredScripts(
+    scriptPayloads['package.scripts.fragment.json'] ?? {},
+    scriptPayloads['package.json'] ?? {}
+  );
 
   const roleNames = Object.keys(config?.executor?.roles ?? {}).sort();
   if (roleNames.join(',') !== 'reviewer,worker') {
@@ -111,6 +156,14 @@ async function main() {
     addFinding(
       'INVALID_CONTEXT_BUDGET_PERCENT',
       'executor.contextBudget.minRemainingPercent must be between 0 and 1.',
+      'docs/ops/automation/orchestrator.config.json'
+    );
+  }
+
+  if (String(config?.logging?.output ?? '').trim().toLowerCase() !== 'pretty') {
+    addFinding(
+      'INVALID_LOGGING_OUTPUT',
+      "logging.output must default to 'pretty'.",
       'docs/ops/automation/orchestrator.config.json'
     );
   }

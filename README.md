@@ -74,10 +74,11 @@ Preferred path:
 
 1. Run `node ./scripts/harness-sync.mjs install --target /path/to/target-repo`.
 2. Replace placeholders from [template/PLACEHOLDERS.md](template/PLACEHOLDERS.md).
-3. Add scripts from [template/package.scripts.fragment.json](template/package.scripts.fragment.json) into the downstream `package.json`.
-4. Seed futures in `docs/future/` and any tiny direct work in `docs/exec-plans/active/`.
-5. Run `./scripts/check-template-placeholders.sh`.
-6. Run `./scripts/bootstrap-verify.sh`.
+3. Merge the scripts from [template/package.scripts.fragment.json](template/package.scripts.fragment.json) into the downstream `package.json`, then keep the real `package.json` aligned with the fragment.
+4. Run `npm run harness:verify` in the downstream repo so the actual `package.json` operator entrypoints are checked.
+5. Seed futures in `docs/future/` and any tiny direct work in `docs/exec-plans/active/`.
+6. Run `./scripts/check-template-placeholders.sh`.
+7. Run `./scripts/bootstrap-verify.sh`.
 
 Bootstrap check scripts shipped by the template:
 

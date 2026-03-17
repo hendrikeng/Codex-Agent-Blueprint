@@ -7,6 +7,7 @@ import { CONTRACT_IDS, prepareContractPayload } from './lib/contracts/index.mjs'
 
 const rootDir = process.cwd();
 const aggregateResultPath = String(process.env.ORCH_VALIDATION_RESULT_PATH ?? '').trim();
+const PLAN_ID_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function parseArgs(argv) {
   const options = {};
@@ -69,6 +70,14 @@ function detectChangedFiles() {
   return [];
 }
 
+function resolvedPlanMetadataCommand() {
+  const planId = String(process.env.ORCH_PLAN_ID ?? '').trim().toLowerCase();
+  if (!planId || !PLAN_ID_REGEX.test(planId)) {
+    return 'node ./scripts/automation/check-plan-metadata.mjs';
+  }
+  return `node ./scripts/automation/check-plan-metadata.mjs --plan-id ${planId}`;
+}
+
 function buildCommandSet(changedFiles) {
   const inOrchestratedPlanRun = String(process.env.ORCH_PLAN_ID ?? '').trim() !== '';
   const commands = [
@@ -77,7 +86,7 @@ function buildCommandSet(changedFiles) {
       ? 'node ./scripts/docs/repair-plan-references.mjs --dry-run'
       : 'node ./scripts/docs/repair-plan-references.mjs',
     'node ./scripts/docs/check-governance.mjs',
-    'node ./scripts/automation/check-plan-metadata.mjs',
+    resolvedPlanMetadataCommand(),
     'node ./scripts/automation/check-harness-alignment.mjs'
   ];
 

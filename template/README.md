@@ -106,7 +106,7 @@ Start with:
 - Plan metadata verification: `npm run plans:verify`
 - Fast iteration profile: `npm run verify:fast`
 - Full merge profile: `npm run verify:full`
-- Harness alignment check: `npm run harness:verify`
+- Harness alignment check: `npm run harness:verify` verifies both `package.scripts.fragment.json` and the merged `package.json` operator scripts.
 - Canonical policy map: `docs/governance/RULES.md`, `docs/governance/policy-manifest.json`, `docs/ops/automation/README.md`
 
 ## When To Run Checks
