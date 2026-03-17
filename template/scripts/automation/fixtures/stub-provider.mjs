@@ -93,6 +93,11 @@ async function main() {
   const state = await readJson(statePath, {});
   const action = loadAction(scenario, state, planId, role);
 
+  process.stdout.write(`${JSON.stringify({
+    type: 'progress',
+    activity: action.liveActivity ?? `${role} working on ${planId}`
+  })}\n`);
+
   for (const file of action.writeFiles ?? []) {
     const targetPath = path.join(rootDir, file.path);
     await fs.mkdir(path.dirname(targetPath), { recursive: true });

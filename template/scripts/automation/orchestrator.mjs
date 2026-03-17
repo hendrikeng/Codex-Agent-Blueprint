@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -577,15 +578,60 @@ function logLine(logging, message, level = 'run') {
   console.log(`[orchestrator] ${message}`);
 }
 
+const LIVE_ACTIVITY_GENERIC_TOKENS = new Set([
+  'ok',
+  'done',
+  'completed',
+  'complete',
+  'pending',
+  'running',
+  'started',
+  'in_progress'
+]);
+
+function isGenericLiveActivityToken(value) {
+  const rendered = String(value ?? '').trim().toLowerCase();
+  if (!rendered) {
+    return true;
+  }
+  if (LIVE_ACTIVITY_GENERIC_TOKENS.has(rendered)) {
+    return true;
+  }
+  return /^[a-z_][a-z0-9_-]*$/.test(rendered) && rendered.length <= 24;
+}
+
+function condenseVerboseLiveActivity(value) {
+  const rendered = String(value ?? '').trim();
+  if (!rendered) {
+    return rendered;
+  }
+  const looksVerbose =
+    rendered.length > 140 ||
+    rendered.includes('**') ||
+    rendered.includes('](') ||
+    rendered.includes('`') ||
+    rendered.includes(' - ') ||
+    rendered.includes('• ');
+  if (!looksVerbose) {
+    return rendered;
+  }
+  const sentenceMatch = rendered.match(/^(.{1,220}?[.!?])(?:\s|$)/);
+  if (sentenceMatch?.[1]) {
+    return sentenceMatch[1].trim();
+  }
+  return rendered.slice(0, 140).trimEnd();
+}
+
 function sanitizeLiveActivityLine(line, maxChars = 160) {
   let rendered = stripAnsiControl(line).replace(/\s+/g, ' ').trim();
   if (!rendered || !/[A-Za-z]/.test(rendered)) {
     return null;
   }
   const lower = rendered.toLowerCase();
-  if (['ok', 'done', 'completed', 'complete', 'pending', 'running', 'started', 'in_progress'].includes(lower)) {
+  if (isGenericLiveActivityToken(lower)) {
     return null;
   }
+  rendered = condenseVerboseLiveActivity(rendered);
   if (Number.isFinite(maxChars) && maxChars > 0 && rendered.length > maxChars) {
     rendered = `${rendered.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
   }
@@ -612,14 +658,14 @@ function extractLiveActivityText(value) {
     return null;
   }
 
-  for (const key of ['message', 'summary', 'text', 'content', 'activity', 'reasoning', 'description']) {
+  for (const key of ['message', 'summary', 'text', 'content', 'activity', 'reasoning', 'description', 'item', 'items', 'payload', 'output']) {
     const candidate = extractLiveActivityText(value[key]);
     if (candidate) {
       return candidate;
     }
   }
 
-  for (const key of ['delta', 'details', 'result', 'event', 'data']) {
+  for (const key of ['delta', 'details', 'result', 'event', 'data', 'response']) {
     const candidate = extractLiveActivityText(value[key]);
     if (candidate) {
       return candidate;
@@ -693,6 +739,39 @@ function parseGitPorcelainPaths(stdout) {
   return [...new Set(paths)];
 }
 
+function expandRepoPathEntry(rootDir, relativePath) {
+  const normalized = normalizeRepoRelativePath(relativePath);
+  if (!normalized) {
+    return [];
+  }
+  const absolutePath = path.join(rootDir, normalized);
+  let stat;
+  try {
+    stat = fsSync.statSync(absolutePath);
+  } catch {
+    return [normalized];
+  }
+  if (!stat.isDirectory()) {
+    return [normalized];
+  }
+  const files = [];
+  const walk = (directoryPath, relativeDir) => {
+    for (const entry of fsSync.readdirSync(directoryPath, { withFileTypes: true })) {
+      const entryAbs = path.join(directoryPath, entry.name);
+      const entryRel = normalizeRepoRelativePath(path.join(relativeDir, entry.name));
+      if (entry.isDirectory()) {
+        walk(entryAbs, entryRel);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push(entryRel);
+      }
+    }
+  };
+  walk(absolutePath, normalized);
+  return files.length > 0 ? files : [normalized];
+}
+
 function gitAvailable(rootDir) {
   const result = runShellCapture('git rev-parse --is-inside-work-tree', rootDir);
   return result.status === 0;
@@ -703,7 +782,9 @@ function dirtyRepoPaths(rootDir, { includeTransient = false } = {}) {
   if (result.status !== 0) {
     return [];
   }
-  const paths = parseGitPorcelainPaths(result.stdout);
+  const paths = parseGitPorcelainPaths(result.stdout)
+    .flatMap((entry) => expandRepoPathEntry(rootDir, entry))
+    .filter((entry, index, list) => list.indexOf(entry) === index);
   return includeTransient ? paths : paths.filter((entry) => !isTransientAutomationPath(entry));
 }
 
@@ -929,6 +1010,51 @@ function formatTouchSummaryDetails(summary) {
   return `touched=${summary.count} categories=[${categories}] sample=[${samples}]`;
 }
 
+function normalizeTouchSummary(summary) {
+  if (!summary || typeof summary !== 'object') {
+    return {
+      count: 0,
+      categories: [],
+      samples: [],
+      fingerprint: 'none',
+      touched: []
+    };
+  }
+  return {
+    count: Number.isFinite(summary.count) ? Math.max(0, Math.floor(summary.count)) : 0,
+    categories: Array.isArray(summary.categories) ? summary.categories : [],
+    samples: Array.isArray(summary.samples) ? summary.samples.filter(Boolean) : [],
+    fingerprint: safeDisplayToken(summary.fingerprint, 'none'),
+    touched: Array.isArray(summary.touched) ? summary.touched.filter(Boolean) : []
+  };
+}
+
+function formatTouchSummaryForArtifact(summary) {
+  const normalized = normalizeTouchSummary(summary);
+  if (normalized.count <= 0) {
+    return '0 files';
+  }
+  const categories = normalized.categories
+    .slice(0, 4)
+    .map((entry) => `${entry.category}:${entry.count}`)
+    .join(', ');
+  return `${normalized.count} file(s)${categories ? ` [${categories}]` : ''}`;
+}
+
+function renderTouchedFileLines(summary, maxItems = 12) {
+  const normalized = normalizeTouchSummary(summary);
+  if (normalized.touched.length === 0) {
+    return ['- none'];
+  }
+  const visible = normalized.touched.slice(0, Math.max(1, maxItems));
+  const lines = visible.map((entry) => `- ${entry}`);
+  const remainder = normalized.touched.length - visible.length;
+  if (remainder > 0) {
+    lines.push(`- +${remainder} more (see checkpoint JSON for full list)`);
+  }
+  return lines;
+}
+
 function createTouchBaseline(rootDir) {
   return {
     initialDirtyPathSet: new Set(dirtyRepoPaths(rootDir, { includeTransient: true })),
@@ -1052,6 +1178,9 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
   let lastOutputAtMs = startedAtMs;
   let lastVisibleStatusAtMs = startedAtMs;
   let lastLiveActivityAtMs = 0;
+  let latestLiveActivity = null;
+  let latestLiveActivityUpdatedAt = null;
+  let liveActivityUpdates = 0;
   let lastTouchChangeAtMs = startedAtMs;
   let stdout = '';
   let stderr = '';
@@ -1073,12 +1202,6 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
   });
 
   function maybeEmitLiveActivity(line, nowMs = Date.now()) {
-    if (logging.mode !== 'pretty' && logging.mode !== 'ticker') {
-      return;
-    }
-    if (nowMs - lastLiveActivityAtMs < 5000) {
-      return;
-    }
     const trimmed = String(line ?? '').trim();
     if (!trimmed) {
       return;
@@ -1093,6 +1216,15 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
       return;
     }
     const activityMessage = sanitizeLogNarrative(message, 'working');
+    latestLiveActivity = activityMessage;
+    latestLiveActivityUpdatedAt = nowIso();
+    liveActivityUpdates += 1;
+    if (logging.mode !== 'pretty' && logging.mode !== 'ticker') {
+      return;
+    }
+    if (nowMs - lastLiveActivityAtMs < 5000) {
+      return;
+    }
     if (logging.mode === 'ticker') {
       logLine(
         logging,
@@ -1260,7 +1392,15 @@ async function runShellMonitored(command, cwd, env = process.env, timeoutMs = un
         signal,
         error: timedOut ? { code: 'ETIMEDOUT' } : processError,
         stdout,
-        stderr
+        stderr,
+        touchSummary: normalizeTouchSummary(touchSummary),
+        liveActivity: latestLiveActivity
+          ? {
+              message: latestLiveActivity,
+              updatedAt: latestLiveActivityUpdatedAt
+            }
+          : null,
+        liveActivityUpdates
       });
     };
 
@@ -1439,6 +1579,7 @@ function runtimePaths(rootDir, runId, planId) {
 
 async function writeCheckpoint(rootDir, runId, plan, role, sessionNumber, result) {
   const paths = runtimePaths(rootDir, runId, plan.planId);
+  const touchSummary = normalizeTouchSummary(result?.touchSummary);
   const checkpoint = {
     schemaVersion: 1,
     planId: plan.planId,
@@ -1452,6 +1593,19 @@ async function writeCheckpoint(rootDir, runId, plan, role, sessionNumber, result
     contextRemaining: result.contextRemaining,
     contextWindow: result.contextWindow,
     contextRemainingPercent: result.contextRemainingPercent,
+    sessionLogPath: trimmedString(result?.sessionLogPath),
+    liveActivity: result?.liveActivity && typeof result.liveActivity === 'object'
+      ? {
+          message: trimmedString(result.liveActivity.message),
+          updatedAt: trimmedString(result.liveActivity.updatedAt)
+        }
+      : null,
+    touchSummary: {
+      count: touchSummary.count,
+      categories: touchSummary.categories,
+      samples: touchSummary.samples
+    },
+    touchedFiles: touchSummary.touched,
     currentSubtask: result.currentSubtask,
     nextAction: result.nextAction,
     stateDelta: result.stateDelta
@@ -1471,11 +1625,20 @@ async function writeCheckpoint(rootDir, runId, plan, role, sessionNumber, result
     `- Context Remaining: ${Number.isFinite(result.contextRemaining) ? String(result.contextRemaining) : 'unknown'}`,
     `- Context Window: ${Number.isFinite(result.contextWindow) ? String(result.contextWindow) : 'unknown'}`,
     `- Context Remaining Percent: ${Number.isFinite(result.contextRemainingPercent) ? `${Math.round(result.contextRemainingPercent * 100)}%` : 'unknown'}`,
+    `- Session Log: ${result.sessionLogPath || 'none'}`,
+    `- Live Activity: ${result?.liveActivity?.message || 'none'}`,
+    `- Touched Files: ${formatTouchSummaryForArtifact(touchSummary)}`,
     `- Current Subtask: ${result.currentSubtask || 'none'}`,
-    `- Next Action: ${result.nextAction || 'none'}`
+    `- Next Action: ${result.nextAction || 'none'}`,
+    '',
+    '## Touched Files',
+    '',
+    ...renderTouchedFileLines(touchSummary)
   ].join('\n');
-  await fs.mkdir(path.dirname(paths.handoffPath), { recursive: true });
-  await fs.writeFile(paths.handoffPath, `${note}\n`, 'utf8');
+  if (['pending', 'handoff_required', 'blocked'].includes(String(result?.status ?? '').trim().toLowerCase())) {
+    await fs.mkdir(path.dirname(paths.handoffPath), { recursive: true });
+    await fs.writeFile(paths.handoffPath, `${note}\n`, 'utf8');
+  }
 
   return {
     checkpointRel: toPosix(path.relative(rootDir, paths.checkpointPath)),
@@ -1580,12 +1743,18 @@ function roleBoundaryComplete(plan, role) {
   return mustLandComplete(plan.content);
 }
 
-async function writeCommandLog(rootDir, runId, planId, role, sessionNumber, execution) {
+async function writeCommandLog(rootDir, runId, planId, role, sessionNumber, execution, metadata = {}) {
   const paths = runtimePaths(rootDir, runId, planId);
   await fs.mkdir(paths.logsDir, { recursive: true });
   const logPath = path.join(paths.logsDir, `${String(sessionNumber).padStart(2, '0')}-${role}.log`);
+  const touchSummary = normalizeTouchSummary(metadata?.touchSummary ?? execution?.touchSummary);
+  const touchedFiles = touchSummary.touched.length > 0 ? touchSummary.touched.join(', ') : 'none';
+  const liveActivity = trimmedString(metadata?.liveActivity?.message ?? execution?.liveActivity?.message, 'none');
   const content = [
     `exitCode=${execution.status ?? 1}`,
+    `liveActivity=${liveActivity}`,
+    `touchSummary=${formatTouchSummaryForArtifact(touchSummary)}`,
+    `touchedFiles=${touchedFiles}`,
     '',
     String(execution.stdout ?? ''),
     String(execution.stderr ?? '')
@@ -1643,14 +1812,23 @@ async function executeRole(rootDir, config, state, plan, role, logging) {
       activity: role === ROLE_REVIEWER ? 'reviewing' : 'implementing'
     }
   );
-  const logRel = await writeCommandLog(rootDir, state.runId, plan.planId, role, sessionNumber, execution);
+  const logRel = await writeCommandLog(rootDir, state.runId, plan.planId, role, sessionNumber, execution, {
+    touchSummary: execution.touchSummary,
+    liveActivity: execution.liveActivity
+  });
   const rawResult = await readJson(resultPath, null);
-  const normalized = normalizeResult(
+  const normalized = {
+    ...normalizeResult(
     rawResult,
     execution.status === 0
       ? ''
       : `Executor exited ${execution.status ?? 1}. See ${logRel}.`
-  );
+    ),
+    sessionLogPath: logRel,
+    touchSummary: execution.touchSummary,
+    liveActivity: execution.liveActivity,
+    liveActivityUpdates: execution.liveActivityUpdates ?? 0
+  };
   const checkpointRefs = await writeCheckpoint(rootDir, state.runId, plan, role, sessionNumber, normalized);
   await appendRunEvent(rootDir, state, 'session_finished', plan.planId, {
     role,
@@ -1660,6 +1838,9 @@ async function executeRole(rootDir, config, state, plan, role, logging) {
     contextRemaining: normalized.contextRemaining,
     contextWindow: normalized.contextWindow,
     contextRemainingPercent: normalized.contextRemainingPercent,
+    liveActivity: normalized.liveActivity?.message ?? null,
+    touchCount: normalized.touchSummary?.count ?? 0,
+    touchSamples: normalized.touchSummary?.samples ?? [],
     checkpoint: checkpointRefs.checkpointRel,
     handoff: checkpointRefs.handoffRel,
     log: logRel
@@ -2022,7 +2203,7 @@ async function executePlan(rootDir, config, state, initialPlan, logging, session
     );
     logLine(
       logging,
-      `session artifacts plan=${plan.planId} role=${role} session=${session.sessionNumber} checkpoint=${session.checkpointRefs.checkpointRel} handoff=${session.checkpointRefs.handoffRel} log=${session.logRel}`
+      `session artifacts plan=${plan.planId} role=${role} session=${session.sessionNumber} touched=${session.result.touchSummary?.count ?? 0} sample=${previewPlanIds(session.result.touchSummary?.samples ?? [], 3)} live=${sanitizeLogNarrative(session.result.liveActivity?.message, 'none', 100)} checkpoint=${session.checkpointRefs.checkpointRel} handoff=${session.checkpointRefs.handoffRel} log=${session.logRel}`
     );
     const contextBudget = analyzeContextBudget(session.result, config);
     if (contextBudget.triggered && !roleBoundaryComplete(plan, role) && session.result.status !== 'blocked') {

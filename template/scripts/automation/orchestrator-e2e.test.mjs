@@ -164,6 +164,15 @@ test('orchestrator promotes a medium-risk future, runs worker and reviewer, then
   const evidenceIndex = await fs.readFile(path.join(rootDir, 'docs', 'exec-plans', 'evidence-index', 'red-inbox.md'), 'utf8');
   assert.match(evidenceIndex, /fixture:always/);
 
+  const runState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  const workerLog = await fs.readFile(
+    path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', runState.runId, 'red-inbox', 'logs', '01-worker.log'),
+    'utf8'
+  );
+  assert.match(workerLog, /touchSummary=1 file\(s\)/);
+  assert.match(workerLog, /touchedFiles=src\/red-inbox\.js/);
+  assert.match(workerLog, /liveActivity=worker working on red-inbox/);
+
   const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
   assert.match(events, /future_promoted/);
   assert.match(events, /plan_completed/);
@@ -220,6 +229,7 @@ test('orchestrator ticker output keeps timestamped lifecycle lines', async () =>
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} queue focus runId=/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} plan start plan=ticker-plan/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} session start plan=ticker-plan/);
+  assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} working plan=ticker-plan/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} file activity phase=session plan=ticker-plan/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} session artifacts plan=ticker-plan/);
   assert.match(String(result.stdout), /\[ticker\] \d{2}:\d{2}:\d{2} grind summary runId=/);
@@ -273,6 +283,7 @@ test('orchestrator pretty output keeps readable lifecycle tags in non-tty mode',
   assert.match(String(result.stdout), /runId\s+=\s+run-/);
   assert.match(String(result.stdout), /session start/);
   assert.match(String(result.stdout), /plan\s+=\s+pretty-plan/);
+  assert.match(String(result.stdout), /WORKING pretty-plan\/worker/);
   assert.match(String(result.stdout), /file activity/);
   assert.match(String(result.stdout), /session artifacts/);
   assert.match(String(result.stdout), /phase\s+=\s+session/);
@@ -298,7 +309,8 @@ test('orchestrator forces a handoff when a worker returns too close to the conte
             contextWindow: 100000,
             currentSubtask: 'Summarize remaining implementation work',
             nextAction: 'Resume with a fresh worker session and complete must-land items',
-            pendingActions: ['Finish the remaining must-land implementation']
+            pendingActions: ['Finish the remaining must-land implementation'],
+            writeFiles: [{ path: 'src/context-threshold-wip.js', content: 'export const phase = "handoff";\n' }]
           },
           {
             status: 'completed',
@@ -328,9 +340,13 @@ test('orchestrator forces a handoff when a worker returns too close to the conte
       ]
     }
   });
+  const contextThresholdPlan = directFuturePlan({ planId: 'context-threshold-plan', riskTier: 'medium' }).replace(
+    '- Implementation-Targets: src/context-threshold-plan.js',
+    '- Implementation-Targets: src/context-threshold-plan.js, src/context-threshold-wip.js'
+  );
   await fs.writeFile(
     path.join(rootDir, 'docs', 'future', '2026-03-17-context-threshold-plan.md'),
-    directFuturePlan({ planId: 'context-threshold-plan', riskTier: 'medium' }),
+    contextThresholdPlan,
     'utf8'
   );
   commitFixtureChanges(rootDir, 'docs: seed context threshold plan');
@@ -351,6 +367,16 @@ test('orchestrator forces a handoff when a worker returns too close to the conte
     'utf8'
   );
   assert.match(handoff, /Context Remaining:/);
+  assert.match(handoff, /Touched Files:/);
+  assert.match(handoff, /src\/context-threshold-wip\.js/);
+
+  const runState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  const firstWorkerLog = await fs.readFile(
+    path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', runState.runId, 'context-threshold-plan', 'logs', '01-worker.log'),
+    'utf8'
+  );
+  assert.match(firstWorkerLog, /touchedFiles=src\/context-threshold-wip\.js/);
+  assert.match(firstWorkerLog, /liveActivity=worker working on context-threshold-plan/);
 
   const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
   assert.match(events, /context_budget_low/);

@@ -51,6 +51,11 @@ async function main() {
     step.checkAllMustLand = true;
   }
 
+  console.log(JSON.stringify({
+    type: 'progress',
+    activity: step.liveActivity ?? `${role} working on ${planId}`
+  }));
+
   await applyTouches(rootDir, step.touches);
   await applyPlanStep(rootDir, planFile, step);
 
