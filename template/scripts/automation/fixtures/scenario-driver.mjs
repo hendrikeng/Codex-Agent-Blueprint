@@ -151,3 +151,14 @@ export function emitAgentMessageStructuredResultEvent(payload, stream = process.
     }
   })}\n`);
 }
+
+export function emitTruncatedAgentMessageStructuredResultEvent(payload, maxChars, stream = process.stdout) {
+  const truncated = JSON.stringify({ type: 'orch_result', payload }).slice(0, Math.max(1, Number(maxChars) || 1));
+  stream.write(`${JSON.stringify({
+    type: 'item.completed',
+    item: {
+      type: 'agent_message',
+      text: truncated
+    }
+  })}\n`);
+}

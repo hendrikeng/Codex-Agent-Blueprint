@@ -990,6 +990,122 @@ function parseJsonLine(line) {
   }
 }
 
+function findJsonKeyValueStart(text, key, startIndex = 0) {
+  const rendered = String(text ?? '');
+  const needle = `"${String(key)}"`;
+  let searchIndex = Math.max(0, Number(startIndex) || 0);
+  while (searchIndex < rendered.length) {
+    const keyIndex = rendered.indexOf(needle, searchIndex);
+    if (keyIndex < 0) {
+      return -1;
+    }
+    let cursor = keyIndex + needle.length;
+    while (cursor < rendered.length && /\s/.test(rendered[cursor])) {
+      cursor += 1;
+    }
+    if (rendered[cursor] !== ':') {
+      searchIndex = keyIndex + needle.length;
+      continue;
+    }
+    cursor += 1;
+    while (cursor < rendered.length && /\s/.test(rendered[cursor])) {
+      cursor += 1;
+    }
+    return cursor;
+  }
+  return -1;
+}
+
+function readJsonStringAt(text, startIndex) {
+  const rendered = String(text ?? '');
+  if (rendered[startIndex] !== '"') {
+    return null;
+  }
+  let cursor = startIndex + 1;
+  while (cursor < rendered.length) {
+    if (rendered[cursor] === '"') {
+      let backslashCount = 0;
+      let lookbehind = cursor - 1;
+      while (lookbehind >= startIndex && rendered[lookbehind] === '\\') {
+        backslashCount += 1;
+        lookbehind -= 1;
+      }
+      if (backslashCount % 2 === 0) {
+        try {
+          return JSON.parse(rendered.slice(startIndex, cursor + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+    cursor += 1;
+  }
+  return null;
+}
+
+function readJsonScalarAt(text, startIndex) {
+  const rendered = String(text ?? '');
+  if (rendered[startIndex] === '"') {
+    return readJsonStringAt(rendered, startIndex);
+  }
+  if (rendered.startsWith('null', startIndex)) {
+    return null;
+  }
+  const numberMatch = rendered.slice(startIndex).match(/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+  if (!numberMatch) {
+    return null;
+  }
+  const value = Number(numberMatch[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function recoverStructuredResultFromTruncatedText(text) {
+  const rendered = String(text ?? '').trim();
+  if (!rendered || !rendered.includes('"type":"orch_result"') || !rendered.includes('"payload":{')) {
+    return null;
+  }
+
+  const payloadStart = rendered.indexOf('"payload":{');
+  const readField = (key) => {
+    const valueStart = findJsonKeyValueStart(rendered, key, payloadStart);
+    if (valueStart < 0) {
+      return undefined;
+    }
+    return readJsonScalarAt(rendered, valueStart);
+  };
+
+  const status = readField('status');
+  const summary = readField('summary');
+  const reason = readField('reason');
+  const currentSubtask = readField('currentSubtask');
+  const nextAction = readField('nextAction');
+  const contextRemaining = readField('contextRemaining');
+  const contextWindow = readField('contextWindow');
+  const contextRemainingPercent = readField('contextRemainingPercent');
+
+  if (
+    typeof status !== 'string' &&
+    typeof summary !== 'string' &&
+    typeof reason !== 'string' &&
+    typeof currentSubtask !== 'string' &&
+    typeof nextAction !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    status: typeof status === 'string' ? status : 'blocked',
+    summary: typeof summary === 'string' ? summary : 'Recovered truncated orch_result payload.',
+    reason: typeof reason === 'string' ? reason : null,
+    contextRemaining: Number.isFinite(contextRemaining) ? contextRemaining : null,
+    contextWindow: Number.isFinite(contextWindow) ? contextWindow : null,
+    contextRemainingPercent: Number.isFinite(contextRemainingPercent) ? contextRemainingPercent : null,
+    currentSubtask: typeof currentSubtask === 'string' ? currentSubtask : null,
+    nextAction: typeof nextAction === 'string' ? nextAction : null,
+    stateDelta: {}
+  };
+}
+
 function extractStructuredResultCandidate(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -1001,6 +1117,10 @@ function extractStructuredResultCandidate(value) {
 }
 
 function extractStructuredResultFromJsonLine(line) {
+  const recovered = recoverStructuredResultFromTruncatedText(line);
+  if (recovered) {
+    return recovered;
+  }
   const parsed = parseJsonLine(line);
   if (!parsed) {
     return null;
@@ -1019,6 +1139,10 @@ function extractStructuredResultFromJsonLine(line) {
     }
     const texts = [item.text, item.content, item.message];
     for (const text of texts) {
+      const recoveredText = recoverStructuredResultFromTruncatedText(text);
+      if (recoveredText) {
+        return recoveredText;
+      }
       const nested = extractStructuredResultFromJsonLine(text);
       if (nested) {
         return nested;

@@ -7,7 +7,8 @@ import {
 } from '../lib/plan-document-state.mjs';
 import {
   emitAgentMessageStructuredResultEvent,
-  emitStructuredResultEnvelope
+  emitStructuredResultEnvelope,
+  emitTruncatedAgentMessageStructuredResultEvent
 } from './scenario-driver.mjs';
 
 function parseArgs(argv) {
@@ -160,6 +161,9 @@ async function main() {
   }
   if (action.emitAgentMessageResultEvent === true) {
     emitAgentMessageStructuredResultEvent(payload);
+  }
+  if (Number.isFinite(action.truncatedAgentMessageResultChars) && Number(action.truncatedAgentMessageResultChars) > 0) {
+    emitTruncatedAgentMessageStructuredResultEvent(payload, Number(action.truncatedAgentMessageResultChars));
   }
   if (action.skipResultWrite !== true) {
     await writeJson(resultPath, payload);

@@ -371,6 +371,91 @@ test('orchestrator accepts a reviewer result wrapped in an agent-message event w
   assert.match(events, /session_result_stream_fallback/);
 });
 
+test('orchestrator recovers top-level reviewer fields from a truncated agent-message result envelope', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'truncated-agent-message-reviewer-result': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker delivered truncated agent-message reviewer result fixture.',
+            writeFiles: [{ path: 'src/truncated-agent-message-reviewer-result.js', content: 'export const recovered = true;\n' }],
+            plan: {
+              checkMustLand: true
+            }
+          }
+        ],
+        reviewer: [
+          {
+            status: 'pending',
+            summary: 'Reviewer recovered from truncated agent_message result event.',
+            reason: 'The fallback should preserve top-level reviewer findings even when the nested JSON text is cut off.',
+            currentSubtask: 'truncated-reviewer-envelope',
+            nextAction: 'Hand the slice back to worker.',
+            completedWork: Array.from({ length: 80 }, (_, index) => `completed-${index}`),
+            acceptedFacts: Array.from({ length: 80 }, (_, index) => `fact-${index}`),
+            truncatedAgentMessageResultChars: 900,
+            skipResultWrite: true
+          }
+        ]
+      }
+    },
+    validation: {
+      'always:truncated-agent-message-reviewer-result': [
+        {
+          status: 'passed',
+          summary: 'Always validation passed.'
+        }
+      ]
+    }
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-truncated-agent-message-reviewer-result.md'),
+    directFuturePlan({ planId: 'truncated-agent-message-reviewer-result', riskTier: 'medium' }),
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed truncated agent message reviewer result plan');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'medium', '--output', 'minimal', '--max-sessions-per-plan', '2'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const activePlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-truncated-agent-message-reviewer-result.md'),
+    'utf8'
+  );
+  assertPlanMetadataStatus(activePlan, 'budget-exhausted');
+
+  const runState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
+  const reviewerResult = JSON.parse(await fs.readFile(
+    path.join(
+      rootDir,
+      'docs',
+      'ops',
+      'automation',
+      'runtime',
+      runState.runId,
+      'truncated-agent-message-reviewer-result',
+      'results',
+      '02-reviewer.json'
+    ),
+    'utf8'
+  ));
+  assert.equal(reviewerResult.status, 'pending');
+  assert.equal(reviewerResult.summary, 'Reviewer recovered from truncated agent_message result event.');
+  assert.equal(
+    reviewerResult.reason,
+    'The fallback should preserve top-level reviewer findings even when the nested JSON text is cut off.'
+  );
+
+  const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
+  assert.match(events, /session_result_stream_fallback/);
+});
+
 test('orchestrator ticker output keeps timestamped lifecycle lines', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {
