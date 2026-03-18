@@ -682,6 +682,52 @@ test('orchestrator reports an explicit executor protocol error when a worker exi
   assert.match(events, /session_protocol_error/);
 });
 
+test('orchestrator blocks a session when worker exits non-zero even with a valid result payload', async () => {
+  const rootDir = await createTemplateRepo();
+  await configureFixtureRepo(rootDir, {
+    providerActions: {
+      'worker-non-zero': {
+        worker: [
+          {
+            status: 'completed',
+            summary: 'Worker finished with side-effects.',
+            reason: 'Worker reported completion but command failed.',
+            writeFiles: [{ path: 'src/worker-non-zero.js', content: 'export const value = 1;\n' }],
+            exitCode: 3
+          }
+        ]
+      }
+    },
+    validation: {}
+  });
+  await fs.writeFile(
+    path.join(rootDir, 'docs', 'future', '2026-03-17-worker-non-zero.md'),
+    directFuturePlan({ planId: 'worker-non-zero', riskTier: 'low' }),
+    'utf8'
+  );
+  commitFixtureChanges(rootDir, 'docs: seed worker non-zero exit result plan');
+
+  const result = runNode(
+    path.join(rootDir, 'scripts/automation', 'orchestrator.mjs'),
+    ['grind', '--max-risk', 'low', '--output', 'minimal'],
+    rootDir
+  );
+  assert.equal(result.status, 0, String(result.stderr));
+
+  const blockedPlan = await fs.readFile(
+    path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-worker-non-zero.md'),
+    'utf8'
+  );
+  assert.match(blockedPlan, /^Status: blocked$/m);
+
+  const checkpoint = JSON.parse(await fs.readFile(
+    path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', 'state', 'worker-non-zero', 'latest.json'),
+    'utf8'
+  ));
+  assert.equal(checkpoint.status, 'blocked');
+  assert.match(String(checkpoint.reason), /Executor exited 3/);
+});
+
 test('orchestrator fails validation explicitly when a validation command exits without a result payload', async () => {
   const rootDir = await createTemplateRepo();
   await configureFixtureRepo(rootDir, {

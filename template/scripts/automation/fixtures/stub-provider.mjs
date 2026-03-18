@@ -124,6 +124,10 @@ async function main() {
   if (typeof action.rawResultText === 'string') {
     await fs.mkdir(path.dirname(resultPath), { recursive: true });
     await fs.writeFile(resultPath, action.rawResultText, 'utf8');
+    const exitCode = Number.isFinite(action?.exitCode) ? Number(action.exitCode) : 0;
+    if (exitCode !== 0) {
+      process.exit(exitCode);
+    }
     return;
   }
   await writeJson(resultPath, {
@@ -150,6 +154,11 @@ async function main() {
       evidence: action.evidence ?? []
     }
   });
+
+  const exitCode = Number.isFinite(action?.exitCode) ? Number(action.exitCode) : 0;
+  if (exitCode !== 0) {
+    process.exit(exitCode);
+  }
 }
 
 main().catch((error) => {

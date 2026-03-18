@@ -2405,19 +2405,26 @@ async function executeRole(rootDir, config, state, plan, role, logging) {
       reason
     });
   } else {
+    const executionFailed = execution.status !== 0;
+    const failureReason = execution.status === 0
+      ? ''
+      : `Executor exited ${execution.status ?? 1}. See ${logRel}.`;
+    const normalizedResult = normalizeResult(artifactLoad.value, failureReason);
     normalized = {
-      ...normalizeResult(
-        artifactLoad.value,
-        execution.status === 0
-          ? ''
-          : `Executor exited ${execution.status ?? 1}. See ${logRel}.`
-      ),
+      ...normalizedResult,
       sessionLogPath: logRel,
       touchSummary: execution.touchSummary,
       liveActivity: execution.liveActivity,
       liveActivityTrail: execution.liveActivityTrail,
       liveActivityUpdates: execution.liveActivityUpdates ?? 0
     };
+    if (executionFailed) {
+      normalized.status = 'blocked';
+      normalized.reason = trimmedString(
+        `${normalizedResult.reason ? `${normalizedResult.reason} ` : ''}${failureReason}`.trim(),
+        failureReason
+      ) || failureReason;
+    }
   }
   const checkpointRefs = await writeCheckpoint(rootDir, state.runId, plan, role, sessionNumber, normalized);
   await appendRunEvent(rootDir, state, 'session_finished', plan.planId, {
@@ -3065,8 +3072,7 @@ function actionableActivePlans(plans, completedPlanIds, maxRisk, config, state, 
       effectivePlanStatus(plan) !== 'blocked' &&
       (effectivePlanStatus(plan) !== STATUS_BUDGET_EXHAUSTED || canResumeBudgetExhaustedPlan(plan, state, sessionLimit)) &&
       riskAllowed(plan, maxRisk) &&
-      dependenciesComplete(plan, completedPlanIds) &&
-      !(securityApprovalRequired(plan, config) && plan.securityApproval !== 'approved')
+      dependenciesComplete(plan, completedPlanIds)
     ))
   );
 }
