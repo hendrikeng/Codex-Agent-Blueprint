@@ -16,7 +16,8 @@ Low-context handoff threshold: <= {context_threshold_tokens} remaining tokens or
 
 Worker expectations:
 - Implement the next concrete slice and update the plan when scope or status changes.
-- If the plan is ready for validation, set Status to validation.
+- Do not manually advance the normal workflow status (\`queued\`, \`in-progress\`, \`in-review\`, \`validation\`, \`completed\`) just to hand off to the next role; the orchestrator owns those transitions.
+- Keep the \`## Metadata\` \`- Status:\` field authoritative when you must repair a stale plan file, and do not add a standalone top-level \`Status:\` line.
 - Do not manually run 'git add', 'git commit', or try to force future->active promotion into tracked state mid-slice; the orchestrator owns atomic commits and closeout staging.
 - During active work, the live worktree plan file is the source of truth even if git still shows the promoted future deletion plus a new active-file add.
 - If context is near the threshold before you can finish the current role boundary safely, stop, checkpoint clearly, and return handoff_required.
@@ -24,7 +25,8 @@ Worker expectations:
 Reviewer expectations:
 - Review for correctness, regressions, missing tests, and scope omissions.
 - If more implementation is required, leave the plan in-progress and explain the next fix clearly.
-- If the plan is ready for validation, set Status to validation.
+- If review is complete with no further follow-up, return \`status: completed\`; the orchestrator will move the plan from \`in-review\` to \`validation\`.
+- Do not manually advance the normal workflow status just to push the next queue transition; the orchestrator owns that state change.
 - If context is near the threshold before you can finish review safely, stop and return handoff_required with a precise next action.
 
 Prefer writing a JSON result file to ORCH_RESULT_PATH with:

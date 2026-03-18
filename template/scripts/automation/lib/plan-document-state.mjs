@@ -84,10 +84,16 @@ export function updateSimpleMetadataField(content, field, value) {
   return `${String(content ?? '').trimEnd()}\n${field}: ${value}\n`;
 }
 
+function removeSimpleTopLevelField(content, field) {
+  return String(content ?? '')
+    .replace(new RegExp(`^${escapeRegex(field)}:\\s*.*(?:\\r?\\n)?`, 'm'), '')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
 export function setPlanDocumentFields(content, fields = {}) {
   let updated = setMetadataFields(content, fields);
   if (Object.prototype.hasOwnProperty.call(fields, 'Status')) {
-    updated = updateSimpleMetadataField(updated, 'Status', fields.Status);
+    updated = removeSimpleTopLevelField(updated, 'Status');
   }
   return updated;
 }

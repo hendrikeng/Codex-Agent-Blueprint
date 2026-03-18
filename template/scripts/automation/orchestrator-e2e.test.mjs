@@ -110,6 +110,11 @@ function commitFixtureChanges(rootDir, message) {
   spawnSync('git', ['commit', '-m', message], { cwd: rootDir, stdio: 'pipe' });
 }
 
+function assertPlanMetadataStatus(content, status) {
+  assert.match(content, new RegExp(`^- Status: ${status}$`, 'm'));
+  assert.doesNotMatch(content, /^Status:\s+/m);
+}
+
 function waitForChild(child) {
   return new Promise((resolve, reject) => {
     let stdout = '';
@@ -188,7 +193,7 @@ test('orchestrator promotes a medium-risk future, runs worker and reviewer, then
 
   const completedPlanPath = path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-red-inbox.md');
   const completedPlan = await fs.readFile(completedPlanPath, 'utf8');
-  assert.match(completedPlan, /^Status: completed$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
   assert.match(completedPlan, /^- Done-Evidence: docs\/exec-plans\/evidence-index\/red-inbox\.md$/m);
 
   const evidenceIndex = await fs.readFile(path.join(rootDir, 'docs', 'exec-plans', 'evidence-index', 'red-inbox.md'), 'utf8');
@@ -268,7 +273,7 @@ test('orchestrator accepts a streamed reviewer result when read-only execution c
     path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-stream-reviewer-result.md'),
     'utf8'
   );
-  assert.match(completedPlan, /^Status: completed$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
 
   const runState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
   const reviewerResult = JSON.parse(await fs.readFile(
@@ -468,7 +473,7 @@ test('orchestrator forces a handoff when a worker returns too close to the conte
 
   const completedPlanPath = path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-context-threshold-plan.md');
   const completedPlan = await fs.readFile(completedPlanPath, 'utf8');
-  assert.match(completedPlan, /^Status: completed$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
 
   const handoff = await fs.readFile(
     path.join(rootDir, 'docs', 'ops', 'automation', 'handoffs', 'context-threshold-plan.md'),
@@ -518,7 +523,7 @@ test('orchestrator blocks high-risk work without explicit security approval', as
     path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-payments-cutover.md'),
     'utf8'
   );
-  assert.match(blockedPlan, /^Status: blocked$/m);
+  assertPlanMetadataStatus(blockedPlan, 'blocked');
   assert.match(blockedPlan, /Security-Approval must be approved/);
 });
 
@@ -575,7 +580,7 @@ test('orchestrator pauses on session budget exhaustion and resume continues only
 
   const activePlanPath = path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-budget-loop.md');
   const pausedPlan = await fs.readFile(activePlanPath, 'utf8');
-  assert.match(pausedPlan, /^Status: budget-exhausted$/m);
+  assertPlanMetadataStatus(pausedPlan, 'budget-exhausted');
   assert.match(pausedPlan, /Resume with --max-sessions-per-plan 2 or higher\./);
 
   const firstRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
@@ -592,7 +597,7 @@ test('orchestrator pauses on session budget exhaustion and resume continues only
   assert.match(String(sameLimitResume.stdout), /resume with -- --max-sessions-per-plan 2 to continue budget-loop/);
 
   const stillPausedPlan = await fs.readFile(activePlanPath, 'utf8');
-  assert.match(stillPausedPlan, /^Status: budget-exhausted$/m);
+  assertPlanMetadataStatus(stillPausedPlan, 'budget-exhausted');
 
   const resumedRun = runNode(
     path.join(rootDir, 'scripts', 'automation', 'orchestrator.mjs'),
@@ -605,7 +610,7 @@ test('orchestrator pauses on session budget exhaustion and resume continues only
     path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-budget-loop.md'),
     'utf8'
   );
-  assert.match(completedPlan, /^Status: completed$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
 
   const finalRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
   assert.equal(finalRunState.runId, firstRunState.runId);
@@ -699,7 +704,7 @@ test('resume normalizes legacy session-budget blockers and continues the existin
     path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-legacy-budget.md'),
     'utf8'
   );
-  assert.match(completedPlan, /^Status: completed$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
 
   const finalRunState = JSON.parse(await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-state.json'), 'utf8'));
   assert.equal(finalRunState.runId, 'run-legacy-budget');
@@ -742,7 +747,7 @@ test('orchestrator reports an explicit executor protocol error when a worker exi
     path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-missing-worker-result.md'),
     'utf8'
   );
-  assert.match(blockedPlan, /^Status: blocked$/m);
+  assertPlanMetadataStatus(blockedPlan, 'blocked');
   assert.match(blockedPlan, /did not write ORCH_RESULT_PATH/);
   assert.doesNotMatch(blockedPlan, /No summary provided\./);
 
@@ -793,7 +798,7 @@ test('orchestrator blocks a session when worker exits non-zero even with a valid
     path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-worker-non-zero.md'),
     'utf8'
   );
-  assert.match(blockedPlan, /^Status: blocked$/m);
+  assertPlanMetadataStatus(blockedPlan, 'blocked');
 
   const checkpoint = JSON.parse(await fs.readFile(
     path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', 'state', 'worker-non-zero', 'latest.json'),
@@ -848,7 +853,7 @@ test('orchestrator fails validation explicitly when a validation command exits w
     path.join(rootDir, 'docs', 'exec-plans', 'active', '2026-03-17-missing-validation-result.md'),
     'utf8'
   );
-  assert.match(blockedPlan, /^Status: blocked$/m);
+  assertPlanMetadataStatus(blockedPlan, 'blocked');
   assert.match(blockedPlan, /did not write ORCH_VALIDATION_RESULT_PATH/);
 
   const events = await fs.readFile(path.join(rootDir, 'docs', 'ops', 'automation', 'run-events.jsonl'), 'utf8');
@@ -954,8 +959,7 @@ test('orchestrator still validates and completes when must-land work finishes on
     path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-last-session-validation.md'),
     'utf8'
   );
-  assert.match(completedPlan, /^Status: completed$/m);
-  assert.doesNotMatch(completedPlan, /^Status: budget-exhausted$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
 });
 
 test('orchestrator atomic commits include same-slice touched files outside declared roots', async () => {
@@ -1005,7 +1009,7 @@ test('orchestrator atomic commits include same-slice touched files outside decla
     path.join(rootDir, 'docs', 'exec-plans', 'completed', '2026-03-17-atomic-touched-files.md'),
     'utf8'
   );
-  assert.match(completedPlan, /^Status: completed$/m);
+  assertPlanMetadataStatus(completedPlan, 'completed');
 
   const cleanStatus = spawnSync('git', ['status', '--short'], { cwd: rootDir, stdio: 'pipe', encoding: 'utf8' });
   assert.equal(cleanStatus.status, 0);

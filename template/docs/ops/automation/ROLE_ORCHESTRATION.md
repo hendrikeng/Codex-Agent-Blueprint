@@ -79,6 +79,7 @@ If a read-only sandbox prevents writing `ORCH_RESULT_PATH`, the provider must em
 - `## Must-Land Checklist` is the executable completion contract; validation/completion is blocked until every checkbox item is checked.
 - If a plan also carries broader vision or target-state language, keep that scope in `## Already-True Baseline` and `## Deferred Follow-Ons` instead of treating it as implicitly complete.
 - Reviewer sessions either approve the plan for validation or return concrete implementation follow-up for the next worker pass.
+- For `medium` and `high` risk plans, `Status: in-review` is the authoritative handoff state between a completed worker slice and reviewer approval; the orchestrator moves the plan to `validation` after review approval.
 - Worker/reviewer sessions should not run host-bound validation commands (infra/bootstrap, DB migrations, Playwright/E2E); those belong in `validation.hostRequired`.
 - Worker/reviewer sessions should hand off early when remaining context drops under the configured low-watermark before the current role boundary is safely complete.
 - Risk and stage decisions are recorded in `run-events.jsonl`.

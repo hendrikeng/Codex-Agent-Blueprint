@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { appendToDeliveryLog, setPlanDocumentFields, upsertSection } from './plan-document-state.mjs';
 
-test('setPlanDocumentFields keeps top-level and metadata status aligned', () => {
+test('setPlanDocumentFields keeps metadata status authoritative without a standalone status line', () => {
   const content = [
     '# Plan',
     '',
@@ -20,8 +20,8 @@ test('setPlanDocumentFields keeps top-level and metadata status aligned', () => 
   ].join('\n');
 
   const updated = setPlanDocumentFields(content, { Status: 'validation' });
-  assert.match(updated, /^Status: validation$/m);
   assert.match(updated, /^- Status: validation$/m);
+  assert.doesNotMatch(updated, /^Status:\s+/m);
 });
 
 test('appendToDeliveryLog appends stable bullet entries', () => {
