@@ -144,6 +144,16 @@ function validateCanonicalDocs(docPayloads) {
   }
 }
 
+function isCodexExecCommand(command) {
+  const tokens = String(command ?? '').trim().split(/\s+/).filter(Boolean);
+  const codexIndex = tokens.indexOf('codex');
+  if (codexIndex < 0) {
+    return false;
+  }
+  const execIndex = tokens.indexOf('exec');
+  return execIndex > codexIndex;
+}
+
 function validateExecutorCommand(config) {
   const command = String(config?.executor?.command ?? '').trim();
   if (!command) {
@@ -154,7 +164,7 @@ function validateExecutorCommand(config) {
     );
     return;
   }
-  if (!command.includes('codex exec')) {
+  if (!isCodexExecCommand(command)) {
     return;
   }
   if (!command.includes('{sandbox_mode}')) {

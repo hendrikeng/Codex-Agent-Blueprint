@@ -65,7 +65,7 @@ test('harness:verify fails when codex executor command omits role sandbox wiring
   const configPath = path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json');
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
   config.executor.command =
-    'codex exec --json --full-auto -c model_reasoning_effort={reasoning_effort} -m {model} {prompt}';
+    'codex -a never exec --json --full-auto -c model_reasoning_effort={reasoning_effort} -m {model} {prompt}';
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 
   const result = runNode(
@@ -78,7 +78,6 @@ test('harness:verify fails when codex executor command omits role sandbox wiring
   assert.match(String(result.stderr), /MISSING_SANDBOX_PLACEHOLDER/);
   assert.match(String(result.stderr), /MISSING_SANDBOX_FLAG/);
   assert.match(String(result.stderr), /INVALID_CODEX_FULL_AUTO/);
-  assert.match(String(result.stderr), /MISSING_NONINTERACTIVE_APPROVAL_POLICY/);
 });
 
 test('harness:verify fails when codex approval flag is placed after exec', async () => {
