@@ -365,7 +365,7 @@ function logLine(logging, message, level = 'run') {
   }
   if (logging.mode === 'pretty') {
     const stamp = colorize(logging, '90', nowIso().slice(11, 19));
-    const prefix = `${stamp} ${nextPrettySpinner(logging)} ${prettyLevelTag(logging, level)} `;
+    const prefix = formatPrettyPrefix(stamp, nextPrettySpinner(logging), prettyLevelTag(logging, level));
     printPrettyLogLine(logging, prefix, message, level);
     return;
   }

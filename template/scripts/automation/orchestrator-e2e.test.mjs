@@ -600,9 +600,10 @@ test('orchestrator pretty output keeps readable lifecycle tags in non-tty mode',
 
   assert.equal(result.status, 0, String(result.stderr));
   const outputLines = String(result.stdout).split('\n');
+  const queueFocusLine = outputLines.find((line) => line.includes('queue focus')) ?? '';
   const fileActivityLine = outputLines.find((line) => line.includes('file activity')) ?? '';
   const workingLine = outputLines.find((line) => line.includes('worker working on pretty-plan')) ?? '';
-  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN  grind/);
+  assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. RUN\s+grind/);
   assert.match(String(result.stdout), /GRIND OVERVIEW/);
   assert.match(String(result.stdout), /queue focus/);
   assert.match(String(result.stdout), /plan start/);
@@ -619,6 +620,7 @@ test('orchestrator pretty output keeps readable lifecycle tags in non-tty mode',
   assert.match(String(result.stdout), /GRIND SUMMARY/);
   assert.match(String(result.stdout), /\d{2}:\d{2}:\d{2} \. OK\s+finished/);
   assert.match(String(result.stdout), /runId\s+=\s+run-/);
+  assert.equal(queueFocusLine.indexOf('queue focus'), workingLine.indexOf('worker working on pretty-plan'));
   assert.equal(fileActivityLine.indexOf('file activity'), workingLine.indexOf('worker working on pretty-plan'));
 });
 
