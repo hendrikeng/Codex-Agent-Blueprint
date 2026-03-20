@@ -5,8 +5,14 @@ import path from 'node:path';
 const rootDir = process.cwd();
 const findings = [];
 const requiredScripts = new Set([
+  'agent:verify',
+  'architecture:verify',
+  'conformance:verify',
   'context:compile',
   'docs:verify',
+  'eval:continuity',
+  'eval:resilience',
+  'eval:verify',
   'harness:verify',
   'plans:verify',
   'verify:fast',
@@ -30,10 +36,6 @@ const retiredScripts = [
 const mirroredScriptNames = [
   ...requiredScripts,
   ...retiredScripts
-];
-const scriptFiles = [
-  'package.scripts.fragment.json',
-  'package.json'
 ];
 const managedScriptPattern = /^(agent:verify|architecture:verify|automation:|conformance:verify|context:compile|docs:verify|eval:|harness:verify|interop:github:|outcomes:|perf:|plans:|state:verify|verify:)/;
 const canonicalDocFiles = [
@@ -84,6 +86,15 @@ async function readText(filePath) {
   return fs.readFile(filePath, 'utf8');
 }
 
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validateScriptsMap(scripts, filePath) {
   for (const scriptName of requiredScripts) {
     if (!String(scripts[scriptName] ?? '').trim()) {
@@ -117,6 +128,21 @@ function validateMirroredScripts(fragmentScripts, packageScripts) {
       addFinding(
         'UNMANAGED_SCRIPT',
         `package.json script '${scriptName}' is not part of the flat-queue harness script set.`,
+        'package.json'
+      );
+    }
+  }
+}
+
+function validateManagedScripts(packageScripts) {
+  for (const scriptName of Object.keys(packageScripts)) {
+    if (!managedScriptPattern.test(scriptName)) {
+      continue;
+    }
+    if (!mirroredScriptNames.includes(scriptName)) {
+      addFinding(
+        'UNMANAGED_SCRIPT',
+        `package.json script '${scriptName}' is not part of the managed harness script set.`,
         'package.json'
       );
     }
@@ -209,20 +235,23 @@ function validateExecutorCommand(config) {
 async function main() {
   const configPath = path.join(rootDir, 'docs', 'ops', 'automation', 'orchestrator.config.json');
   const policyPath = path.join(rootDir, 'docs', 'governance', 'policy-manifest.json');
+  const fragmentPath = path.join(rootDir, 'package.scripts.fragment.json');
   const config = await readJson(configPath);
   const policy = await readJson(policyPath);
-  const scriptPayloads = {};
   const docPayloads = {};
+  const packagePayload = await readJson(path.join(rootDir, 'package.json'));
+  const packageScripts = packagePayload?.scripts ?? {};
 
-  for (const scriptFile of scriptFiles) {
-    const payload = await readJson(path.join(rootDir, scriptFile));
-    scriptPayloads[scriptFile] = payload?.scripts ?? {};
-    validateScriptsMap(payload?.scripts ?? {}, scriptFile);
+  validateScriptsMap(packageScripts, 'package.json');
+
+  if (await pathExists(fragmentPath)) {
+    const fragmentPayload = await readJson(fragmentPath);
+    const fragmentScripts = fragmentPayload?.scripts ?? {};
+    validateScriptsMap(fragmentScripts, 'package.scripts.fragment.json');
+    validateMirroredScripts(fragmentScripts, packageScripts);
+  } else {
+    validateManagedScripts(packageScripts);
   }
-  validateMirroredScripts(
-    scriptPayloads['package.scripts.fragment.json'] ?? {},
-    scriptPayloads['package.json'] ?? {}
-  );
 
   for (const docFile of canonicalDocFiles) {
     docPayloads[docFile] = await readText(path.join(rootDir, docFile));
