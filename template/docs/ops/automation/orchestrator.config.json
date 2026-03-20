@@ -2,7 +2,7 @@
   "executor": {
     "command": "codex -a never exec --json --sandbox {sandbox_mode} -c model_reasoning_effort={reasoning_effort} -m {model} {prompt}",
     "promptTemplate": "@canonical-executor-prompt",
-    "timeoutSeconds": 1800,
+    "timeoutSeconds": 3600,
     "maxSessionsPerPlan": 12,
     "contextBudget": {
       "minRemaining": 12000,
