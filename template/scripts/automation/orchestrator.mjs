@@ -2151,7 +2151,7 @@ function runtimePaths(rootDir, runId, planId) {
   };
 }
 
-async function writeCheckpoint(rootDir, runId, plan, role, sessionNumber, result) {
+export async function writeCheckpoint(rootDir, runId, plan, role, sessionNumber, result) {
   const paths = runtimePaths(rootDir, runId, plan.planId);
   const touchSummary = normalizeTouchSummary(result?.touchSummary);
   const liveActivityTrail = Array.isArray(result?.liveActivityTrail) ? result.liveActivityTrail.filter((entry) => entry?.message) : [];
@@ -2219,6 +2219,8 @@ async function writeCheckpoint(rootDir, runId, plan, role, sessionNumber, result
   if (['pending', 'handoff_required', 'blocked'].includes(String(result?.status ?? '').trim().toLowerCase())) {
     await fs.mkdir(path.dirname(paths.handoffPath), { recursive: true });
     await fs.writeFile(paths.handoffPath, `${note}\n`, 'utf8');
+  } else {
+    await fs.rm(paths.handoffPath, { force: true });
   }
 
   return {

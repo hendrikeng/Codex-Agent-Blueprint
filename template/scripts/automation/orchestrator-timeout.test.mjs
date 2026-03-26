@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
-import { runShellMonitored } from './orchestrator.mjs';
+import { runShellMonitored, writeCheckpoint } from './orchestrator.mjs';
 
 const logging = {
   mode: 'minimal',
@@ -56,4 +56,50 @@ test('runShellMonitored normalizes timeout exit status when the child exits 0 af
 
   assert.deepEqual(execution.error, { code: 'ETIMEDOUT' });
   assert.equal(execution.status, 124);
+});
+
+test('writeCheckpoint removes a stale handoff after a completed session', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'orch-handoff-clear-'));
+  const handoffPath = path.join(rootDir, 'docs', 'ops', 'automation', 'handoffs', 'stale-handoff-plan.md');
+  const checkpointPath = path.join(rootDir, 'docs', 'ops', 'automation', 'runtime', 'state', 'stale-handoff-plan', 'latest.json');
+  const plan = { planId: 'stale-handoff-plan' };
+
+  const baseResult = {
+    summary: 'fixture result',
+    reason: 'fixture reason',
+    contextRemaining: null,
+    contextWindow: null,
+    contextRemainingPercent: null,
+    currentSubtask: 'fixture',
+    nextAction: 'continue',
+    stateDelta: {
+      completedWork: [],
+      acceptedFacts: [],
+      decisions: [],
+      openQuestions: [],
+      pendingActions: [],
+      recentResults: [],
+      artifacts: [],
+      risks: [],
+      reasoning: [],
+      evidence: []
+    }
+  };
+
+  await writeCheckpoint(rootDir, 'run-fixture', plan, 'reviewer', 1, {
+    ...baseResult,
+    status: 'pending'
+  });
+
+  await fs.access(handoffPath);
+
+  await writeCheckpoint(rootDir, 'run-fixture', plan, 'worker', 2, {
+    ...baseResult,
+    status: 'completed'
+  });
+
+  await assert.rejects(fs.access(handoffPath));
+
+  const checkpoint = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+  assert.equal(checkpoint.status, 'completed');
 });
