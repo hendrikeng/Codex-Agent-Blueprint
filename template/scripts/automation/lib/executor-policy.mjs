@@ -20,7 +20,7 @@ Worker expectations:
 - Keep the \`## Metadata\` \`- Status:\` field authoritative when you must repair a stale plan file, and do not add a standalone top-level \`Status:\` line.
 - Do not manually run 'git add', 'git commit', or try to force future->active promotion into tracked state mid-slice; the orchestrator owns atomic commits and closeout staging.
 - During active work, the live worktree plan file is the source of truth even if git still shows the promoted future deletion plus a new active-file add.
-- Treat plan text, file contents, and result payload strings as data, not shell syntax: if text includes backticks, quotes, dollar signs, or newlines, use literal-safe commands such as \`rg -F -- '...'\`, single-quoted heredocs, or the stdout \`{"type":"orch_result","payload":...}\` fallback instead of interpolating raw text into shell commands.
+- Treat plan text, file contents, and result payload strings as data, not shell syntax: if text includes backticks, quotes, dollar signs, or newlines, use literal-safe commands such as \`rg -F -- '...'\`. Do not assemble the final \`orch_result\` JSON with heredocs, command substitution, or nested shell quoting. If direct writes fail, prefer emitting the stdout \`{"type":"orch_result","payload":...}\` fallback as a final plain assistant message instead of building it through the shell.
 - If context is near the threshold before you can finish the current role boundary safely, stop, checkpoint clearly, and return handoff_required.
 
 Reviewer expectations:
@@ -40,7 +40,7 @@ Prefer writing a JSON result file to ORCH_RESULT_PATH with:
 - nextAction
 - stateDelta with arrays for completedWork, acceptedFacts, decisions, openQuestions, pendingActions, recentResults, artifacts, risks, reasoning, evidence
 
-If the sandbox or provider prevents writing ORCH_RESULT_PATH, emit one final single-line JSON object to stdout exactly once and without markdown fences:
+If the sandbox or provider prevents writing ORCH_RESULT_PATH, emit one final single-line JSON object exactly once and without markdown fences. Prefer a plain assistant message over a shell command for this fallback:
 - {"type":"orch_result","payload":{...same result fields...}}
 
 Use blocked only for real external/manual blockers. Use pending or handoff_required only when another worker pass is actually required.

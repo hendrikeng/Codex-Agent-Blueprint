@@ -10,6 +10,8 @@ test('canonical executor prompt resolves to the flat-queue template', () => {
   assert.match(prompt, /"type":"orch_result"/);
   assert.match(prompt, /Treat plan text, file contents, and result payload strings as data, not shell syntax/);
   assert.match(prompt, /rg -F --/);
+  assert.match(prompt, /Do not assemble the final `orch_result` JSON with heredocs/);
+  assert.match(prompt, /Prefer a plain assistant message over a shell command/);
   assert.doesNotMatch(prompt, /Execution-Scope/);
   assert.doesNotMatch(prompt, /Child Slice Definitions/);
 });
