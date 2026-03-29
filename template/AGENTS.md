@@ -31,13 +31,14 @@ If instructions conflict, this file is the behavioral priority entrypoint.
 
 - Explicit user intent is binding.
 - In normal/direct Codex sessions (outside orchestrator `run`/`resume`), follow user intent immediately.
-- If the session is switched to plan mode, treat it as planning-only unless the user explicitly asks to implement.
+- If the session is switched to plan mode, treat it as planning-only unless the user explicitly asks to implement, execute, or promote the plan.
 - If a user asks for planning-only work (for example: "plan", "outline", "prepare for promotion", "no implementation yet"), do not modify source or test files.
+- Planning-only means stop after creating or updating the future slice output in `docs/future/`; do not continue into code, test, or runtime-file edits just because the implementation seems straightforward.
 - For planning-only requests, work in `docs/future/`, create or update an executable future slice immediately, and set `Status: ready-for-promotion` when the plan is decision-complete.
 - Planning outputs must separate `## Already-True Baseline`, `## Must-Land Checklist`, and `## Deferred Follow-Ons` so executable scope is explicit before promotion.
 - Future authoring is flat by default: one future file equals one executable slice. Use multiple future files plus `Dependencies` when the work is larger than one slice.
 - Do not introduce program-parent plans, child-slice generation, `Execution-Scope`, `Authoring-Intent`, or `Parent-Plan-ID` workflow.
-- Start implementation only when the user explicitly asks to implement or promote/execute the plan.
+- Start implementation only when the user explicitly asks to implement or promote/execute the plan. Finishing a future slice is not implied permission to begin coding.
 - Treat `docs/ops/automation/LITE_QUICKSTART.md` as the canonical reference for this day-planning / later-grind workflow.
 
 ## Core Map

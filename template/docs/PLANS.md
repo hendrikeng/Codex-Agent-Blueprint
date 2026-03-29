@@ -55,12 +55,13 @@ When the user asks for planning only (no implementation yet):
 
 1. Update or create the executable future slice in `docs/future/`.
 2. Do not edit source/test/runtime files.
-3. Make `## Must-Land Checklist` the exact executable contract for the future promotion.
-4. Keep `Dependencies` explicit when the work depends on earlier slices.
-5. Use separate future files instead of program parents when one ask expands into multiple executable slices.
-6. Set `Status: ready-for-promotion` when the plan is implementation-ready.
+3. Stop once the future slice is decision-complete; do not continue into implementation just because the next coding step is obvious.
+4. Make `## Must-Land Checklist` the exact executable contract for the future promotion.
+5. Keep `Dependencies` explicit when the work depends on earlier slices.
+6. Use separate future files instead of program parents when one ask expands into multiple executable slices.
+7. Set `Status: ready-for-promotion` when the plan is implementation-ready.
 
-This also applies when the agent/session is explicitly set to plan mode: default to `docs/future` planning outputs until implementation is explicitly requested.
+This also applies when the agent/session is explicitly set to plan mode: default to `docs/future` planning outputs until implementation is explicitly requested. Planning completion is not execution approval.
 
 ## Structure
 

@@ -27,6 +27,11 @@
       "requiredInRuntimeContext": true
     },
     {
+      "id": "plan_mode_stops_at_future_docs",
+      "statement": "In plan mode or planning-only requests, stop after creating or updating docs/future output; do not edit source, test, or runtime files unless implementation is explicitly requested.",
+      "requiredInRuntimeContext": true
+    },
+    {
       "id": "no_destructive_git_without_instruction",
       "statement": "Never run destructive git/file commands without explicit written instruction.",
       "requiredInRuntimeContext": true
@@ -36,7 +41,7 @@
     "planner": {
       "sandboxMode": "read-only",
       "reasoningEffort": "medium",
-      "intent": "Turn user intent into decision-complete future slices."
+      "intent": "Turn user intent into decision-complete future slices only; do not continue into implementation unless the user explicitly asks to implement, execute, or promote the plan."
     },
     "explorer": {
       "sandboxMode": "read-only",

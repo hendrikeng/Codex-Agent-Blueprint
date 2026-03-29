@@ -13,10 +13,11 @@ Primary Sources: AGENTS.md, docs/governance/policy-manifest.json, docs/ops/autom
 - [no_fake_success_paths] Never fabricate production success-path behavior.
 - [shared_contracts_are_canonical] Shared contracts and primitives are canonical where applicable.
 - [docs_are_part_of_done] Architecture, invariant, and user-visible changes must update canonical docs in the same change.
+- [plan_mode_stops_at_future_docs] In plan mode or planning-only requests, stop after creating or updating docs/future output; do not edit source, test, or runtime files unless implementation is explicitly requested.
 - [no_destructive_git_without_instruction] Never run destructive git/file commands without explicit written instruction.
 
 ## Planning Roles
-- planner: Turn user intent into decision-complete future slices.
+- planner: Turn user intent into decision-complete future slices only; do not continue into implementation unless the user explicitly asks to implement, execute, or promote the plan.
 - explorer: Trace risky surfaces and dependencies before implementation when planning needs more facts.
 
 ## Grind Roles

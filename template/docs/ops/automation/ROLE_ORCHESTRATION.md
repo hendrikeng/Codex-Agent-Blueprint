@@ -11,7 +11,7 @@ Define the runtime role model for execution plans so low-risk work stays fast an
 
 ## Roles
 
-- `planner`: planning-time only. Used in direct Codex sessions to turn intent into decision-complete future slices.
+- `planner`: planning-time only. Used in direct Codex sessions to turn intent into decision-complete future slices and stop there unless implementation is explicitly requested.
 - `explorer`: planning-time only. Used in direct Codex sessions for focused investigation before implementation.
 - `worker`: executes code and documentation changes.
 - `reviewer`: validates correctness, security, race conditions, flaky-test risk, performance regressions, and missing-scope omissions in the plan contract.
@@ -24,7 +24,7 @@ Each role has a portable execution profile, but only `worker` and `reviewer` par
 - `reasoningEffort`: expected depth (`low|medium|high`).
 - `sandboxMode`: required tool/file access (`read-only` or `full-access`).
 - `instructions`: role-specific operating instructions appended to executor prompt context.
-- Planning-time roles may update future docs and notes, but the overnight grind does not schedule them.
+- Planning-time roles may update future docs and notes, but they do not edit source/test/runtime files unless the user explicitly switches from planning to implementation. The overnight grind does not schedule them.
 
 Recommended baseline:
 
