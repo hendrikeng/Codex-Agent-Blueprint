@@ -63,6 +63,17 @@ When the user asks for planning only (no implementation yet):
 
 This also applies when the agent/session is explicitly set to plan mode: default to `docs/future` planning outputs until implementation is explicitly requested. Planning completion is not execution approval.
 
+## Multi-Phase Architecture Programs
+
+For high-risk, multi-phase architecture work:
+
+- Create one canonical target-state architecture doc.
+- Create one future file per executable phase.
+- Make all phases coverage-complete before implementation begins so major concerns are not forgotten.
+- Make only the next one or two phases fully decision-complete before promotion.
+- Keep distant phases lighter where exact implementation depends on earlier outcomes.
+- Do not begin a high-risk phase until its future file names ownership boundaries, contracts, validation, and rollback or fallback expectations.
+
 ## Structure
 
 - `docs/exec-plans/README.md`

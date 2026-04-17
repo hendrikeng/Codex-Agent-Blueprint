@@ -68,6 +68,16 @@ Set `Status: ready-for-promotion` only when these checks pass:
 - [ ] No placeholder text remains in the blueprint.
 - [ ] `npm run plans:verify` passes.
 
+## Coverage and Depth Rule
+
+For high-risk multi-phase programs:
+
+- All phase files should be coverage-complete before implementation starts.
+- Coverage-complete means scope, non-goals, dependencies, validation, risks, and handoff boundaries are explicit enough that nothing major is left floating.
+- Only the next one or two phases should be fully decision-complete and promotion-ready.
+- Later phases may stay lighter where implementation detail should wait for earlier learnings.
+- Do not compensate for uncertainty by making every future file huge; add detail where it removes real execution ambiguity.
+
 ## Promotion Rules
 
 1. `draft` stays in `docs/future/`.
@@ -81,3 +91,4 @@ Use one future file per executable slice.
 - If the user asks for a single implementable change, create one future slice.
 - If the user describes a broader effort, create multiple future slices and link them with `Dependencies`.
 - Use a plain roadmap or notes document for grouping if needed, but do not put grouping documents into the execution queue.
+- For high-risk architecture programs, define the full phase set first, then deepen the next executable phases before promotion.
